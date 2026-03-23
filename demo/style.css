@@ -138,6 +138,58 @@ header h1 {
   background: var(--error);
 }
 
+#new-file-btn {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+#new-file-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#delete-file-btn {
+  display: none;
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+#delete-file-btn:hover {
+  background: var(--error);
+  color: #fff;
+}
+
+.save-indicator {
+  font-size: 11px;
+  color: transparent;
+  font-family: var(--font-mono);
+  transition: color 0.2s;
+}
+
+.save-indicator.saved {
+  color: var(--success);
+}
+
+.save-indicator.save-error {
+  color: var(--error);
+}
+
 #status {
   font-size: 11px;
   color: var(--text-secondary);

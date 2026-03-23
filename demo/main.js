@@ -104,12 +104,68 @@
       '}\n'
   };
 
+  // ── Local storage (user files) ──
+
+  var STORAGE_KEYS = {
+    FILES: 'c2wasm:files',
+    ACTIVE: 'c2wasm:active'
+  };
+
+  function loadUserFiles() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEYS.FILES);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) { return []; }
+  }
+
+  function saveUserFiles(files) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(files));
+      return true;
+    } catch (e) {
+      console.warn('c2wasm: localStorage write failed', e);
+      return false;
+    }
+  }
+
+  function getActiveFile() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEYS.ACTIVE);
+      return raw ? JSON.parse(raw) : { type: 'example', id: 'hello' };
+    } catch (e) { return { type: 'example', id: 'hello' }; }
+  }
+
+  function setActiveFile(type, id) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE, JSON.stringify({ type: type, id: id }));
+    } catch (e) {}
+  }
+
+  function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
+  }
+
+  function getFileContent(type, id) {
+    if (type === 'example') {
+      return EXAMPLES[id] || EXAMPLES.hello;
+    }
+    var files = loadUserFiles();
+    for (var i = 0; i < files.length; i++) {
+      if (files[i].id === id) return files[i].content;
+    }
+    return null; // null = file not found; distinguish from empty string (valid empty file)
+  }
+
   // ── DOM references ──
 
   var editorContainer = document.getElementById('editor-container');
-  var exampleSelect = document.getElementById('example-select');
+  var fileSelect = document.getElementById('file-select');
+  var userFilesGroup = document.getElementById('user-files-group');
+  var newFileBtn = document.getElementById('new-file-btn');
+  var deleteFileBtn = document.getElementById('delete-file-btn');
   var runBtn = document.getElementById('run-btn');
   var statusEl = document.getElementById('status');
+  var saveIndicator = document.getElementById('save-indicator');
   var consoleOutput = document.getElementById('console-output');
   var watOutput = document.getElementById('wat-output');
   var tabs = document.querySelectorAll('.tab');
@@ -119,6 +175,87 @@
   var wabtInstance = null;
   var isRunning = false;
   var idleTimerId = null;
+  var autoSaveTimer = null;
+
+  // ── File selector helpers ──
+
+  function refreshFileSelector() {
+    var files = loadUserFiles();
+    userFilesGroup.innerHTML = '';
+    for (var i = 0; i < files.length; i++) {
+      var opt = document.createElement('option');
+      opt.value = 'user:' + files[i].id;
+      opt.textContent = files[i].name;
+      userFilesGroup.appendChild(opt);
+    }
+    // optgroup is always in DOM; toggling disabled hides it in most browsers
+    userFilesGroup.disabled = files.length === 0;
+  }
+
+  function syncSelectToActive() {
+    var active = getActiveFile();
+    fileSelect.value = active.type === 'user' ? 'user:' + active.id : active.id;
+    deleteFileBtn.style.display = active.type === 'user' ? '' : 'none';
+  }
+
+  function showSaveIndicator() {
+    saveIndicator.textContent = '● Saved';
+    saveIndicator.className = 'save-indicator saved';
+    setTimeout(function () {
+      saveIndicator.textContent = '';
+      saveIndicator.className = 'save-indicator';
+    }, 1500);
+  }
+
+  function showSaveError() {
+    saveIndicator.textContent = '⚠ Save failed';
+    saveIndicator.className = 'save-indicator save-error';
+    setTimeout(function () {
+      saveIndicator.textContent = '';
+      saveIndicator.className = 'save-indicator';
+    }, 3000);
+  }
+
+  // Flush any pending debounced auto-save synchronously before switching files.
+  // Guards against losing edits when the user switches files within 800ms of typing.
+  function flushPendingSave() {
+    if (!autoSaveTimer) return;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+    var active = getActiveFile();
+    if (active.type !== 'user' || !editor) return;
+    var files = loadUserFiles();
+    for (var i = 0; i < files.length; i++) {
+      if (files[i].id === active.id) {
+        files[i].content = editor.getValue();
+        files[i].modified = Date.now();
+        saveUserFiles(files); // best-effort; errors already warned to console
+        break;
+      }
+    }
+  }
+
+  function scheduleAutoSave() {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(function () {
+      autoSaveTimer = null;
+      var active = getActiveFile();
+      if (active.type !== 'user' || !editor) return;
+      var files = loadUserFiles();
+      for (var i = 0; i < files.length; i++) {
+        if (files[i].id === active.id) {
+          files[i].content = editor.getValue();
+          files[i].modified = Date.now();
+          if (saveUserFiles(files)) {
+            showSaveIndicator();
+          } else {
+            showSaveError();
+          }
+          break;
+        }
+      }
+    }, 800);
+  }
 
   // ── Tab switching ──
 
@@ -143,12 +280,86 @@
     })(tabs[i]);
   }
 
-  // ── Example selector ──
+  // ── File selector events ──
 
-  exampleSelect.addEventListener('change', function () {
-    var code = EXAMPLES[exampleSelect.value];
-    if (code && editor) {
+  fileSelect.addEventListener('change', function () {
+    flushPendingSave();
+    var val = fileSelect.value;
+    var type, id;
+    if (val.indexOf('user:') === 0) {
+      type = 'user';
+      id = val.slice(5);
+    } else {
+      type = 'example';
+      id = val;
+    }
+    setActiveFile(type, id);
+    deleteFileBtn.style.display = type === 'user' ? '' : 'none';
+    var code = getFileContent(type, id);
+    if (code === null) {
+      // User file was deleted from another tab or storage; fall back gracefully
+      setActiveFile('example', 'hello');
+      fileSelect.value = 'hello';
+      deleteFileBtn.style.display = 'none';
+      code = EXAMPLES.hello;
+    }
+    if (editor) {
       editor.setValue(code);
+      monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+    }
+  });
+
+  newFileBtn.addEventListener('click', function () {
+    flushPendingSave();
+    var name = prompt('File name:', 'program.c');
+    if (!name) return;
+    name = name.trim();
+    if (!name) return;
+    if (name.indexOf('.') === -1) name += '.c';
+
+    var id = generateId();
+    var files = loadUserFiles();
+    var newFile = {
+      id: id,
+      name: name,
+      content: '// ' + name + '\n\nint main() {\n    return 0;\n}\n',
+      created: Date.now(),
+      modified: Date.now()
+    };
+    files.push(newFile);
+    saveUserFiles(files);
+
+    refreshFileSelector();
+    fileSelect.value = 'user:' + id;
+    setActiveFile('user', id);
+    deleteFileBtn.style.display = '';
+
+    if (editor) {
+      editor.setValue(newFile.content);
+      monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+      editor.focus();
+    }
+  });
+
+  deleteFileBtn.addEventListener('click', function () {
+    flushPendingSave();
+    var active = getActiveFile();
+    if (active.type !== 'user') return;
+    var files = loadUserFiles();
+    var file = null;
+    for (var i = 0; i < files.length; i++) {
+      if (files[i].id === active.id) { file = files[i]; break; }
+    }
+    if (!confirm('Delete "' + (file ? file.name : 'this file') + '"? This cannot be undone.')) return;
+    saveUserFiles(files.filter(function (f) { return f.id !== active.id; }));
+
+    refreshFileSelector();
+    fileSelect.value = 'hello';
+    setActiveFile('example', 'hello');
+    deleteFileBtn.style.display = 'none';
+
+    if (editor) {
+      editor.setValue(EXAMPLES.hello);
       monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
     }
   });
@@ -193,8 +404,23 @@
     });
 
     require(['vs/editor/editor.main'], function () {
+      // Restore last active file from localStorage
+      var active = getActiveFile();
+      var initialContent;
+      if (active.type === 'user') {
+        initialContent = getFileContent('user', active.id);
+        if (initialContent === null) {
+          // File was deleted; fall back to hello example
+          active = { type: 'example', id: 'hello' };
+          setActiveFile('example', 'hello');
+          initialContent = EXAMPLES.hello;
+        }
+      } else {
+        initialContent = EXAMPLES[active.id] || EXAMPLES.hello;
+      }
+
       editor = monaco.editor.create(editorContainer, {
-        value: EXAMPLES.hello,
+        value: initialContent,
         language: 'c',
         theme: 'vs-dark',
         fontSize: 14,
@@ -206,6 +432,12 @@
         renderWhitespace: 'none',
         tabSize: 4,
         padding: { top: 12, bottom: 12 }
+      });
+
+      syncSelectToActive();
+
+      editor.onDidChangeModelContent(function () {
+        scheduleAutoSave();
       });
 
       editor.addAction({
@@ -454,5 +686,6 @@
   // ── Boot ──
 
   setStatus('Loading editor…');
+  refreshFileSelector();
   initMonaco();
 })();

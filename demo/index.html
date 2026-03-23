@@ -31,14 +31,20 @@
   </header>
 
   <div class="toolbar">
-    <label class="toolbar-label" for="example-select">Example:</label>
-    <select id="example-select">
-      <option value="hello">Hello World</option>
-      <option value="fibonacci">Fibonacci</option>
-      <option value="linked_list">Linked List</option>
-      <option value="sort">Bubble Sort</option>
+    <label class="toolbar-label" for="file-select">File:</label>
+    <select id="file-select">
+      <optgroup label="Examples">
+        <option value="hello">Hello World</option>
+        <option value="fibonacci">Fibonacci</option>
+        <option value="linked_list">Linked List</option>
+        <option value="sort">Bubble Sort</option>
+      </optgroup>
+      <optgroup label="My Files" id="user-files-group"></optgroup>
     </select>
+    <button id="new-file-btn" title="New file">＋ New</button>
+    <button id="delete-file-btn" title="Delete this file">✕ Delete</button>
     <button id="run-btn" title="Ctrl+Enter">▶ Compile &amp; Run</button>
+    <span id="save-indicator" class="save-indicator"></span>
     <span id="status"></span>
   </div>
 
