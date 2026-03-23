@@ -55,11 +55,12 @@ enum {
     TOK_SEMI, TOK_COMMA, TOK_DOT, TOK_ARROW,
     /* operators */
     TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH, TOK_PERCENT,
-    TOK_AMP, TOK_BANG,
+    TOK_AMP, TOK_BANG, TOK_PIPE, TOK_TILDE,
     TOK_PIPE_PIPE, TOK_AMP_AMP,
     TOK_EQ, TOK_PLUS_EQ, TOK_MINUS_EQ,
     TOK_EQ_EQ, TOK_BANG_EQ,
     TOK_LT, TOK_GT, TOK_LT_EQ, TOK_GT_EQ,
+    TOK_LSHIFT, TOK_RSHIFT,
     TOK_PLUS_PLUS, TOK_MINUS_MINUS,
 };
 
@@ -300,7 +301,10 @@ static Token next_token(void) {
         break;
     case '|':
         if (lp() == '|') { la(); t.kind = TOK_PIPE_PIPE; }
-        else error(t.line, t.col, "unexpected '|'");
+        else t.kind = TOK_PIPE;
+        break;
+    case '~':
+        t.kind = TOK_TILDE;
         break;
     case '!':
         if (lp() == '=') { la(); t.kind = TOK_BANG_EQ; }
@@ -312,10 +316,12 @@ static Token next_token(void) {
         break;
     case '<':
         if (lp() == '=') { la(); t.kind = TOK_LT_EQ; }
+        else if (lp() == '<') { la(); t.kind = TOK_LSHIFT; }
         else t.kind = TOK_LT;
         break;
     case '>':
         if (lp() == '=') { la(); t.kind = TOK_GT_EQ; }
+        else if (lp() == '>') { la(); t.kind = TOK_RSHIFT; }
         else t.kind = TOK_GT;
         break;
     default:
@@ -385,7 +391,7 @@ static int resolve_field_offset(const char *field_name) {
  * ================================================================ */
 
 #define MAX_GLOBALS 256
-static struct { char name[128]; int init_val; } globals_tbl[MAX_GLOBALS];
+static struct { char name[128]; int init_val; int is_char; } globals_tbl[MAX_GLOBALS];
 static int nglobals;
 
 static int find_global(const char *name) {
@@ -423,6 +429,7 @@ enum {
     ND_CALL,
     ND_STR_LIT,
     ND_MEMBER, ND_SIZEOF,
+    ND_SUBSCRIPT,
 };
 
 struct Node {
@@ -438,7 +445,7 @@ struct Node {
         struct { int val; }                                     lit;
         struct { int op; Node *left; Node *right; }             binary;
         struct { int op; Node *operand; }                       unary;
-        struct { char name[128]; Node *init; }                  var_decl;
+        struct { char name[128]; Node *init; int is_char; }       var_decl;
         struct { char name[128]; }                              ident;
         struct { Node *target; Node *value; int op; }           assign;
         struct { Node *cond; Node *then_b; Node *else_b; }     if_s;
@@ -449,6 +456,7 @@ struct Node {
         struct { int id; int len; }                             str_lit;
         struct { Node *base; char field[128]; int is_arrow; }   member;
         struct { char type_name[128]; }                         sizeof_expr;
+        struct { Node *base; Node *index; }                     subscript;
     };
 };
 
@@ -497,9 +505,10 @@ static Node *parse_block(void);
 /* --- Expression parsing: precedence climbing --- */
 
 static int prefix_bp(int op) {
-    if (op == TOK_MINUS || op == TOK_BANG) return 23;
-    if (op == TOK_STAR || op == TOK_AMP) return 23;
-    if (op == TOK_PLUS_PLUS || op == TOK_MINUS_MINUS) return 23;
+    if (op == TOK_MINUS || op == TOK_BANG) return 25;
+    if (op == TOK_STAR || op == TOK_AMP) return 25;
+    if (op == TOK_TILDE) return 25;
+    if (op == TOK_PLUS_PLUS || op == TOK_MINUS_MINUS) return 25;
     return -1;
 }
 
@@ -510,13 +519,16 @@ static int infix_bp(int op, int *rbp) {
     case TOK_MINUS_EQ:                     *rbp = 1;  return 2;  /* right-assoc */
     case TOK_PIPE_PIPE:                    *rbp = 5;  return 4;
     case TOK_AMP_AMP:                      *rbp = 7;  return 6;
-    case TOK_EQ_EQ: case TOK_BANG_EQ:      *rbp = 11; return 10;
+    case TOK_PIPE:                         *rbp = 9;  return 8;
+    case TOK_AMP:                          *rbp = 11; return 10; /* bitwise AND */
+    case TOK_EQ_EQ: case TOK_BANG_EQ:      *rbp = 13; return 12;
     case TOK_LT: case TOK_GT:
-    case TOK_LT_EQ: case TOK_GT_EQ:       *rbp = 13; return 12;
-    case TOK_PLUS: case TOK_MINUS:         *rbp = 15; return 14;
+    case TOK_LT_EQ: case TOK_GT_EQ:       *rbp = 15; return 14;
+    case TOK_LSHIFT: case TOK_RSHIFT:      *rbp = 17; return 16;
+    case TOK_PLUS: case TOK_MINUS:         *rbp = 19; return 18;
     case TOK_STAR: case TOK_SLASH:
-    case TOK_PERCENT:                      *rbp = 17; return 16;
-    case TOK_DOT: case TOK_ARROW:          *rbp = 26; return 25;
+    case TOK_PERCENT:                      *rbp = 21; return 20;
+    case TOK_DOT: case TOK_ARROW:          *rbp = 30; return 29;
     default: return -1;
     }
 }
@@ -594,7 +606,7 @@ static Node *parse_atom(void) {
             else advance_tok();
             while (at(TOK_STAR)) advance_tok();
             expect(TOK_RPAREN, "expected ')' after cast type");
-            return parse_expr_bp(23); /* same precedence as prefix unary */
+            return parse_expr_bp(25); /* same precedence as prefix unary */
         }
         Node *n = parse_expr();
         expect(TOK_RPAREN, "expected ')'");
@@ -633,26 +645,16 @@ static Node *parse_expr_bp(int min_bp) {
 
     /* infix operators */
     for (;;) {
-        /* array subscript: arr[idx] → *(arr + idx * 4) */
-        if (at(TOK_LBRACKET) && 25 >= min_bp) {
+        /* array subscript: arr[idx] → ND_SUBSCRIPT node */
+        if (at(TOK_LBRACKET) && 29 >= min_bp) {
             int line = cur.line, col = cur.col;
             advance_tok(); /* skip '[' */
             Node *idx = parse_expr();
             expect(TOK_RBRACKET, "expected ']'");
-            Node *scale = node_new(ND_BINARY, line, col);
-            scale->binary.op = TOK_STAR;
-            scale->binary.left = idx;
-            Node *four = node_new(ND_INT_LIT, line, col);
-            four->lit.val = 4;
-            scale->binary.right = four;
-            Node *add = node_new(ND_BINARY, line, col);
-            add->binary.op = TOK_PLUS;
-            add->binary.left = left;
-            add->binary.right = scale;
-            Node *deref = node_new(ND_UNARY, line, col);
-            deref->unary.op = TOK_STAR;
-            deref->unary.operand = add;
-            left = deref;
+            Node *n = node_new(ND_SUBSCRIPT, line, col);
+            n->subscript.base = left;
+            n->subscript.index = idx;
+            left = n;
             continue;
         }
 
@@ -681,7 +683,8 @@ static Node *parse_expr_bp(int min_bp) {
         if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ) {
             int valid = (left->kind == ND_IDENT) ||
                         (left->kind == ND_UNARY && left->unary.op == TOK_STAR) ||
-                        (left->kind == ND_MEMBER);
+                        (left->kind == ND_MEMBER) ||
+                        (left->kind == ND_SUBSCRIPT);
             if (!valid)
                 error(line, col, "invalid assignment target");
             Node *n = node_new(ND_ASSIGN, line, col);
@@ -706,16 +709,19 @@ static Node *parse_expr(void) { return parse_expr_bp(0); }
 
 static Node *parse_var_decl(void) {
     int line = cur.line, col = cur.col;
+    int is_char = 0;
     if (at(TOK_STRUCT)) {
         advance_tok(); /* skip 'struct' */
         advance_tok(); /* skip struct name */
     } else {
+        if (at(TOK_CHAR_KW)) is_char = 1;
         advance_tok(); /* skip type keyword */
     }
     while (at(TOK_STAR)) advance_tok();
     if (!at(TOK_IDENT)) error(cur.line, cur.col, "expected variable name");
     Node *n = node_new(ND_VAR_DECL, line, col);
     strncpy(n->var_decl.name, cur.text, sizeof(n->var_decl.name) - 1);
+    n->var_decl.is_char = is_char;
     advance_tok();
     if (at(TOK_EQ)) {
         advance_tok();
@@ -948,13 +954,18 @@ static void parse_struct_def(void) {
 /* --- Parse top-level global variable --- */
 
 static void parse_global_var(void) {
+    int is_char = 0;
     if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
-    else advance_tok(); /* skip type */
+    else {
+        if (at(TOK_CHAR_KW)) is_char = 1;
+        advance_tok(); /* skip type */
+    }
     while (at(TOK_STAR)) advance_tok();
     if (!at(TOK_IDENT)) error(cur.line, cur.col, "expected variable name");
     if (nglobals >= MAX_GLOBALS) error(cur.line, cur.col, "too many globals");
     strncpy(globals_tbl[nglobals].name, cur.text, 127);
     globals_tbl[nglobals].init_val = 0;
+    globals_tbl[nglobals].is_char = is_char;
     advance_tok();
     if (at(TOK_EQ)) {
         advance_tok();
@@ -1037,6 +1048,7 @@ static void emit(const char *fmt, ...) {
 
 #define MAX_LOCALS 256
 static char local_names[MAX_LOCALS][128];
+static int local_is_char[MAX_LOCALS];
 static int nlocals;
 
 static int find_local(const char *name) {
@@ -1045,18 +1057,19 @@ static int find_local(const char *name) {
     return -1;
 }
 
-static void add_local(const char *name) {
+static void add_local(const char *name, int is_char) {
     if (find_local(name) >= 0) return;
     if (nlocals >= MAX_LOCALS) { fprintf(stderr, "too many locals\n"); exit(1); }
     strncpy(local_names[nlocals], name, 127);
     local_names[nlocals][127] = '\0';
+    local_is_char[nlocals] = is_char;
     nlocals++;
 }
 
 static void collect_locals(Node *n) {
     if (!n) return;
     switch (n->kind) {
-    case ND_VAR_DECL:  add_local(n->var_decl.name); break;
+    case ND_VAR_DECL:  add_local(n->var_decl.name, n->var_decl.is_char); break;
     case ND_BLOCK:
         for (int i = 0; i < n->block.nstmts; i++)
             collect_locals(n->block.stmts[i]);
@@ -1081,6 +1094,22 @@ static int label_cnt;
 static int brk_lbl[MAX_LOOP_DEPTH];
 static int cont_lbl[MAX_LOOP_DEPTH];
 static int loop_sp;
+
+/* --- Variable type lookup: returns element size (1 for char, 4 for int/ptr) --- */
+
+static int var_elem_size(const char *name) {
+    int li = find_local(name);
+    if (li >= 0) return local_is_char[li] ? 1 : 4;
+    int gi = find_global(name);
+    if (gi >= 0) return globals_tbl[gi].is_char ? 1 : 4;
+    return 4; /* default: 4-byte elements */
+}
+
+/* infer element size from an expression (for subscript/deref) */
+static int expr_elem_size(Node *n) {
+    if (n->kind == ND_IDENT) return var_elem_size(n->ident.name);
+    return 4;
+}
 
 /* --- Expression codegen: leaves one i32 on the WASM stack --- */
 
@@ -1122,23 +1151,26 @@ static void gen_expr(Node *n) {
             }
         } else if (tgt->kind == ND_UNARY && tgt->unary.op == TOK_STAR) {
             /* *p = val  or  *p += val */
+            int esz = expr_elem_size(tgt->unary.operand);
+            const char *load_op = (esz == 1) ? "i32.load8_u" : "i32.load";
+            const char *store_op = (esz == 1) ? "i32.store8" : "i32.store";
             if (n->assign.op == TOK_EQ) {
                 gen_expr(n->assign.value);
             } else if (n->assign.op == TOK_PLUS_EQ) {
                 gen_expr(tgt->unary.operand);
-                emit("i32.load");
+                emit("%s", load_op);
                 gen_expr(n->assign.value);
                 emit("i32.add");
             } else if (n->assign.op == TOK_MINUS_EQ) {
                 gen_expr(tgt->unary.operand);
-                emit("i32.load");
+                emit("%s", load_op);
                 gen_expr(n->assign.value);
                 emit("i32.sub");
             }
             emit("local.set $__atmp");
             gen_expr(tgt->unary.operand);
             emit("local.get $__atmp");
-            emit("i32.store");
+            emit("%s", store_op);
             emit("local.get $__atmp");
         } else if (tgt->kind == ND_MEMBER) {
             int off = resolve_field_offset(tgt->member.field);
@@ -1164,6 +1196,37 @@ static void gen_expr(Node *n) {
             emit("local.get $__atmp");
             emit("i32.store");
             emit("local.get $__atmp");
+        } else if (tgt->kind == ND_SUBSCRIPT) {
+            int esz = expr_elem_size(tgt->subscript.base);
+            const char *load_op = (esz == 1) ? "i32.load8_u" : "i32.load";
+            const char *store_op = (esz == 1) ? "i32.store8" : "i32.store";
+            if (n->assign.op == TOK_EQ) {
+                gen_expr(n->assign.value);
+            } else if (n->assign.op == TOK_PLUS_EQ) {
+                gen_expr(tgt->subscript.base);
+                gen_expr(tgt->subscript.index);
+                if (esz > 1) { emit("i32.const %d", esz); emit("i32.mul"); }
+                emit("i32.add");
+                emit("%s", load_op);
+                gen_expr(n->assign.value);
+                emit("i32.add");
+            } else if (n->assign.op == TOK_MINUS_EQ) {
+                gen_expr(tgt->subscript.base);
+                gen_expr(tgt->subscript.index);
+                if (esz > 1) { emit("i32.const %d", esz); emit("i32.mul"); }
+                emit("i32.add");
+                emit("%s", load_op);
+                gen_expr(n->assign.value);
+                emit("i32.sub");
+            }
+            emit("local.set $__atmp");
+            gen_expr(tgt->subscript.base);
+            gen_expr(tgt->subscript.index);
+            if (esz > 1) { emit("i32.const %d", esz); emit("i32.mul"); }
+            emit("i32.add");
+            emit("local.get $__atmp");
+            emit("%s", store_op);
+            emit("local.get $__atmp");
         }
         break;
     }
@@ -1175,9 +1238,14 @@ static void gen_expr(Node *n) {
         } else if (n->unary.op == TOK_BANG) {
             gen_expr(n->unary.operand);
             emit("i32.eqz");
-        } else if (n->unary.op == TOK_STAR) {
+        } else if (n->unary.op == TOK_TILDE) {
+            emit("i32.const -1");
             gen_expr(n->unary.operand);
-            emit("i32.load");
+            emit("i32.xor");
+        } else if (n->unary.op == TOK_STAR) {
+            int esz = expr_elem_size(n->unary.operand);
+            gen_expr(n->unary.operand);
+            emit(esz == 1 ? "i32.load8_u" : "i32.load");
         } else if (n->unary.op == TOK_AMP) {
             error(n->line, n->col, "cannot take address of this expression");
         }
@@ -1198,15 +1266,15 @@ static void gen_expr(Node *n) {
         case TOK_LT_EQ:   emit("i32.le_s"); break;
         case TOK_GT_EQ:   emit("i32.ge_s"); break;
         case TOK_AMP_AMP:
-            /* a && b  →  (a != 0) & (b != 0) ... simple, no short-circuit for now */
-            /* but we already have both values on stack. Use: both nonzero */
-            /* Rewrite: emit left, test; emit right, test; i32.and */
-            /* Oops — we already emitted both. Let's do it the simple way: */
             emit("i32.and");
             break;
         case TOK_PIPE_PIPE:
             emit("i32.or");
             break;
+        case TOK_AMP:     emit("i32.and"); break;
+        case TOK_PIPE:    emit("i32.or"); break;
+        case TOK_LSHIFT:  emit("i32.shl"); break;
+        case TOK_RSHIFT:  emit("i32.shr_s"); break;
         default:
             error(n->line, n->col, "unsupported binary operator");
         }
@@ -1277,6 +1345,33 @@ static void gen_expr(Node *n) {
             else emit("i32.const 0");
             emit("call $free");
             emit("i32.const 0");
+        } else if (!strcmp(n->call.name, "strlen")) {
+            gen_expr(n->call.args[0]);
+            emit("call $strlen");
+        } else if (!strcmp(n->call.name, "strcmp")) {
+            gen_expr(n->call.args[0]);
+            gen_expr(n->call.args[1]);
+            emit("call $strcmp");
+        } else if (!strcmp(n->call.name, "strncpy")) {
+            gen_expr(n->call.args[0]);
+            gen_expr(n->call.args[1]);
+            gen_expr(n->call.args[2]);
+            emit("call $strncpy");
+        } else if (!strcmp(n->call.name, "memcpy")) {
+            gen_expr(n->call.args[0]);
+            gen_expr(n->call.args[1]);
+            gen_expr(n->call.args[2]);
+            emit("call $memcpy");
+        } else if (!strcmp(n->call.name, "memset")) {
+            gen_expr(n->call.args[0]);
+            gen_expr(n->call.args[1]);
+            gen_expr(n->call.args[2]);
+            emit("call $memset");
+        } else if (!strcmp(n->call.name, "memcmp")) {
+            gen_expr(n->call.args[0]);
+            gen_expr(n->call.args[1]);
+            gen_expr(n->call.args[2]);
+            emit("call $memcmp");
         } else {
             for (int i = 0; i < n->call.nargs; i++)
                 gen_expr(n->call.args[i]);
@@ -1304,6 +1399,15 @@ static void gen_expr(Node *n) {
             /* int, char, void*, any pointer — all 4 bytes */
             emit("i32.const 4");
         }
+        break;
+    }
+    case ND_SUBSCRIPT: {
+        int esz = expr_elem_size(n->subscript.base);
+        gen_expr(n->subscript.base);
+        gen_expr(n->subscript.index);
+        if (esz > 1) { emit("i32.const %d", esz); emit("i32.mul"); }
+        emit("i32.add");
+        emit(esz == 1 ? "i32.load8_u" : "i32.load");
         break;
     }
     default:
@@ -1637,6 +1741,92 @@ static void gen_module(Node *prog) {
 
     /* free: no-op */
     emit("(func $free (param $ptr i32))");
+
+    /* strlen: count bytes until NUL */
+    emit("(func $strlen (param $s i32) (result i32)");
+    emit("  (local $n i32)");
+    emit("  (local.set $n (i32.const 0))");
+    emit("  (block $done (loop $next");
+    emit("    (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $s) (local.get $n)))))");
+    emit("    (local.set $n (i32.add (local.get $n) (i32.const 1)))");
+    emit("    (br $next)");
+    emit("  ))");
+    emit("  (local.get $n)");
+    emit(")");
+
+    /* strcmp: lexicographic compare, returns <0, 0, or >0 */
+    emit("(func $strcmp (param $a i32) (param $b i32) (result i32)");
+    emit("  (local $ca i32) (local $cb i32)");
+    emit("  (block $done (loop $next");
+    emit("    (local.set $ca (i32.load8_u (local.get $a)))");
+    emit("    (local.set $cb (i32.load8_u (local.get $b)))");
+    emit("    (br_if $done (i32.ne (local.get $ca) (local.get $cb)))");
+    emit("    (br_if $done (i32.eqz (local.get $ca)))");
+    emit("    (local.set $a (i32.add (local.get $a) (i32.const 1)))");
+    emit("    (local.set $b (i32.add (local.get $b) (i32.const 1)))");
+    emit("    (br $next)");
+    emit("  ))");
+    emit("  (i32.sub (local.get $ca) (local.get $cb))");
+    emit(")");
+
+    /* strncpy: copy up to n bytes from src to dst */
+    emit("(func $strncpy (param $dst i32) (param $src i32) (param $n i32) (result i32)");
+    emit("  (local $i i32)");
+    emit("  (local.set $i (i32.const 0))");
+    emit("  (block $done (loop $next");
+    emit("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))");
+    emit("    (i32.store8 (i32.add (local.get $dst) (local.get $i))");
+    emit("      (i32.load8_u (i32.add (local.get $src) (local.get $i))))");
+    emit("    (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $src) (local.get $i)))))");
+    emit("    (local.set $i (i32.add (local.get $i) (i32.const 1)))");
+    emit("    (br $next)");
+    emit("  ))");
+    emit("  (local.get $dst)");
+    emit(")");
+
+    /* memcpy: copy n bytes from src to dst */
+    emit("(func $memcpy (param $dst i32) (param $src i32) (param $n i32) (result i32)");
+    emit("  (local $i i32)");
+    emit("  (local.set $i (i32.const 0))");
+    emit("  (block $done (loop $next");
+    emit("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))");
+    emit("    (i32.store8 (i32.add (local.get $dst) (local.get $i))");
+    emit("      (i32.load8_u (i32.add (local.get $src) (local.get $i))))");
+    emit("    (local.set $i (i32.add (local.get $i) (i32.const 1)))");
+    emit("    (br $next)");
+    emit("  ))");
+    emit("  (local.get $dst)");
+    emit(")");
+
+    /* memset: fill n bytes at dst with val */
+    emit("(func $memset (param $dst i32) (param $val i32) (param $n i32) (result i32)");
+    emit("  (local $i i32)");
+    emit("  (local.set $i (i32.const 0))");
+    emit("  (block $done (loop $next");
+    emit("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))");
+    emit("    (i32.store8 (i32.add (local.get $dst) (local.get $i)) (local.get $val))");
+    emit("    (local.set $i (i32.add (local.get $i) (i32.const 1)))");
+    emit("    (br $next)");
+    emit("  ))");
+    emit("  (local.get $dst)");
+    emit(")");
+
+    /* memcmp: compare n bytes */
+    emit("(func $memcmp (param $a i32) (param $b i32) (param $n i32) (result i32)");
+    emit("  (local $i i32) (local $ca i32) (local $cb i32)");
+    emit("  (local.set $i (i32.const 0))");
+    emit("  (block $done (loop $next");
+    emit("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))");
+    emit("    (local.set $ca (i32.load8_u (i32.add (local.get $a) (local.get $i))))");
+    emit("    (local.set $cb (i32.load8_u (i32.add (local.get $b) (local.get $i))))");
+    emit("    (if (i32.ne (local.get $ca) (local.get $cb))");
+    emit("      (then (return (i32.sub (local.get $ca) (local.get $cb))))");
+    emit("    )");
+    emit("    (local.set $i (i32.add (local.get $i) (i32.const 1)))");
+    emit("    (br $next)");
+    emit("  ))");
+    emit("  (i32.const 0)");
+    emit(")");
     emit("");
 
     /* user functions */
