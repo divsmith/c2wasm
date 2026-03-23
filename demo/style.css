@@ -1,0 +1,262 @@
+:root {
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d2d;
+  --border: #3e3e42;
+  --text-primary: #d4d4d4;
+  --text-secondary: #858585;
+  --accent: #007acc;
+  --accent-hover: #1a8ad4;
+  --success: #388a34;
+  --error: #f44747;
+  --warning: #cca700;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.github-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 13px;
+  transition: color 0.15s;
+}
+
+.github-link:hover {
+  color: var(--text-primary);
+}
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 20px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.toolbar-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#example-select {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+}
+
+#example-select:focus {
+  border-color: var(--accent);
+}
+
+#run-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 5px 14px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+
+#run-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+#run-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#run-btn.success {
+  background: var(--success);
+}
+
+#run-btn.error {
+  background: var(--error);
+}
+
+#status {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+
+/* Main layout */
+main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.editor-panel {
+  flex: 0 0 60%;
+  min-width: 200px;
+  overflow: hidden;
+}
+
+.resize-handle {
+  flex: 0 0 4px;
+  background: var(--border);
+  cursor: col-resize;
+  transition: background 0.15s;
+}
+
+.resize-handle:hover,
+.resize-handle.active {
+  background: var(--accent);
+}
+
+.output-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  overflow: hidden;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: 7px 16px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab:hover {
+  color: var(--text-primary);
+}
+
+.tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+/* Output */
+.tab-content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--bg-primary);
+}
+
+.tab-content.hidden {
+  display: none;
+}
+
+.output-error {
+  color: var(--error);
+}
+
+.output-info {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.output-success {
+  color: #4ec9b0;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .tagline { display: none; }
+
+  main {
+    flex-direction: column;
+  }
+
+  .editor-panel {
+    flex: 0 0 50% !important;
+    border-right: none;
+  }
+
+  .resize-handle {
+    flex: 0 0 4px;
+    cursor: row-resize;
+  }
+
+  .output-panel {
+    flex: 1;
+  }
+}
