@@ -76,6 +76,8 @@
 #define TOK_LSHIFT_EQ 56
 #define TOK_RSHIFT_EQ 57
 #define TOK_DO 58
+#define TOK_QUESTION 59
+#define TOK_COLON 60
 
 /* Node kinds */
 #define ND_PROGRAM 0
@@ -102,6 +104,7 @@
 #define ND_POST_INC 21
 #define ND_POST_DEC 22
 #define ND_DO_WHILE 23
+#define ND_TERNARY 24
 
 /* Limits */
 #define MAX_SRC 2097152
@@ -686,6 +689,10 @@ struct Token *next_token(void) {
         } else {
             t->kind = TOK_GT;
         }
+    } else if (c == '?') {
+        t->kind = TOK_QUESTION;
+    } else if (c == ':') {
+        t->kind = TOK_COLON;
     } else {
         error(t->line, t->col, "unexpected character");
     }
@@ -1118,6 +1125,27 @@ struct Node *parse_expr_bp(int min_bp) {
             post = node_new((pop == TOK_PLUS_PLUS) ? ND_POST_INC : ND_POST_DEC, pline, pcol);
             post->c0 = left;
             left = post;
+            continue;
+        }
+
+        /* ternary ? : */
+        if (at(TOK_QUESTION) && 3 >= min_bp) {
+            struct Node *then_e;
+            struct Node *else_e;
+            struct Node *tern;
+            int tline;
+            int tcol;
+            tline = cur->line;
+            tcol = cur->col;
+            advance_tok();
+            then_e = parse_expr_bp(0);
+            expect(TOK_COLON, "expected ':' in ternary");
+            else_e = parse_expr_bp(3);
+            tern = node_new(ND_TERNARY, tline, tcol);
+            tern->c0 = left;
+            tern->c1 = then_e;
+            tern->c2 = else_e;
+            left = tern;
             continue;
         }
 
@@ -2387,6 +2415,28 @@ void gen_expr(struct Node *n) {
         } else {
             error(n->nline, n->ncol, "unsupported post-inc/dec target");
         }
+    } else if (n->kind == ND_TERNARY) {
+        gen_expr(n->c0);
+        emit_indent();
+        printf("(if (result i32)\n");
+        indent_level = indent_level + 1;
+        emit_indent();
+        printf("(then\n");
+        indent_level = indent_level + 1;
+        gen_expr(n->c1);
+        indent_level = indent_level - 1;
+        emit_indent();
+        printf(")\n");
+        emit_indent();
+        printf("(else\n");
+        indent_level = indent_level + 1;
+        gen_expr(n->c2);
+        indent_level = indent_level - 1;
+        emit_indent();
+        printf(")\n");
+        indent_level = indent_level - 1;
+        emit_indent();
+        printf(")\n");
     } else {
         error(n->nline, n->ncol, "unsupported expression in codegen");
     }
