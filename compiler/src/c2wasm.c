@@ -118,6 +118,20 @@ static int kw_lookup(const char *s) {
     return 0;
 }
 
+/* ================================================================
+ * Macro table for #define
+ * ================================================================ */
+
+#define MAX_MACROS 256
+static struct { char name[128]; int value; } macros[MAX_MACROS];
+static int nmacros;
+
+static int find_macro(const char *name) {
+    for (int i = 0; i < nmacros; i++)
+        if (!strcmp(macros[i].name, name)) return i;
+    return -1;
+}
+
 static Token next_token(void) {
     skip_ws();
     Token t;
@@ -128,17 +142,42 @@ static Token next_token(void) {
     if (L.pos >= src_len) { t.kind = TOK_EOF; return t; }
     char c = lp();
 
-    /* preprocessor: #define */
+    /* preprocessor directives */
     if (c == '#') {
         la();
         while (lp() == ' ' || lp() == '\t') la();
         int s = L.pos;
         while (isalpha(lp())) la();
-        if (L.pos - s == 6 && !memcmp(src + s, "define", 6)) {
-            t.kind = TOK_DEFINE;
-            return t;
+        int dlen = L.pos - s;
+        if (dlen == 6 && !memcmp(src + s, "define", 6)) {
+            while (lp() == ' ' || lp() == '\t') la();
+            char name[128];
+            int ni = 0;
+            while (isalnum(lp()) || lp() == '_') {
+                if (ni < 127) name[ni++] = la(); else la();
+            }
+            name[ni] = '\0';
+            while (lp() == ' ' || lp() == '\t') la();
+            int neg = 0;
+            if (lp() == '-') { neg = 1; la(); while (lp() == ' ') la(); }
+            int val = 0;
+            if (lp() == '0' && (L.pos+1 < src_len) && (src[L.pos+1] == 'x' || src[L.pos+1] == 'X')) {
+                la(); la();
+                while (isxdigit(lp())) {
+                    char d = la();
+                    val = val * 16 + (d <= '9' ? d - '0' : (d | 32) - 'a' + 10);
+                }
+            } else {
+                while (isdigit(lp())) val = val * 10 + (la() - '0');
+            }
+            if (neg) val = -val;
+            strncpy(macros[nmacros].name, name, 127);
+            macros[nmacros].value = val;
+            nmacros++;
         }
-        error(t.line, t.col, "unknown preprocessor directive");
+        /* skip to end of line (handles #include and unknown directives) */
+        while (L.pos < src_len && lp() != '\n') la();
+        return next_token(); /* recurse to get real token */
     }
 
     /* identifiers / keywords */
@@ -151,6 +190,14 @@ static Token next_token(void) {
         t.text[len] = '\0';
         int kw = kw_lookup(t.text);
         t.kind = kw ? kw : TOK_IDENT;
+        /* macro substitution: if identifier matches a #define, return int literal */
+        if (t.kind == TOK_IDENT) {
+            int mi = find_macro(t.text);
+            if (mi >= 0) {
+                t.kind = TOK_INT_LIT;
+                t.int_val = macros[mi].value;
+            }
+        }
         return t;
     }
 
@@ -334,6 +381,34 @@ static int resolve_field_offset(const char *field_name) {
 }
 
 /* ================================================================
+ * Global Variable Table
+ * ================================================================ */
+
+#define MAX_GLOBALS 256
+static struct { char name[128]; int init_val; } globals_tbl[MAX_GLOBALS];
+static int nglobals;
+
+static int find_global(const char *name) {
+    for (int i = 0; i < nglobals; i++)
+        if (!strcmp(globals_tbl[i].name, name)) return i;
+    return -1;
+}
+
+/* ================================================================
+ * Function Signature Table (tracks void vs non-void return)
+ * ================================================================ */
+
+#define MAX_FUNC_SIGS 256
+static struct { char name[128]; int is_void; } func_sigs[MAX_FUNC_SIGS];
+static int nfunc_sigs;
+
+static int func_is_void(const char *name) {
+    for (int i = 0; i < nfunc_sigs; i++)
+        if (!strcmp(func_sigs[i].name, name)) return func_sigs[i].is_void;
+    return 0; /* unknown = assume non-void */
+}
+
+/* ================================================================
  * AST
  * ================================================================ */
 
@@ -415,6 +490,7 @@ static int is_type_token(void) {
 
 /* Forward declarations */
 static Node *parse_expr(void);
+static Node *parse_expr_bp(int min_bp);
 static Node *parse_stmt(void);
 static Node *parse_block(void);
 
@@ -512,6 +588,14 @@ static Node *parse_atom(void) {
     }
     if (at(TOK_LPAREN)) {
         advance_tok();
+        /* type cast: (int)expr, (char *)expr, (struct Name *)expr — no-op, all i32 */
+        if (is_type_token()) {
+            if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+            else advance_tok();
+            while (at(TOK_STAR)) advance_tok();
+            expect(TOK_RPAREN, "expected ')' after cast type");
+            return parse_expr_bp(23); /* same precedence as prefix unary */
+        }
         Node *n = parse_expr();
         expect(TOK_RPAREN, "expected ')'");
         return n;
@@ -781,6 +865,12 @@ static Node *parse_func(void) {
     Node *n = node_new(ND_FUNC, line, col);
     strncpy(n->func.name, cur.text, sizeof(n->func.name) - 1);
     n->func.ret_type = ret;
+    /* register in function signature table */
+    if (nfunc_sigs < MAX_FUNC_SIGS) {
+        strncpy(func_sigs[nfunc_sigs].name, cur.text, 127);
+        func_sigs[nfunc_sigs].is_void = (ret == 1);
+        nfunc_sigs++;
+    }
     advance_tok();
     expect(TOK_LPAREN, "expected '('");
 
@@ -855,6 +945,34 @@ static void parse_struct_def(void) {
     expect(TOK_SEMI, "expected ';' after struct definition");
 }
 
+/* --- Parse top-level global variable --- */
+
+static void parse_global_var(void) {
+    if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+    else advance_tok(); /* skip type */
+    while (at(TOK_STAR)) advance_tok();
+    if (!at(TOK_IDENT)) error(cur.line, cur.col, "expected variable name");
+    if (nglobals >= MAX_GLOBALS) error(cur.line, cur.col, "too many globals");
+    strncpy(globals_tbl[nglobals].name, cur.text, 127);
+    globals_tbl[nglobals].init_val = 0;
+    advance_tok();
+    if (at(TOK_EQ)) {
+        advance_tok();
+        if (at(TOK_INT_LIT)) {
+            globals_tbl[nglobals].init_val = cur.int_val;
+            advance_tok();
+        } else if (at(TOK_MINUS) || at(TOK_CHAR_LIT)) {
+            /* handle negative literals or char lit */
+            int neg = 0;
+            if (at(TOK_MINUS)) { neg = 1; advance_tok(); }
+            globals_tbl[nglobals].init_val = neg ? -cur.int_val : cur.int_val;
+            advance_tok();
+        }
+    }
+    nglobals++;
+    expect(TOK_SEMI, "expected ';' after global declaration");
+}
+
 static Node *parse_program(void) {
     Node *prog = node_new(ND_PROGRAM, 1, 1);
     NList decls = {0};
@@ -873,7 +991,26 @@ static Node *parse_program(void) {
             cur = st;
             if (is_def) { parse_struct_def(); continue; }
         }
-        nlist_push(&decls, parse_func());
+
+        /* Peek ahead to distinguish function from global variable */
+        {
+            int sp = L.pos, sl = L.line, sc = L.col;
+            Token st = cur;
+            /* skip type (including struct Name) */
+            if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+            else advance_tok();
+            while (at(TOK_STAR)) advance_tok();
+            /* skip name */
+            int is_func = 0;
+            if (at(TOK_IDENT)) { advance_tok(); is_func = at(TOK_LPAREN); }
+            L.pos = sp; L.line = sl; L.col = sc;
+            cur = st;
+            if (is_func) {
+                nlist_push(&decls, parse_func());
+            } else {
+                parse_global_var();
+            }
+        }
     }
     prog->program.decls  = decls.items;
     prog->program.ndecls = decls.count;
@@ -953,24 +1090,36 @@ static void gen_expr(Node *n) {
         emit("i32.const %d", n->lit.val);
         break;
     case ND_IDENT:
-        emit("local.get $%s", n->ident.name);
+        if (find_global(n->ident.name) >= 0)
+            emit("global.get $%s", n->ident.name);
+        else
+            emit("local.get $%s", n->ident.name);
         break;
     case ND_ASSIGN: {
         Node *tgt = n->assign.target;
         if (tgt->kind == ND_IDENT) {
             const char *name = tgt->ident.name;
+            int is_global = (find_global(name) >= 0);
+            const char *get = is_global ? "global.get" : "local.get";
             if (n->assign.op == TOK_EQ) {
                 gen_expr(n->assign.value);
             } else if (n->assign.op == TOK_PLUS_EQ) {
-                emit("local.get $%s", name);
+                emit("%s $%s", get, name);
                 gen_expr(n->assign.value);
                 emit("i32.add");
             } else if (n->assign.op == TOK_MINUS_EQ) {
-                emit("local.get $%s", name);
+                emit("%s $%s", get, name);
                 gen_expr(n->assign.value);
                 emit("i32.sub");
             }
-            emit("local.tee $%s", name);
+            if (is_global) {
+                emit("local.set $__atmp");
+                emit("local.get $__atmp");
+                emit("global.set $%s", name);
+                emit("local.get $__atmp");
+            } else {
+                emit("local.tee $%s", name);
+            }
         } else if (tgt->kind == ND_UNARY && tgt->unary.op == TOK_STAR) {
             /* *p = val  or  *p += val */
             if (n->assign.op == TOK_EQ) {
@@ -1132,6 +1281,8 @@ static void gen_expr(Node *n) {
             for (int i = 0; i < n->call.nargs; i++)
                 gen_expr(n->call.args[i]);
             emit("call $%s", n->call.name);
+            if (func_is_void(n->call.name))
+                emit("i32.const 0"); /* void call in expr context: push dummy */
         }
         break;
     case ND_STR_LIT:
@@ -1370,6 +1521,11 @@ static void gen_module(Node *prog) {
 
     /* heap pointer — starts after static data */
     emit("(global $__heap_ptr (mut i32) (i32.const %d))", data_ptr);
+
+    /* user global variables */
+    for (int gi = 0; gi < nglobals; gi++)
+        emit("(global $%s (mut i32) (i32.const %d))",
+             globals_tbl[gi].name, globals_tbl[gi].init_val);
     emit("");
 
     /* --- Runtime helper functions --- */
