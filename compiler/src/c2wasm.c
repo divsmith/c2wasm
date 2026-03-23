@@ -507,16 +507,16 @@ static int prefix_bp(int op) {
 static int infix_bp(int op, int *rbp) {
     switch (op) {
     case TOK_EQ: case TOK_PLUS_EQ:
-    case TOK_MINUS_EQ:                     *rbp = 1;  return 2;
-    case TOK_PIPE_PIPE:                    *rbp = 3;  return 4;
-    case TOK_AMP_AMP:                  *rbp = 5;  return 6;
-    case TOK_EQ_EQ: case TOK_BANG_EQ:  *rbp = 9;  return 10;
+    case TOK_MINUS_EQ:                     *rbp = 1;  return 2;  /* right-assoc */
+    case TOK_PIPE_PIPE:                    *rbp = 5;  return 4;
+    case TOK_AMP_AMP:                      *rbp = 7;  return 6;
+    case TOK_EQ_EQ: case TOK_BANG_EQ:      *rbp = 11; return 10;
     case TOK_LT: case TOK_GT:
-    case TOK_LT_EQ: case TOK_GT_EQ:   *rbp = 11; return 12;
-    case TOK_PLUS: case TOK_MINUS:     *rbp = 13; return 14;
+    case TOK_LT_EQ: case TOK_GT_EQ:       *rbp = 13; return 12;
+    case TOK_PLUS: case TOK_MINUS:         *rbp = 15; return 14;
     case TOK_STAR: case TOK_SLASH:
-    case TOK_PERCENT:                  *rbp = 15; return 16;
-    case TOK_DOT: case TOK_ARROW:      *rbp = 26; return 25;
+    case TOK_PERCENT:                      *rbp = 17; return 16;
+    case TOK_DOT: case TOK_ARROW:          *rbp = 26; return 25;
     default: return -1;
     }
 }
