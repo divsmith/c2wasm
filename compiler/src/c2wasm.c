@@ -289,6 +289,7 @@ enum {
     ND_VAR_DECL, ND_IDENT, ND_ASSIGN,
     ND_IF, ND_WHILE, ND_FOR,
     ND_BREAK, ND_CONTINUE, ND_EXPR_STMT,
+    ND_CALL,
 };
 
 struct Node {
@@ -296,7 +297,9 @@ struct Node {
     int line, col;
     union {
         struct { Node **decls; int ndecls; }                    program;
-        struct { char name[128]; int ret_type; Node *body; }    func;
+        struct { char name[128]; int ret_type;
+                 char param_names[8][128]; int param_count;
+                 Node *body; /* NULL for prototypes */ }    func;
         struct { Node **stmts; int nstmts; }                    block;
         struct { Node *expr; }                                  ret;
         struct { int val; }                                     lit;
@@ -309,6 +312,7 @@ struct Node {
         struct { Node *cond; Node *body; }                      while_s;
         struct { Node *init; Node *cond; Node *step; Node *body; } for_s;
         struct { Node *expr; }                                  expr_stmt;
+        struct { char name[128]; Node **args; int nargs; }      call;
     };
 };
 
@@ -394,6 +398,24 @@ static Node *parse_atom(void) {
         Node *n = node_new(ND_IDENT, cur.line, cur.col);
         strncpy(n->ident.name, cur.text, sizeof(n->ident.name) - 1);
         advance_tok();
+        /* function call: ident '(' args ')' */
+        if (at(TOK_LPAREN)) {
+            advance_tok();
+            Node *c = node_new(ND_CALL, n->line, n->col);
+            strncpy(c->call.name, n->ident.name, sizeof(c->call.name) - 1);
+            NList args = {0};
+            if (!at(TOK_RPAREN)) {
+                nlist_push(&args, parse_expr());
+                while (at(TOK_COMMA)) {
+                    advance_tok();
+                    nlist_push(&args, parse_expr());
+                }
+            }
+            expect(TOK_RPAREN, "expected ')' after arguments");
+            c->call.args  = args.items;
+            c->call.nargs = args.count;
+            return c;
+        }
         return n;
     }
     if (at(TOK_LPAREN)) {
@@ -608,15 +630,47 @@ static int parse_type(void) {
 static Node *parse_func(void) {
     int line = cur.line, col = cur.col;
     int ret = parse_type();
+    while (at(TOK_STAR)) advance_tok(); /* skip ptr star on return type */
     if (!at(TOK_IDENT)) error(cur.line, cur.col, "expected function name");
     Node *n = node_new(ND_FUNC, line, col);
     strncpy(n->func.name, cur.text, sizeof(n->func.name) - 1);
     n->func.ret_type = ret;
     advance_tok();
     expect(TOK_LPAREN, "expected '('");
-    /* M1: no parameters */
+
+    /* parameters */
+    n->func.param_count = 0;
+    if (!at(TOK_RPAREN)) {
+        if (at(TOK_VOID)) {
+            advance_tok();
+        } else {
+            parse_type();
+            while (at(TOK_STAR)) advance_tok();
+            if (at(TOK_IDENT)) {
+                strncpy(n->func.param_names[n->func.param_count], cur.text, 127);
+                n->func.param_count++;
+                advance_tok();
+            }
+            while (at(TOK_COMMA)) {
+                advance_tok();
+                parse_type();
+                while (at(TOK_STAR)) advance_tok();
+                if (at(TOK_IDENT)) {
+                    strncpy(n->func.param_names[n->func.param_count], cur.text, 127);
+                    n->func.param_count++;
+                    advance_tok();
+                }
+            }
+        }
+    }
     expect(TOK_RPAREN, "expected ')'");
-    n->func.body = parse_block();
+
+    if (at(TOK_SEMI)) {
+        advance_tok();
+        n->func.body = NULL;
+    } else {
+        n->func.body = parse_block();
+    }
     return n;
 }
 
@@ -759,6 +813,11 @@ static void gen_expr(Node *n) {
         default:
             error(n->line, n->col, "unsupported binary operator");
         }
+        break;
+    case ND_CALL:
+        for (int i = 0; i < n->call.nargs; i++)
+            gen_expr(n->call.args[i]);
+        emit("call $%s", n->call.name);
         break;
     default:
         error(n->line, n->col, "unsupported expression in codegen");
@@ -911,23 +970,29 @@ static void gen_stmt(Node *n) {
 /* --- Function codegen --- */
 
 static void gen_func(Node *n) {
+    if (!n->func.body) return; /* skip prototypes */
+
     nlocals = 0;
     label_cnt = 0;
     loop_sp = 0;
     collect_locals(n->func.body);
 
+    /* Build signature with params */
     const char *ret_sig = n->func.ret_type == 1 ? "" : " (result i32)";
-    emit("(func $%s%s", n->func.name, ret_sig);
-    indent_level++;
+    printf("  (func $%s", n->func.name);
+    for (int i = 0; i < n->func.param_count; i++)
+        printf(" (param $%s i32)", n->func.param_names[i]);
+    printf("%s\n", ret_sig);
+
+    indent_level = 2;
     for (int i = 0; i < nlocals; i++)
         emit("(local $%s i32)", local_names[i]);
     Node *body = n->func.body;
     for (int i = 0; i < body->block.nstmts; i++)
         gen_stmt(body->block.stmts[i]);
-    /* default return value for WASM validation (unreachable if all paths return) */
     if (n->func.ret_type != 1)
         emit("i32.const 0");
-    indent_level--;
+    indent_level = 1;
     emit(")");
 }
 
