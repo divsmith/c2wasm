@@ -2,23 +2,19 @@
 
 /**
  * Wraps the Emscripten-compiled c2wasm compiler.
- * Expects compiler.js (produced by `make wasm`) to define C2WasmModule globally.
- *
- * We pre-fetch compiler.wasm ourselves and pass it as `wasmBinary` so Emscripten
- * never needs to fetch the file internally. This avoids the "both async and sync
- * fetching of the wasm failed" error that occurs when the page is opened via
- * file:// or the internal path resolution goes wrong.
+ * compiler.js is built with -s SINGLE_FILE=1, so the WASM binary is embedded
+ * directly inside it — no separate compiler.wasm fetch needed. The demo works
+ * as a fully static page, including when opened from the filesystem.
  */
 var CompilerAPI = (function () {
   var moduleFactory = null;
-  var wasmBinaryData = null;
   var loading = null;
 
   function init() {
-    if (moduleFactory && wasmBinaryData) return Promise.resolve();
+    if (moduleFactory) return Promise.resolve();
     if (loading) return loading;
 
-    var scriptPromise = new Promise(function (resolve, reject) {
+    loading = new Promise(function (resolve, reject) {
       if (typeof C2WasmModule === 'function') {
         moduleFactory = C2WasmModule;
         resolve();
@@ -45,35 +41,6 @@ var CompilerAPI = (function () {
       document.head.appendChild(script);
     });
 
-    var wasmPromise = fetch('compiler.wasm')
-      .then(function (res) {
-        if (!res.ok) {
-          throw new Error(
-            'compiler.wasm not found (HTTP ' + res.status + ').\n' +
-            'Build it with Emscripten:\n' +
-            '  cd compiler && make wasm'
-          );
-        }
-        return res.arrayBuffer();
-      })
-      .then(function (buf) {
-        wasmBinaryData = new Uint8Array(buf);
-      })
-      .catch(function (err) {
-        if (err.message && err.message.indexOf('compiler.wasm') !== -1) {
-          throw err;
-        }
-        throw new Error(
-          'Failed to load compiler.wasm.\n' +
-          'The demo must be served over HTTP, not opened as a local file.\n' +
-          'Run:\n' +
-          '  cd compiler && make serve\n' +
-          'Then open http://localhost:8080/\n' +
-          '(original error: ' + err.message + ')'
-        );
-      });
-
-    loading = Promise.all([scriptPromise, wasmPromise]).then(function () {});
     loading.catch(function () { loading = null; });
     return loading;
   }
@@ -85,7 +52,6 @@ var CompilerAPI = (function () {
       var errorOutput = '';
 
       return moduleFactory({
-        wasmBinary: wasmBinaryData,
         noInitialRun: true,
         stdin: function () {
           if (inputPos < cSource.length) {

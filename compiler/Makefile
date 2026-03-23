@@ -20,7 +20,8 @@ wasm: $(SRC)
 		-s EXPORT_NAME=C2WasmModule \
 		-s EXPORTED_RUNTIME_METHODS='["callMain","FS"]' \
 		-s ALLOW_MEMORY_GROWTH=1 \
-		-s EXIT_RUNTIME=0
+		-s EXIT_RUNTIME=0 \
+		-s SINGLE_FILE=1
 
 serve:
 	cd $(DEMO) && python3 -m http.server 8080
