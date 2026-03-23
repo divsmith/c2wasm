@@ -75,6 +75,7 @@
 #define TOK_CARET_EQ 55
 #define TOK_LSHIFT_EQ 56
 #define TOK_RSHIFT_EQ 57
+#define TOK_DO 58
 
 /* Node kinds */
 #define ND_PROGRAM 0
@@ -100,6 +101,7 @@
 #define ND_SUBSCRIPT 20
 #define ND_POST_INC 21
 #define ND_POST_DEC 22
+#define ND_DO_WHILE 23
 
 /* Limits */
 #define MAX_SRC 2097152
@@ -271,6 +273,7 @@ int kw_lookup(char *s) {
     if (strcmp(s, "if") == 0) return TOK_IF;
     if (strcmp(s, "else") == 0) return TOK_ELSE;
     if (strcmp(s, "while") == 0) return TOK_WHILE;
+    if (strcmp(s, "do") == 0) return TOK_DO;
     if (strcmp(s, "for") == 0) return TOK_FOR;
     if (strcmp(s, "break") == 0) return TOK_BREAK;
     if (strcmp(s, "continue") == 0) return TOK_CONTINUE;
@@ -1296,6 +1299,29 @@ struct Node *parse_for(void) {
     return n;
 }
 
+struct Node *parse_do_while(void) {
+    struct Node *n;
+    struct Node *body;
+    struct Node *cond;
+    int line;
+    int col;
+
+    line = cur->line;
+    col = cur->col;
+    advance_tok();
+    body = parse_stmt();
+    if (!at(TOK_WHILE)) error(cur->line, cur->col, "expected 'while' after do body");
+    advance_tok();
+    expect(TOK_LPAREN, "expected '(' after while");
+    cond = parse_expr();
+    expect(TOK_RPAREN, "expected ')'");
+    expect(TOK_SEMI, "expected ';' after do-while");
+    n = node_new(ND_DO_WHILE, line, col);
+    n->c0 = body;
+    n->c1 = cond;
+    return n;
+}
+
 struct Node *parse_stmt(void) {
     struct Node *n;
     struct Node *expr;
@@ -1314,6 +1340,7 @@ struct Node *parse_stmt(void) {
         return n;
     }
     if (at(TOK_IF)) return parse_if();
+    if (at(TOK_DO)) return parse_do_while();
     if (at(TOK_WHILE)) return parse_while();
     if (at(TOK_FOR)) return parse_for();
     if (at(TOK_BREAK)) {
@@ -1682,6 +1709,8 @@ void collect_locals(struct Node *n) {
     } else if (n->kind == ND_FOR) {
         collect_locals(n->c0);
         collect_locals(n->c3);
+    } else if (n->kind == ND_DO_WHILE) {
+        collect_locals(n->c0);
     } else if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
         collect_locals(n->c0);
     }
@@ -2297,6 +2326,8 @@ void gen_expr(struct Node *n) {
                 emit_indent(); printf("local.set $%s\n", pname);
             }
         } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
+            /* NOTE: tgt2->c0 evaluated 3x (save old val, store addr, reload).
+               Correct only when pointer expression has no side effects. */
             pesz = expr_elem_size(tgt2->c0);
             gen_expr(tgt2->c0);
             emit_indent();
@@ -2313,6 +2344,8 @@ void gen_expr(struct Node *n) {
             if (pesz == 1) { printf("i32.store8\n"); } else { printf("i32.store\n"); }
             emit_indent(); printf("local.get $__atmp\n");
         } else if (tgt2->kind == ND_SUBSCRIPT) {
+            /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
+               Correct only when the array and index expressions have no side effects. */
             pesz = expr_elem_size(tgt2->c0);
             gen_expr(tgt2->c0); gen_expr(tgt2->c1);
             if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
@@ -2501,6 +2534,35 @@ void gen_stmt(struct Node *n) {
         }
         emit_indent();
         printf("br $lp_%d\n", lbl);
+        indent_level = indent_level - 1;
+        emit_indent();
+        printf(")\n");
+        indent_level = indent_level - 1;
+        emit_indent();
+        printf(")\n");
+        loop_sp = loop_sp - 1;
+    } else if (n->kind == ND_DO_WHILE) {
+        lbl = label_cnt;
+        label_cnt = label_cnt + 1;
+        brk_lbl[loop_sp] = lbl;
+        cont_lbl[loop_sp] = lbl;
+        loop_sp = loop_sp + 1;
+        emit_indent();
+        printf("(block $brk_%d\n", lbl);
+        indent_level = indent_level + 1;
+        emit_indent();
+        printf("(loop $lp_%d\n", lbl);
+        indent_level = indent_level + 1;
+        emit_indent();
+        printf("(block $cont_%d\n", lbl);
+        indent_level = indent_level + 1;
+        gen_body(n->c0);
+        indent_level = indent_level - 1;
+        emit_indent();
+        printf(")\n");
+        gen_expr(n->c1);
+        emit_indent();
+        printf("br_if $lp_%d\n", lbl);
         indent_level = indent_level - 1;
         emit_indent();
         printf(")\n");

@@ -1,8 +1,10 @@
 /* EXPECT_EXIT: 42 */
+int g_val;
 int main(void) {
     int a;
     int b;
     int r;
+    int *p;
 
     /* XOR binary */
     a = 15;
@@ -46,6 +48,18 @@ int main(void) {
     a = 16;
     a >>= 2;
     if (a != 4) return 10;
+
+    /* global |= */
+    g_val = 4;
+    g_val |= 3;
+    if (g_val != 7) return 11;
+
+    /* pointer post-increment */
+    p = (int *)malloc(4);
+    *p = 7;
+    r = (*p)++;
+    if (r != 7) return 12;
+    if (*p != 8) return 13;
 
     return 42;
 }
