@@ -77,7 +77,7 @@
 #define TOK_RSHIFT_EQ 57
 #define TOK_DO 58
 #define TOK_QUESTION 59
-#define TOK_COLON 60
+#define TOK_COLON 60 /* used by ternary ?: and by switch case/default labels */
 #define TOK_SWITCH 61
 #define TOK_CASE 62
 #define TOK_DEFAULT 63
@@ -1139,6 +1139,7 @@ struct Node *parse_expr_bp(int min_bp) {
         }
 
         /* ternary ? : */
+        /* ternary bp=3: above assignment (2), below logical-or (4); right-assoc */
         if (at(TOK_QUESTION) && 3 >= min_bp) {
             struct Node *then_e;
             struct Node *else_e;
@@ -1346,10 +1347,10 @@ struct Node *parse_do_while(void) {
 
     line = cur->line;
     col = cur->col;
-    advance_tok();
+    advance_tok(); /* consume 'do' */
     body = parse_stmt();
     if (!at(TOK_WHILE)) error(cur->line, cur->col, "expected 'while' after do body");
-    advance_tok();
+    advance_tok(); /* consume 'while' */
     expect(TOK_LPAREN, "expected '(' after while");
     cond = parse_expr();
     expect(TOK_RPAREN, "expected ')'");
@@ -1797,7 +1798,7 @@ void collect_locals(struct Node *n) {
         collect_locals(n->c0);
         collect_locals(n->c3);
     } else if (n->kind == ND_DO_WHILE) {
-        collect_locals(n->c0);
+        collect_locals(n->c0); /* condition (c1) cannot contain declarations */
     } else if (n->kind == ND_SWITCH) {
         int i;
         for (i = 0; i < n->ival2; i = i + 1) {
@@ -2481,6 +2482,7 @@ void gen_expr(struct Node *n) {
         }
     } else if (n->kind == ND_TERNARY) {
         gen_expr(n->c0);
+        /* both branches produce i32; compiler is uniformly i32 throughout */
         emit_indent();
         printf("(if (result i32)\n");
         indent_level = indent_level + 1;
