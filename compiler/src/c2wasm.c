@@ -388,6 +388,8 @@ static Node *parse_block(void);
 
 static int prefix_bp(int op) {
     if (op == TOK_MINUS || op == TOK_BANG) return 23;
+    if (op == TOK_STAR || op == TOK_AMP) return 23;
+    if (op == TOK_PLUS_PLUS || op == TOK_MINUS_MINUS) return 23;
     return -1;
 }
 
@@ -472,9 +474,19 @@ static Node *parse_expr_bp(int min_bp) {
         int line = cur.line, col = cur.col;
         advance_tok();
         Node *operand = parse_expr_bp(pbp);
-        left = node_new(ND_UNARY, line, col);
-        left->unary.op = op;
-        left->unary.operand = operand;
+        /* prefix ++/-- desugar to compound assignment */
+        if (op == TOK_PLUS_PLUS || op == TOK_MINUS_MINUS) {
+            Node *one = node_new(ND_INT_LIT, line, col);
+            one->lit.val = 1;
+            left = node_new(ND_ASSIGN, line, col);
+            left->assign.target = operand;
+            left->assign.value  = one;
+            left->assign.op = (op == TOK_PLUS_PLUS) ? TOK_PLUS_EQ : TOK_MINUS_EQ;
+        } else {
+            left = node_new(ND_UNARY, line, col);
+            left->unary.op = op;
+            left->unary.operand = operand;
+        }
     } else {
         left = parse_atom();
     }
@@ -491,7 +503,9 @@ static Node *parse_expr_bp(int min_bp) {
 
         /* assignment operators produce ND_ASSIGN */
         if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ) {
-            if (left->kind != ND_IDENT)
+            int valid = (left->kind == ND_IDENT) ||
+                        (left->kind == ND_UNARY && left->unary.op == TOK_STAR);
+            if (!valid)
                 error(line, col, "invalid assignment target");
             Node *n = node_new(ND_ASSIGN, line, col);
             n->assign.target = left;
@@ -794,19 +808,42 @@ static void gen_expr(Node *n) {
         emit("local.get $%s", n->ident.name);
         break;
     case ND_ASSIGN: {
-        const char *name = n->assign.target->ident.name;
-        if (n->assign.op == TOK_EQ) {
-            gen_expr(n->assign.value);
-        } else if (n->assign.op == TOK_PLUS_EQ) {
-            emit("local.get $%s", name);
-            gen_expr(n->assign.value);
-            emit("i32.add");
-        } else if (n->assign.op == TOK_MINUS_EQ) {
-            emit("local.get $%s", name);
-            gen_expr(n->assign.value);
-            emit("i32.sub");
+        Node *tgt = n->assign.target;
+        if (tgt->kind == ND_IDENT) {
+            const char *name = tgt->ident.name;
+            if (n->assign.op == TOK_EQ) {
+                gen_expr(n->assign.value);
+            } else if (n->assign.op == TOK_PLUS_EQ) {
+                emit("local.get $%s", name);
+                gen_expr(n->assign.value);
+                emit("i32.add");
+            } else if (n->assign.op == TOK_MINUS_EQ) {
+                emit("local.get $%s", name);
+                gen_expr(n->assign.value);
+                emit("i32.sub");
+            }
+            emit("local.tee $%s", name);
+        } else if (tgt->kind == ND_UNARY && tgt->unary.op == TOK_STAR) {
+            /* *p = val  or  *p += val */
+            if (n->assign.op == TOK_EQ) {
+                gen_expr(n->assign.value);
+            } else if (n->assign.op == TOK_PLUS_EQ) {
+                gen_expr(tgt->unary.operand);
+                emit("i32.load");
+                gen_expr(n->assign.value);
+                emit("i32.add");
+            } else if (n->assign.op == TOK_MINUS_EQ) {
+                gen_expr(tgt->unary.operand);
+                emit("i32.load");
+                gen_expr(n->assign.value);
+                emit("i32.sub");
+            }
+            emit("local.set $__atmp");
+            gen_expr(tgt->unary.operand);
+            emit("local.get $__atmp");
+            emit("i32.store");
+            emit("local.get $__atmp");
         }
-        emit("local.tee $%s", name);
         break;
     }
     case ND_UNARY:
@@ -817,6 +854,11 @@ static void gen_expr(Node *n) {
         } else if (n->unary.op == TOK_BANG) {
             gen_expr(n->unary.operand);
             emit("i32.eqz");
+        } else if (n->unary.op == TOK_STAR) {
+            gen_expr(n->unary.operand);
+            emit("i32.load");
+        } else if (n->unary.op == TOK_AMP) {
+            error(n->line, n->col, "cannot take address of this expression");
         }
         break;
     case ND_BINARY:
@@ -905,6 +947,14 @@ static void gen_expr(Node *n) {
         } else if (!strcmp(n->call.name, "exit")) {
             gen_expr(n->call.args[0]);
             emit("call $__proc_exit");
+            emit("i32.const 0");
+        } else if (!strcmp(n->call.name, "malloc")) {
+            gen_expr(n->call.args[0]);
+            emit("call $malloc");
+        } else if (!strcmp(n->call.name, "free")) {
+            if (n->call.nargs > 0) gen_expr(n->call.args[0]);
+            else emit("i32.const 0");
+            emit("call $free");
             emit("i32.const 0");
         } else {
             for (int i = 0; i < n->call.nargs; i++)
@@ -1083,6 +1133,7 @@ static void gen_func(Node *n) {
     indent_level = 2;
     for (int i = 0; i < nlocals; i++)
         emit("(local $%s i32)", local_names[i]);
+    emit("(local $__atmp i32)"); /* temp for pointer assignment */
     Node *body = n->func.body;
     for (int i = 0; i < body->block.nstmts; i++)
         gen_stmt(body->block.stmts[i]);
@@ -1227,6 +1278,19 @@ static void gen_module(Node *prog) {
     emit("    (br $pl)");
     emit("  ))");
     emit(")");
+    emit("");
+
+    /* malloc: bump allocator */
+    emit("(func $malloc (param $size i32) (result i32)");
+    emit("  (local $ptr i32)");
+    emit("  (local.set $ptr (global.get $__heap_ptr))");
+    emit("  (global.set $__heap_ptr (i32.add (global.get $__heap_ptr)");
+    emit("    (i32.and (i32.add (local.get $size) (i32.const 7)) (i32.const -8))))");
+    emit("  (local.get $ptr)");
+    emit(")");
+
+    /* free: no-op */
+    emit("(func $free (param $ptr i32))");
     emit("");
 
     /* user functions */
