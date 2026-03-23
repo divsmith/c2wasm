@@ -971,6 +971,7 @@ struct Node *parse_atom(void) {
     struct NList *args;
     int line;
     int col;
+    int is_ptr;
 
     if (at(TOK_INT_LIT)) {
         n = node_new(ND_INT_LIT, cur->line, cur->col);
@@ -988,21 +989,33 @@ struct Node *parse_atom(void) {
         line = cur->line;
         col = cur->col;
         advance_tok();
-        expect(TOK_LPAREN, "expected '(' after sizeof");
         n = node_new(ND_SIZEOF, line, col);
-        if (at(TOK_STRUCT)) {
-            advance_tok();
-            if (at(TOK_IDENT)) {
+        is_ptr = 0;
+        if (at(TOK_LPAREN)) {
+            advance_tok(); /* consume '(' */
+            while (at(TOK_CONST)) advance_tok(); /* skip const */
+            if (at(TOK_STRUCT)) {
+                advance_tok();
+                if (at(TOK_IDENT)) {
+                    n->sval = strdupn(cur->text, 127);
+                    advance_tok();
+                }
+                while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+            } else if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID)) {
                 n->sval = strdupn(cur->text, 127);
                 advance_tok();
+                while (at(TOK_CONST)) advance_tok();
+                while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+            } else {
+                /* sizeof(expr) */
+                n->c0 = parse_expr();
             }
-            while (at(TOK_STAR)) advance_tok();
-        } else if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID)) {
-            n->sval = strdupn(cur->text, 127);
-            advance_tok();
-            while (at(TOK_STAR)) advance_tok();
+            expect(TOK_RPAREN, "expected ')' after sizeof");
+        } else {
+            /* sizeof expr without parens */
+            n->c0 = parse_expr_bp(25);
         }
-        expect(TOK_RPAREN, "expected ')' after sizeof");
+        n->ival = is_ptr;
         return n;
     }
     if (at(TOK_STR_LIT)) {
@@ -2373,14 +2386,30 @@ void gen_expr(struct Node *n) {
         printf("i32.load\n");
     } else if (n->kind == ND_SIZEOF) {
         struct StructDef *sd;
-        sd = find_struct(n->sval);
-        if (sd != (struct StructDef *)0) {
-            emit_indent();
-            printf("i32.const %d\n", sd->size);
+        int sz;
+        if (n->ival == 1) {
+            sz = 4; /* pointer type */
+        } else if (n->c0 != (struct Node *)0) {
+            /* sizeof(expr): infer size from variable */
+            if (n->c0->kind == ND_IDENT) {
+                sz = var_elem_size(n->c0->sval);
+            } else {
+                sz = 4;
+            }
+        } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
+            sz = 1;
+        } else if (n->sval != (char *)0) {
+            sd = find_struct(n->sval);
+            if (sd != (struct StructDef *)0) {
+                sz = sd->size;
+            } else {
+                sz = 4;
+            }
         } else {
-            emit_indent();
-            printf("i32.const 4\n");
+            sz = 4;
         }
+        emit_indent();
+        printf("i32.const %d\n", sz);
     } else if (n->kind == ND_SUBSCRIPT) {
         esz = expr_elem_size(n->c0);
         gen_expr(n->c0);
