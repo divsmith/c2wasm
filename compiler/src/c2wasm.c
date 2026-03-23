@@ -2826,6 +2826,7 @@ void gen_stmt(struct Node *n) {
         printf("br $brk_%d\n", brk_lbl[loop_sp - 1]);
     } else if (n->kind == ND_CONTINUE) {
         if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
+        if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
         emit_indent();
         printf("br $cont_%d\n", cont_lbl[loop_sp - 1]);
     } else if (n->kind == ND_BLOCK) {
@@ -2843,20 +2844,31 @@ void gen_stmt(struct Node *n) {
         int next_start;
         int sw_lbl;
         int si;
+        int last_case_pos;
 
         nc = 0;
         dflt_pos = -1;
         has_dflt = 0;
         for (si = 0; si < n->ival2; si = si + 1) {
             if (n->list[si]->kind == ND_CASE) {
-                if (nc < 256) {
-                    case_vals[nc] = n->list[si]->ival;
-                    case_start[nc] = si;
-                    nc = nc + 1;
+                if (nc >= MAX_CASES) {
+                    error(n->nline, n->ncol, "too many cases in switch");
                 }
+                case_vals[nc] = n->list[si]->ival;
+                case_start[nc] = si;
+                nc = nc + 1;
             } else if (n->list[si]->kind == ND_DEFAULT) {
                 dflt_pos = si;
                 has_dflt = 1;
+            }
+        }
+
+        /* enforce: default must be last (limitation of WAT codegen) */
+        if (has_dflt) {
+            last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
+            if (dflt_pos < last_case_pos) {
+                error(n->c0->nline, n->c0->ncol,
+                      "default must appear after all case labels");
             }
         }
 
