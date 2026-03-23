@@ -286,19 +286,29 @@ typedef struct Node Node;
 enum {
     ND_PROGRAM, ND_FUNC, ND_BLOCK, ND_RETURN,
     ND_INT_LIT, ND_BINARY, ND_UNARY,
+    ND_VAR_DECL, ND_IDENT, ND_ASSIGN,
+    ND_IF, ND_WHILE, ND_FOR,
+    ND_BREAK, ND_CONTINUE, ND_EXPR_STMT,
 };
 
 struct Node {
     int kind;
     int line, col;
     union {
-        struct { Node **decls; int ndecls; }            program;
-        struct { char name[128]; int ret_type; Node *body; } func;
-        struct { Node **stmts; int nstmts; }            block;
-        struct { Node *expr; }                          ret;
-        struct { int val; }                             lit;
-        struct { int op; Node *left; Node *right; }     binary;
-        struct { int op; Node *operand; }               unary;
+        struct { Node **decls; int ndecls; }                    program;
+        struct { char name[128]; int ret_type; Node *body; }    func;
+        struct { Node **stmts; int nstmts; }                    block;
+        struct { Node *expr; }                                  ret;
+        struct { int val; }                                     lit;
+        struct { int op; Node *left; Node *right; }             binary;
+        struct { int op; Node *operand; }                       unary;
+        struct { char name[128]; Node *init; }                  var_decl;
+        struct { char name[128]; }                              ident;
+        struct { Node *target; Node *value; int op; }           assign;
+        struct { Node *cond; Node *then_b; Node *else_b; }     if_s;
+        struct { Node *cond; Node *body; }                      while_s;
+        struct { Node *init; Node *cond; Node *step; Node *body; } for_s;
+        struct { Node *expr; }                                  expr_stmt;
     };
 };
 
@@ -334,8 +344,14 @@ static void expect(int kind, const char *msg) {
     advance_tok();
 }
 
+static int is_type_token(void) {
+    return at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID);
+}
+
 /* Forward declarations */
 static Node *parse_expr(void);
+static Node *parse_stmt(void);
+static Node *parse_block(void);
 
 /* --- Expression parsing: precedence climbing --- */
 
@@ -347,7 +363,9 @@ static int prefix_bp(int op) {
 /* Returns left binding power, or -1 if not an infix op */
 static int infix_bp(int op, int *rbp) {
     switch (op) {
-    case TOK_PIPE_PIPE:                *rbp = 3;  return 4;
+    case TOK_EQ: case TOK_PLUS_EQ:
+    case TOK_MINUS_EQ:                     *rbp = 1;  return 2;
+    case TOK_PIPE_PIPE:                    *rbp = 3;  return 4;
     case TOK_AMP_AMP:                  *rbp = 5;  return 6;
     case TOK_EQ_EQ: case TOK_BANG_EQ:  *rbp = 9;  return 10;
     case TOK_LT: case TOK_GT:
@@ -363,6 +381,18 @@ static Node *parse_atom(void) {
     if (at(TOK_INT_LIT)) {
         Node *n = node_new(ND_INT_LIT, cur.line, cur.col);
         n->lit.val = cur.int_val;
+        advance_tok();
+        return n;
+    }
+    if (at(TOK_CHAR_LIT)) {
+        Node *n = node_new(ND_INT_LIT, cur.line, cur.col);
+        n->lit.val = cur.int_val;
+        advance_tok();
+        return n;
+    }
+    if (at(TOK_IDENT)) {
+        Node *n = node_new(ND_IDENT, cur.line, cur.col);
+        strncpy(n->ident.name, cur.text, sizeof(n->ident.name) - 1);
         advance_tok();
         return n;
     }
@@ -402,11 +432,23 @@ static Node *parse_expr_bp(int min_bp) {
         int line = cur.line, col = cur.col;
         advance_tok();
         Node *right = parse_expr_bp(rbp);
-        Node *n = node_new(ND_BINARY, line, col);
-        n->binary.op    = op;
-        n->binary.left  = left;
-        n->binary.right = right;
-        left = n;
+
+        /* assignment operators produce ND_ASSIGN */
+        if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ) {
+            if (left->kind != ND_IDENT)
+                error(line, col, "invalid assignment target");
+            Node *n = node_new(ND_ASSIGN, line, col);
+            n->assign.target = left;
+            n->assign.value  = right;
+            n->assign.op     = op;
+            left = n;
+        } else {
+            Node *n = node_new(ND_BINARY, line, col);
+            n->binary.op    = op;
+            n->binary.left  = left;
+            n->binary.right = right;
+            left = n;
+        }
     }
     return left;
 }
@@ -414,6 +456,91 @@ static Node *parse_expr_bp(int min_bp) {
 static Node *parse_expr(void) { return parse_expr_bp(0); }
 
 /* --- Statements --- */
+
+static Node *parse_var_decl(void) {
+    int line = cur.line, col = cur.col;
+    advance_tok(); /* skip type keyword */
+    /* skip pointer stars — M5 will handle properly */
+    while (at(TOK_STAR)) advance_tok();
+    if (!at(TOK_IDENT)) error(cur.line, cur.col, "expected variable name");
+    Node *n = node_new(ND_VAR_DECL, line, col);
+    strncpy(n->var_decl.name, cur.text, sizeof(n->var_decl.name) - 1);
+    advance_tok();
+    if (at(TOK_EQ)) {
+        advance_tok();
+        n->var_decl.init = parse_expr();
+    }
+    expect(TOK_SEMI, "expected ';' after declaration");
+    return n;
+}
+
+static Node *parse_if(void) {
+    int line = cur.line, col = cur.col;
+    advance_tok(); /* skip 'if' */
+    expect(TOK_LPAREN, "expected '(' after 'if'");
+    Node *cond = parse_expr();
+    expect(TOK_RPAREN, "expected ')'");
+    Node *then_b = parse_stmt();
+    Node *else_b = NULL;
+    if (at(TOK_ELSE)) {
+        advance_tok();
+        else_b = parse_stmt();
+    }
+    Node *n = node_new(ND_IF, line, col);
+    n->if_s.cond   = cond;
+    n->if_s.then_b = then_b;
+    n->if_s.else_b = else_b;
+    return n;
+}
+
+static Node *parse_while(void) {
+    int line = cur.line, col = cur.col;
+    advance_tok();
+    expect(TOK_LPAREN, "expected '(' after 'while'");
+    Node *cond = parse_expr();
+    expect(TOK_RPAREN, "expected ')'");
+    Node *body = parse_stmt();
+    Node *n = node_new(ND_WHILE, line, col);
+    n->while_s.cond = cond;
+    n->while_s.body = body;
+    return n;
+}
+
+static Node *parse_for(void) {
+    int line = cur.line, col = cur.col;
+    advance_tok();
+    expect(TOK_LPAREN, "expected '(' after 'for'");
+
+    /* init */
+    Node *init = NULL;
+    if (is_type_token()) {
+        init = parse_var_decl();
+    } else if (!at(TOK_SEMI)) {
+        init = node_new(ND_EXPR_STMT, cur.line, cur.col);
+        init->expr_stmt.expr = parse_expr();
+        expect(TOK_SEMI, "expected ';'");
+    } else {
+        advance_tok(); /* skip ';' */
+    }
+
+    /* cond */
+    Node *cond = NULL;
+    if (!at(TOK_SEMI)) cond = parse_expr();
+    expect(TOK_SEMI, "expected ';'");
+
+    /* step */
+    Node *step = NULL;
+    if (!at(TOK_RPAREN)) step = parse_expr();
+    expect(TOK_RPAREN, "expected ')'");
+
+    Node *body = parse_stmt();
+    Node *n = node_new(ND_FOR, line, col);
+    n->for_s.init = init;
+    n->for_s.cond = cond;
+    n->for_s.step = step;
+    n->for_s.body = body;
+    return n;
+}
 
 static Node *parse_stmt(void) {
     if (at(TOK_RETURN)) {
@@ -425,8 +552,31 @@ static Node *parse_stmt(void) {
         expect(TOK_SEMI, "expected ';' after return");
         return n;
     }
-    error(cur.line, cur.col, "expected statement");
-    return NULL;
+    if (at(TOK_IF))       return parse_if();
+    if (at(TOK_WHILE))    return parse_while();
+    if (at(TOK_FOR))      return parse_for();
+    if (at(TOK_BREAK)) {
+        int line = cur.line, col = cur.col;
+        advance_tok();
+        expect(TOK_SEMI, "expected ';' after break");
+        return node_new(ND_BREAK, line, col);
+    }
+    if (at(TOK_CONTINUE)) {
+        int line = cur.line, col = cur.col;
+        advance_tok();
+        expect(TOK_SEMI, "expected ';' after continue");
+        return node_new(ND_CONTINUE, line, col);
+    }
+    if (at(TOK_LBRACE)) return parse_block();
+    if (is_type_token()) return parse_var_decl();
+
+    /* expression statement */
+    int line = cur.line, col = cur.col;
+    Node *expr = parse_expr();
+    expect(TOK_SEMI, "expected ';'");
+    Node *n = node_new(ND_EXPR_STMT, line, col);
+    n->expr_stmt.expr = expr;
+    return n;
 }
 
 /* --- Block --- */
@@ -496,6 +646,55 @@ static void emit(const char *fmt, ...) {
     printf("\n");
 }
 
+/* --- Local variable tracking --- */
+
+#define MAX_LOCALS 256
+static char local_names[MAX_LOCALS][128];
+static int nlocals;
+
+static int find_local(const char *name) {
+    for (int i = 0; i < nlocals; i++)
+        if (!strcmp(local_names[i], name)) return i;
+    return -1;
+}
+
+static void add_local(const char *name) {
+    if (find_local(name) >= 0) return;
+    if (nlocals >= MAX_LOCALS) { fprintf(stderr, "too many locals\n"); exit(1); }
+    strncpy(local_names[nlocals], name, 127);
+    local_names[nlocals][127] = '\0';
+    nlocals++;
+}
+
+static void collect_locals(Node *n) {
+    if (!n) return;
+    switch (n->kind) {
+    case ND_VAR_DECL:  add_local(n->var_decl.name); break;
+    case ND_BLOCK:
+        for (int i = 0; i < n->block.nstmts; i++)
+            collect_locals(n->block.stmts[i]);
+        break;
+    case ND_IF:
+        collect_locals(n->if_s.then_b);
+        collect_locals(n->if_s.else_b);
+        break;
+    case ND_WHILE:  collect_locals(n->while_s.body); break;
+    case ND_FOR:
+        collect_locals(n->for_s.init);
+        collect_locals(n->for_s.body);
+        break;
+    default: break;
+    }
+}
+
+/* --- Loop label management --- */
+
+static int label_cnt;
+#define MAX_LOOP_DEPTH 64
+static int brk_lbl[MAX_LOOP_DEPTH];
+static int cont_lbl[MAX_LOOP_DEPTH];
+static int loop_sp;
+
 /* --- Expression codegen: leaves one i32 on the WASM stack --- */
 
 static void gen_expr(Node *n) {
@@ -503,6 +702,25 @@ static void gen_expr(Node *n) {
     case ND_INT_LIT:
         emit("i32.const %d", n->lit.val);
         break;
+    case ND_IDENT:
+        emit("local.get $%s", n->ident.name);
+        break;
+    case ND_ASSIGN: {
+        const char *name = n->assign.target->ident.name;
+        if (n->assign.op == TOK_EQ) {
+            gen_expr(n->assign.value);
+        } else if (n->assign.op == TOK_PLUS_EQ) {
+            emit("local.get $%s", name);
+            gen_expr(n->assign.value);
+            emit("i32.add");
+        } else if (n->assign.op == TOK_MINUS_EQ) {
+            emit("local.get $%s", name);
+            gen_expr(n->assign.value);
+            emit("i32.sub");
+        }
+        emit("local.tee $%s", name);
+        break;
+    }
     case ND_UNARY:
         if (n->unary.op == TOK_MINUS) {
             emit("i32.const 0");
@@ -549,6 +767,17 @@ static void gen_expr(Node *n) {
 
 /* --- Statement codegen --- */
 
+static void gen_stmt(Node *n);
+
+static void gen_body(Node *n) {
+    if (n->kind == ND_BLOCK) {
+        for (int i = 0; i < n->block.nstmts; i++)
+            gen_stmt(n->block.stmts[i]);
+    } else {
+        gen_stmt(n);
+    }
+}
+
 static void gen_stmt(Node *n) {
     switch (n->kind) {
     case ND_RETURN:
@@ -556,6 +785,124 @@ static void gen_stmt(Node *n) {
             gen_expr(n->ret.expr);
         emit("return");
         break;
+
+    case ND_VAR_DECL:
+        if (n->var_decl.init) {
+            gen_expr(n->var_decl.init);
+            emit("local.set $%s", n->var_decl.name);
+        }
+        break;
+
+    case ND_EXPR_STMT:
+        gen_expr(n->expr_stmt.expr);
+        emit("drop");
+        break;
+
+    case ND_IF:
+        gen_expr(n->if_s.cond);
+        if (n->if_s.else_b) {
+            emit("(if");
+            indent_level++;
+            emit("(then");
+            indent_level++;
+            gen_body(n->if_s.then_b);
+            indent_level--;
+            emit(")");
+            emit("(else");
+            indent_level++;
+            gen_body(n->if_s.else_b);
+            indent_level--;
+            emit(")");
+            indent_level--;
+            emit(")");
+        } else {
+            emit("(if");
+            indent_level++;
+            emit("(then");
+            indent_level++;
+            gen_body(n->if_s.then_b);
+            indent_level--;
+            emit(")");
+            indent_level--;
+            emit(")");
+        }
+        break;
+
+    case ND_WHILE: {
+        int lbl = label_cnt++;
+        brk_lbl[loop_sp] = lbl;
+        cont_lbl[loop_sp] = lbl;
+        loop_sp++;
+        emit("(block $brk_%d", lbl);
+        indent_level++;
+        emit("(loop $lp_%d", lbl);
+        indent_level++;
+        gen_expr(n->while_s.cond);
+        emit("i32.eqz");
+        emit("br_if $brk_%d", lbl);
+        emit("(block $cont_%d", lbl);
+        indent_level++;
+        gen_body(n->while_s.body);
+        indent_level--;
+        emit(")");
+        emit("br $lp_%d", lbl);
+        indent_level--;
+        emit(")");
+        indent_level--;
+        emit(")");
+        loop_sp--;
+        break;
+    }
+
+    case ND_FOR: {
+        if (n->for_s.init)
+            gen_stmt(n->for_s.init);
+        int lbl = label_cnt++;
+        brk_lbl[loop_sp] = lbl;
+        cont_lbl[loop_sp] = lbl;
+        loop_sp++;
+        emit("(block $brk_%d", lbl);
+        indent_level++;
+        emit("(loop $lp_%d", lbl);
+        indent_level++;
+        if (n->for_s.cond) {
+            gen_expr(n->for_s.cond);
+            emit("i32.eqz");
+            emit("br_if $brk_%d", lbl);
+        }
+        emit("(block $cont_%d", lbl);
+        indent_level++;
+        gen_body(n->for_s.body);
+        indent_level--;
+        emit(")");
+        if (n->for_s.step) {
+            gen_expr(n->for_s.step);
+            emit("drop");
+        }
+        emit("br $lp_%d", lbl);
+        indent_level--;
+        emit(")");
+        indent_level--;
+        emit(")");
+        loop_sp--;
+        break;
+    }
+
+    case ND_BREAK:
+        if (loop_sp <= 0) error(n->line, n->col, "break outside loop");
+        emit("br $brk_%d", brk_lbl[loop_sp - 1]);
+        break;
+
+    case ND_CONTINUE:
+        if (loop_sp <= 0) error(n->line, n->col, "continue outside loop");
+        emit("br $cont_%d", cont_lbl[loop_sp - 1]);
+        break;
+
+    case ND_BLOCK:
+        for (int i = 0; i < n->block.nstmts; i++)
+            gen_stmt(n->block.stmts[i]);
+        break;
+
     default:
         error(n->line, n->col, "unsupported statement in codegen");
     }
@@ -564,14 +911,22 @@ static void gen_stmt(Node *n) {
 /* --- Function codegen --- */
 
 static void gen_func(Node *n) {
+    nlocals = 0;
+    label_cnt = 0;
+    loop_sp = 0;
+    collect_locals(n->func.body);
+
     const char *ret_sig = n->func.ret_type == 1 ? "" : " (result i32)";
     emit("(func $%s%s", n->func.name, ret_sig);
     indent_level++;
-    /* emit body statements */
+    for (int i = 0; i < nlocals; i++)
+        emit("(local $%s i32)", local_names[i]);
     Node *body = n->func.body;
-    int i;
-    for (i = 0; i < body->block.nstmts; i++)
+    for (int i = 0; i < body->block.nstmts; i++)
         gen_stmt(body->block.stmts[i]);
+    /* default return value for WASM validation (unreachable if all paths return) */
+    if (n->func.ret_type != 1)
+        emit("i32.const 0");
     indent_level--;
     emit(")");
 }
