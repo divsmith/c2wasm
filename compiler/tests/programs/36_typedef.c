@@ -17,6 +17,8 @@ int main(void) {
     size_t n;
     byte b;
     Point p;
+    intptr q;
+    byte arr[4];
 
     n = 10;
     if (n != 10) return 1;
@@ -33,6 +35,14 @@ int main(void) {
 
     n = n + 32;
     if (n != 42) return 6;
+
+    q = malloc(4);
+    *q = 42;
+    if (*q != 42) return 7;
+
+    arr[0] = 1;
+    arr[1] = 2;
+    if (arr[0] + arr[1] != 3) return 8;
 
     return 42;
 }

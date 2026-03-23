@@ -846,10 +846,12 @@ struct TypeAlias {
 
 struct TypeAlias **type_aliases;
 int ntype_aliases;
+int last_type_is_ptr;
 
 void init_type_aliases(void) {
     type_aliases = (struct TypeAlias **)malloc(MAX_TYPE_ALIASES * sizeof(void *));
     ntype_aliases = 0;
+    last_type_is_ptr = 0;
 }
 
 int find_type_alias(char *name) {
@@ -1313,13 +1315,17 @@ struct Node *parse_var_decl(void) {
     int line;
     int col;
     int is_char;
+    int is_ptr;
     int arr_size;
     int ei;
+    int tai_vd;
 
     line = cur->line;
     col = cur->col;
     is_char = 0;
+    is_ptr = 0;
     arr_size = 0;
+    tai_vd = -1;
     blk = (struct Node *)0;
     size_node = (struct Node *)0;
     idx_lit = (struct Node *)0;
@@ -1335,10 +1341,21 @@ struct Node *parse_var_decl(void) {
         advance_tok();
         advance_tok();
     } else {
-        if (at(TOK_CHAR_KW)) is_char = 1;
+        if (at(TOK_CHAR_KW)) {
+            is_char = 1;
+        } else if (at(TOK_IDENT)) {
+            tai_vd = find_type_alias(cur->text);
+            if (tai_vd >= 0 && type_aliases[tai_vd]->resolved_kind == 2) {
+                is_char = 1;
+            }
+            if (tai_vd >= 0 && type_aliases[tai_vd]->is_ptr) {
+                is_ptr = 1;
+            }
+        }
         advance_tok();
     }
-    while (at(TOK_STAR)) advance_tok();
+    while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+    if (last_type_is_ptr) is_ptr = 1;
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     n = node_new(ND_VAR_DECL, line, col);
     n->sval = strdupn(cur->text, 127);
@@ -1647,10 +1664,12 @@ struct Node *parse_block(void) {
 
 int parse_type(void) {
     int taidx;
+    last_type_is_ptr = 0;
     while (at(TOK_CONST)) advance_tok();
     if (at(TOK_IDENT)) {
         taidx = find_type_alias(cur->text);
         if (taidx >= 0) {
+            last_type_is_ptr = type_aliases[taidx]->is_ptr;
             advance_tok();
             return type_aliases[taidx]->resolved_kind;
         }
@@ -1798,18 +1817,33 @@ void parse_struct_def(void) {
 
 void parse_global_var(void) {
     int is_char;
+    int is_ptr;
     int neg;
+    int tai_gv;
 
     is_char = 0;
+    is_ptr = 0;
+    tai_gv = -1;
     while (at(TOK_CONST)) advance_tok();
     if (at(TOK_STRUCT) || at(TOK_ENUM)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
     } else {
-        if (at(TOK_CHAR_KW)) is_char = 1;
+        if (at(TOK_CHAR_KW)) {
+            is_char = 1;
+        } else if (at(TOK_IDENT)) {
+            tai_gv = find_type_alias(cur->text);
+            if (tai_gv >= 0 && type_aliases[tai_gv]->resolved_kind == 2) {
+                is_char = 1;
+            }
+            if (tai_gv >= 0 && type_aliases[tai_gv]->is_ptr) {
+                is_ptr = 1;
+            }
+        }
         advance_tok();
     }
-    while (at(TOK_STAR)) advance_tok();
+    while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+    if (last_type_is_ptr) is_ptr = 1;
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     if (nglobals >= MAX_GLOBALS) error(cur->line, cur->col, "too many globals");
     globals_tbl[nglobals] = (struct GlobalVar *)malloc(sizeof(struct GlobalVar));
@@ -1894,7 +1928,6 @@ void parse_typedef(void) {
     char *alias_name;
     int tai;
     struct TypeAlias *ta;
-    int depth;
 
     advance_tok(); /* consume 'typedef' */
     while (at(TOK_CONST)) advance_tok();
@@ -1906,13 +1939,7 @@ void parse_typedef(void) {
             advance_tok();
         }
         if (at(TOK_LBRACE)) {
-            depth = 1;
-            advance_tok();
-            while (depth > 0 && !at(TOK_EOF)) {
-                if (at(TOK_LBRACE)) { depth = depth + 1; }
-                else if (at(TOK_RBRACE)) { depth = depth - 1; }
-                advance_tok();
-            }
+            error(cur->line, cur->col, "typedef with inline struct body not supported; define struct separately");
         }
         rk = 0;
     } else if (at(TOK_ENUM)) {
@@ -1932,6 +1959,7 @@ void parse_typedef(void) {
         tai = find_type_alias(cur->text);
         if (tai >= 0) {
             rk = type_aliases[tai]->resolved_kind;
+            is_ptr = type_aliases[tai]->is_ptr;
         }
         advance_tok();
     } else {
