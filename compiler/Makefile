@@ -4,7 +4,7 @@ SRC     = src/c2wasm.c
 BIN     = c2wasm
 DEMO   = ../demo
 
-.PHONY: all clean test wasm
+.PHONY: all clean test wasm serve
 
 all: $(BIN)
 
@@ -21,6 +21,9 @@ wasm: $(SRC)
 		-s EXPORTED_RUNTIME_METHODS='["callMain","FS"]' \
 		-s ALLOW_MEMORY_GROWTH=1 \
 		-s EXIT_RUNTIME=0
+
+serve:
+	cd $(DEMO) && python3 -m http.server 8080
 
 clean:
 	rm -f $(BIN)
