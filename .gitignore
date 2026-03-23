@@ -1,0 +1,4 @@
+c2wasm
+.tmp/
+*.wasm
+*.wat
