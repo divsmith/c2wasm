@@ -69,6 +69,12 @@
 #define TOK_RSHIFT 49
 #define TOK_PLUS_PLUS 50
 #define TOK_MINUS_MINUS 51
+#define TOK_CARET 52
+#define TOK_PIPE_EQ 53
+#define TOK_AMP_EQ 54
+#define TOK_CARET_EQ 55
+#define TOK_LSHIFT_EQ 56
+#define TOK_RSHIFT_EQ 57
 
 /* Node kinds */
 #define ND_PROGRAM 0
@@ -92,6 +98,8 @@
 #define ND_MEMBER 18
 #define ND_SIZEOF 19
 #define ND_SUBSCRIPT 20
+#define ND_POST_INC 21
+#define ND_POST_DEC 22
 
 /* Limits */
 #define MAX_SRC 2097152
@@ -606,6 +614,9 @@ struct Token *next_token(void) {
         if (lp() == '&') {
             la();
             t->kind = TOK_AMP_AMP;
+        } else if (lp() == '=') {
+            la();
+            t->kind = TOK_AMP_EQ;
         } else {
             t->kind = TOK_AMP;
         }
@@ -613,8 +624,18 @@ struct Token *next_token(void) {
         if (lp() == '|') {
             la();
             t->kind = TOK_PIPE_PIPE;
+        } else if (lp() == '=') {
+            la();
+            t->kind = TOK_PIPE_EQ;
         } else {
             t->kind = TOK_PIPE;
+        }
+    } else if (c == '^') {
+        if (lp() == '=') {
+            la();
+            t->kind = TOK_CARET_EQ;
+        } else {
+            t->kind = TOK_CARET;
         }
     } else if (c == '~') {
         t->kind = TOK_TILDE;
@@ -638,7 +659,12 @@ struct Token *next_token(void) {
             t->kind = TOK_LT_EQ;
         } else if (lp() == '<') {
             la();
-            t->kind = TOK_LSHIFT;
+            if (lp() == '=') {
+                la();
+                t->kind = TOK_LSHIFT_EQ;
+            } else {
+                t->kind = TOK_LSHIFT;
+            }
         } else {
             t->kind = TOK_LT;
         }
@@ -648,7 +674,12 @@ struct Token *next_token(void) {
             t->kind = TOK_GT_EQ;
         } else if (lp() == '>') {
             la();
-            t->kind = TOK_RSHIFT;
+            if (lp() == '=') {
+                la();
+                t->kind = TOK_RSHIFT_EQ;
+            } else {
+                t->kind = TOK_RSHIFT;
+            }
         } else {
             t->kind = TOK_GT;
         }
@@ -858,7 +889,9 @@ int prefix_bp(int op) {
 int last_rbp;
 
 int infix_bp(int op) {
-    if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ) {
+    if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ ||
+        op == TOK_PIPE_EQ || op == TOK_AMP_EQ || op == TOK_CARET_EQ ||
+        op == TOK_LSHIFT_EQ || op == TOK_RSHIFT_EQ) {
         last_rbp = 1;
         return 2;
     }
@@ -873,6 +906,10 @@ int infix_bp(int op) {
     if (op == TOK_PIPE) {
         last_rbp = 9;
         return 8;
+    }
+    if (op == TOK_CARET) {
+        last_rbp = 10;
+        return 9;
     }
     if (op == TOK_AMP) {
         last_rbp = 11;
@@ -1065,6 +1102,22 @@ struct Node *parse_expr_bp(int min_bp) {
             continue;
         }
 
+        /* postfix ++ and -- */
+        if ((at(TOK_PLUS_PLUS) || at(TOK_MINUS_MINUS)) && 27 >= min_bp) {
+            struct Node *post;
+            int pop;
+            int pline;
+            int pcol;
+            pop = cur->kind;
+            pline = cur->line;
+            pcol = cur->col;
+            advance_tok();
+            post = node_new((pop == TOK_PLUS_PLUS) ? ND_POST_INC : ND_POST_DEC, pline, pcol);
+            post->c0 = left;
+            left = post;
+            continue;
+        }
+
         lbp = infix_bp(cur->kind);
         rbp = last_rbp;
         if (lbp < 0 || lbp < min_bp) break;
@@ -1092,7 +1145,9 @@ struct Node *parse_expr_bp(int min_bp) {
         right = parse_expr_bp(rbp);
 
         /* assignment operators */
-        if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ) {
+        if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ ||
+            op == TOK_PIPE_EQ || op == TOK_AMP_EQ || op == TOK_CARET_EQ ||
+            op == TOK_LSHIFT_EQ || op == TOK_RSHIFT_EQ) {
             tgt = left;
             valid = 0;
             if (tgt->kind == ND_IDENT) valid = 1;
@@ -1627,6 +1682,8 @@ void collect_locals(struct Node *n) {
     } else if (n->kind == ND_FOR) {
         collect_locals(n->c0);
         collect_locals(n->c3);
+    } else if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
+        collect_locals(n->c0);
     }
 }
 
@@ -1719,6 +1776,22 @@ void gen_expr(struct Node *n) {
                 gen_expr(n->c1);
                 emit_indent();
                 printf("i32.sub\n");
+            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                       n->ival == TOK_RSHIFT_EQ) {
+                emit_indent();
+                if (is_global) {
+                    printf("global.get $%s\n", name);
+                } else {
+                    printf("local.get $%s\n", name);
+                }
+                gen_expr(n->c1);
+                emit_indent();
+                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+                else { printf("i32.shr_s\n"); }
             }
             if (is_global) {
                 emit_indent();
@@ -1759,6 +1832,23 @@ void gen_expr(struct Node *n) {
                 gen_expr(n->c1);
                 emit_indent();
                 printf("i32.sub\n");
+            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                       n->ival == TOK_RSHIFT_EQ) {
+                gen_expr(tgt->c0);
+                emit_indent();
+                if (esz == 1) {
+                    printf("i32.load8_u\n");
+                } else {
+                    printf("i32.load\n");
+                }
+                gen_expr(n->c1);
+                emit_indent();
+                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+                else { printf("i32.shr_s\n"); }
             }
             emit_indent();
             printf("local.set $__atmp\n");
@@ -1804,6 +1894,25 @@ void gen_expr(struct Node *n) {
                 gen_expr(n->c1);
                 emit_indent();
                 printf("i32.sub\n");
+            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                       n->ival == TOK_RSHIFT_EQ) {
+                gen_expr(tgt->c0);
+                if (off > 0) {
+                    emit_indent();
+                    printf("i32.const %d\n", off);
+                    emit_indent();
+                    printf("i32.add\n");
+                }
+                emit_indent();
+                printf("i32.load\n");
+                gen_expr(n->c1);
+                emit_indent();
+                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+                else { printf("i32.shr_s\n"); }
             }
             emit_indent();
             printf("local.set $__atmp\n");
@@ -1864,6 +1973,32 @@ void gen_expr(struct Node *n) {
                 gen_expr(n->c1);
                 emit_indent();
                 printf("i32.sub\n");
+            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                       n->ival == TOK_RSHIFT_EQ) {
+                gen_expr(tgt->c0);
+                gen_expr(tgt->c1);
+                if (esz > 1) {
+                    emit_indent();
+                    printf("i32.const %d\n", esz);
+                    emit_indent();
+                    printf("i32.mul\n");
+                }
+                emit_indent();
+                printf("i32.add\n");
+                emit_indent();
+                if (esz == 1) {
+                    printf("i32.load8_u\n");
+                } else {
+                    printf("i32.load\n");
+                }
+                gen_expr(n->c1);
+                emit_indent();
+                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+                else { printf("i32.shr_s\n"); }
             }
             emit_indent();
             printf("local.set $__atmp\n");
@@ -1955,6 +2090,8 @@ void gen_expr(struct Node *n) {
             printf("i32.shl\n");
         } else if (n->ival == TOK_RSHIFT) {
             printf("i32.shr_s\n");
+        } else if (n->ival == TOK_CARET) {
+            printf("i32.xor\n");
         } else {
             error(n->nline, n->ncol, "unsupported binary operator");
         }
@@ -2131,6 +2268,91 @@ void gen_expr(struct Node *n) {
             printf("i32.load8_u\n");
         } else {
             printf("i32.load\n");
+        }
+    } else if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
+        struct Node *tgt2;
+        char *pname;
+        int pis_global;
+        int pesz;
+        int poff;
+        tgt2 = n->c0;
+        if (tgt2->kind == ND_IDENT) {
+            pname = tgt2->sval;
+            pis_global = (find_global(pname) >= 0);
+            if (pis_global) {
+                emit_indent(); printf("global.get $%s\n", pname);
+                emit_indent(); printf("local.set $__atmp\n");
+                emit_indent(); printf("global.get $%s\n", pname);
+                emit_indent(); printf("i32.const 1\n");
+                emit_indent();
+                if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+                emit_indent(); printf("global.set $%s\n", pname);
+                emit_indent(); printf("local.get $__atmp\n");
+            } else {
+                emit_indent(); printf("local.get $%s\n", pname);
+                emit_indent(); printf("local.get $%s\n", pname);
+                emit_indent(); printf("i32.const 1\n");
+                emit_indent();
+                if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+                emit_indent(); printf("local.set $%s\n", pname);
+            }
+        } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
+            pesz = expr_elem_size(tgt2->c0);
+            gen_expr(tgt2->c0);
+            emit_indent();
+            if (pesz == 1) { printf("i32.load8_u\n"); } else { printf("i32.load\n"); }
+            emit_indent(); printf("local.set $__atmp\n");
+            gen_expr(tgt2->c0);
+            gen_expr(tgt2->c0);
+            emit_indent();
+            if (pesz == 1) { printf("i32.load8_u\n"); } else { printf("i32.load\n"); }
+            emit_indent(); printf("i32.const 1\n");
+            emit_indent();
+            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+            emit_indent();
+            if (pesz == 1) { printf("i32.store8\n"); } else { printf("i32.store\n"); }
+            emit_indent(); printf("local.get $__atmp\n");
+        } else if (tgt2->kind == ND_SUBSCRIPT) {
+            pesz = expr_elem_size(tgt2->c0);
+            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+            emit_indent(); printf("i32.add\n");
+            emit_indent();
+            if (pesz == 1) { printf("i32.load8_u\n"); } else { printf("i32.load\n"); }
+            emit_indent(); printf("local.set $__atmp\n");
+            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+            emit_indent(); printf("i32.add\n");
+            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+            emit_indent(); printf("i32.add\n");
+            emit_indent();
+            if (pesz == 1) { printf("i32.load8_u\n"); } else { printf("i32.load\n"); }
+            emit_indent(); printf("i32.const 1\n");
+            emit_indent();
+            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+            emit_indent();
+            if (pesz == 1) { printf("i32.store8\n"); } else { printf("i32.store\n"); }
+            emit_indent(); printf("local.get $__atmp\n");
+        } else if (tgt2->kind == ND_MEMBER) {
+            poff = resolve_field_offset(tgt2->sval);
+            if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
+            gen_expr(tgt2->c0);
+            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+            emit_indent(); printf("i32.load\n");
+            emit_indent(); printf("local.set $__atmp\n");
+            gen_expr(tgt2->c0);
+            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+            gen_expr(tgt2->c0);
+            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+            emit_indent(); printf("i32.load\n");
+            emit_indent(); printf("i32.const 1\n");
+            emit_indent();
+            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+            emit_indent(); printf("i32.store\n");
+            emit_indent(); printf("local.get $__atmp\n");
+        } else {
+            error(n->nline, n->ncol, "unsupported post-inc/dec target");
         }
     } else {
         error(n->nline, n->ncol, "unsupported expression in codegen");
