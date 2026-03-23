@@ -83,6 +83,7 @@
 #define TOK_DEFAULT 63
 #define TOK_CONST 64
 #define TOK_ENUM 65
+#define TOK_TYPEDEF 66
 
 /* Node kinds */
 #define ND_PROGRAM 0
@@ -127,6 +128,7 @@
 #define MAX_LOOP_DEPTH 64
 #define MAX_CASES 256
 #define MAX_ENUM_CONSTS 512
+#define MAX_TYPE_ALIASES 128
 
 /* ================================================================
  * Error reporting
@@ -295,6 +297,7 @@ int kw_lookup(char *s) {
     if (strcmp(s, "default") == 0) return TOK_DEFAULT;
     if (strcmp(s, "const") == 0) return TOK_CONST;
     if (strcmp(s, "enum") == 0) return TOK_ENUM;
+    if (strcmp(s, "typedef") == 0) return TOK_TYPEDEF;
     if (strcmp(s, "struct") == 0) return TOK_STRUCT;
     if (strcmp(s, "sizeof") == 0) return TOK_SIZEOF;
     return 0;
@@ -835,6 +838,28 @@ int find_enum_const(char *name) {
     return -1;
 }
 
+struct TypeAlias {
+    char *alias;
+    int resolved_kind; /* 0=int, 1=void, 2=char */
+    int is_ptr;
+};
+
+struct TypeAlias **type_aliases;
+int ntype_aliases;
+
+void init_type_aliases(void) {
+    type_aliases = (struct TypeAlias **)malloc(MAX_TYPE_ALIASES * sizeof(void *));
+    ntype_aliases = 0;
+}
+
+int find_type_alias(char *name) {
+    int i;
+    for (i = 0; i < ntype_aliases; i = i + 1) {
+        if (strcmp(type_aliases[i]->alias, name) == 0) return i;
+    }
+    return -1;
+}
+
 /* ================================================================
  * AST Node (flat struct instead of union)
  * ================================================================ */
@@ -920,6 +945,7 @@ int is_type_token(void) {
     if (at(TOK_VOID)) return 1;
     if (at(TOK_STRUCT)) return 1;
     if (at(TOK_ENUM)) return 1;
+    if (at(TOK_IDENT) && find_type_alias(cur->text) >= 0) return 1;
     return 0;
 }
 
@@ -1538,7 +1564,15 @@ struct Node *parse_block(void) {
 /* --- Top-level --- */
 
 int parse_type(void) {
+    int taidx;
     while (at(TOK_CONST)) advance_tok();
+    if (at(TOK_IDENT)) {
+        taidx = find_type_alias(cur->text);
+        if (taidx >= 0) {
+            advance_tok();
+            return type_aliases[taidx]->resolved_kind;
+        }
+    }
     if (at(TOK_INT)) {
         advance_tok();
         return 0;
@@ -1761,6 +1795,70 @@ void parse_enum_def(void) {
     expect(TOK_SEMI, "expected ';' after enum");
 }
 
+void parse_typedef(void) {
+    int rk;
+    int is_ptr;
+    char *alias_name;
+    int tai;
+    struct TypeAlias *ta;
+    int depth;
+
+    advance_tok(); /* consume 'typedef' */
+    while (at(TOK_CONST)) advance_tok();
+    rk = 0;
+    is_ptr = 0;
+    if (at(TOK_STRUCT)) {
+        advance_tok();
+        if (at(TOK_IDENT)) {
+            advance_tok();
+        }
+        if (at(TOK_LBRACE)) {
+            depth = 1;
+            advance_tok();
+            while (depth > 0 && !at(TOK_EOF)) {
+                if (at(TOK_LBRACE)) { depth = depth + 1; }
+                else if (at(TOK_RBRACE)) { depth = depth - 1; }
+                advance_tok();
+            }
+        }
+        rk = 0;
+    } else if (at(TOK_ENUM)) {
+        advance_tok();
+        if (at(TOK_IDENT)) advance_tok();
+        rk = 0;
+    } else if (at(TOK_INT)) {
+        advance_tok();
+        rk = 0;
+    } else if (at(TOK_CHAR_KW)) {
+        advance_tok();
+        rk = 2;
+    } else if (at(TOK_VOID)) {
+        advance_tok();
+        rk = 1;
+    } else if (at(TOK_IDENT)) {
+        tai = find_type_alias(cur->text);
+        if (tai >= 0) {
+            rk = type_aliases[tai]->resolved_kind;
+        }
+        advance_tok();
+    } else {
+        error(cur->line, cur->col, "expected type in typedef");
+    }
+    while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+    if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected alias name in typedef");
+    alias_name = strdupn(cur->text, 127);
+    advance_tok();
+    expect(TOK_SEMI, "expected ';' after typedef");
+    if (ntype_aliases < MAX_TYPE_ALIASES) {
+        ta = (struct TypeAlias *)malloc(sizeof(struct TypeAlias));
+        ta->alias = alias_name;
+        ta->resolved_kind = rk;
+        ta->is_ptr = is_ptr;
+        type_aliases[ntype_aliases] = ta;
+        ntype_aliases = ntype_aliases + 1;
+    }
+}
+
 struct Node *parse_program(void) {
     struct Node *prog;
     struct NList *decls;
@@ -1777,6 +1875,11 @@ struct Node *parse_program(void) {
     decls->count = 0;
     decls->cap = 0;
     while (!at(TOK_EOF)) {
+        /* typedef declaration */
+        if (at(TOK_TYPEDEF)) {
+            parse_typedef();
+            continue;
+        }
         /* enum definition */
         if (at(TOK_ENUM)) {
             int sp2;
@@ -3482,6 +3585,7 @@ int main(void) {
     init_globals();
     init_func_sigs();
     init_enum_consts();
+    init_type_aliases();
     init_local_tracking();
     init_loop_labels();
 
