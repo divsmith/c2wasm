@@ -303,6 +303,37 @@ static int add_string(const char *data, int len) {
 }
 
 /* ================================================================
+ * Struct Type Registry
+ * ================================================================ */
+
+#define MAX_STRUCTS 64
+#define MAX_FIELDS 32
+
+typedef struct {
+    char name[128];
+    struct { char name[128]; int offset; } fields[MAX_FIELDS];
+    int nfields;
+    int size;
+} StructDef;
+
+static StructDef structs_reg[MAX_STRUCTS];
+static int nstructs;
+
+static StructDef *find_struct(const char *name) {
+    for (int i = 0; i < nstructs; i++)
+        if (!strcmp(structs_reg[i].name, name)) return &structs_reg[i];
+    return NULL;
+}
+
+static int resolve_field_offset(const char *field_name) {
+    for (int i = 0; i < nstructs; i++)
+        for (int j = 0; j < structs_reg[i].nfields; j++)
+            if (!strcmp(structs_reg[i].fields[j].name, field_name))
+                return structs_reg[i].fields[j].offset;
+    return -1;
+}
+
+/* ================================================================
  * AST
  * ================================================================ */
 
@@ -316,6 +347,7 @@ enum {
     ND_BREAK, ND_CONTINUE, ND_EXPR_STMT,
     ND_CALL,
     ND_STR_LIT,
+    ND_MEMBER, ND_SIZEOF,
 };
 
 struct Node {
@@ -340,6 +372,8 @@ struct Node {
         struct { Node *expr; }                                  expr_stmt;
         struct { char name[128]; Node **args; int nargs; }      call;
         struct { int id; int len; }                             str_lit;
+        struct { Node *base; char field[128]; int is_arrow; }   member;
+        struct { char type_name[128]; }                         sizeof_expr;
     };
 };
 
@@ -376,7 +410,7 @@ static void expect(int kind, const char *msg) {
 }
 
 static int is_type_token(void) {
-    return at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID);
+    return at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID) || at(TOK_STRUCT);
 }
 
 /* Forward declarations */
@@ -406,6 +440,7 @@ static int infix_bp(int op, int *rbp) {
     case TOK_PLUS: case TOK_MINUS:     *rbp = 13; return 14;
     case TOK_STAR: case TOK_SLASH:
     case TOK_PERCENT:                  *rbp = 15; return 16;
+    case TOK_DOT: case TOK_ARROW:      *rbp = 26; return 25;
     default: return -1;
     }
 }
@@ -421,6 +456,27 @@ static Node *parse_atom(void) {
         Node *n = node_new(ND_INT_LIT, cur.line, cur.col);
         n->lit.val = cur.int_val;
         advance_tok();
+        return n;
+    }
+    if (at(TOK_SIZEOF)) {
+        int line = cur.line, col = cur.col;
+        advance_tok();
+        expect(TOK_LPAREN, "expected '(' after sizeof");
+        Node *n = node_new(ND_SIZEOF, line, col);
+        if (at(TOK_STRUCT)) {
+            advance_tok();
+            if (at(TOK_IDENT)) {
+                strncpy(n->sizeof_expr.type_name, cur.text,
+                        sizeof(n->sizeof_expr.type_name) - 1);
+                advance_tok();
+            }
+        } else if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID)) {
+            strncpy(n->sizeof_expr.type_name, cur.text,
+                    sizeof(n->sizeof_expr.type_name) - 1);
+            advance_tok();
+            while (at(TOK_STAR)) advance_tok();
+        }
+        expect(TOK_RPAREN, "expected ')' after sizeof");
         return n;
     }
     if (at(TOK_STR_LIT)) {
@@ -499,12 +555,26 @@ static Node *parse_expr_bp(int min_bp) {
         int op = cur.kind;
         int line = cur.line, col = cur.col;
         advance_tok();
+
+        /* member access: . and -> consume a field name, not an expression */
+        if (op == TOK_DOT || op == TOK_ARROW) {
+            if (!at(TOK_IDENT)) error(line, col, "expected field name");
+            Node *n = node_new(ND_MEMBER, line, col);
+            n->member.base = left;
+            strncpy(n->member.field, cur.text, sizeof(n->member.field) - 1);
+            n->member.is_arrow = (op == TOK_ARROW);
+            advance_tok();
+            left = n;
+            continue;
+        }
+
         Node *right = parse_expr_bp(rbp);
 
         /* assignment operators produce ND_ASSIGN */
         if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ) {
             int valid = (left->kind == ND_IDENT) ||
-                        (left->kind == ND_UNARY && left->unary.op == TOK_STAR);
+                        (left->kind == ND_UNARY && left->unary.op == TOK_STAR) ||
+                        (left->kind == ND_MEMBER);
             if (!valid)
                 error(line, col, "invalid assignment target");
             Node *n = node_new(ND_ASSIGN, line, col);
@@ -529,8 +599,12 @@ static Node *parse_expr(void) { return parse_expr_bp(0); }
 
 static Node *parse_var_decl(void) {
     int line = cur.line, col = cur.col;
-    advance_tok(); /* skip type keyword */
-    /* skip pointer stars — M5 will handle properly */
+    if (at(TOK_STRUCT)) {
+        advance_tok(); /* skip 'struct' */
+        advance_tok(); /* skip struct name */
+    } else {
+        advance_tok(); /* skip type keyword */
+    }
     while (at(TOK_STAR)) advance_tok();
     if (!at(TOK_IDENT)) error(cur.line, cur.col, "expected variable name");
     Node *n = node_new(ND_VAR_DECL, line, col);
@@ -667,10 +741,11 @@ static Node *parse_block(void) {
 /* --- Top-level: parse type + name + '(' ... ')' + block --- */
 
 static int parse_type(void) {
-    /* returns 0=int, 1=void, 2=char for now */
+    /* returns 0=int, 1=void, 2=char for now; struct treated as int (all ptrs are i32) */
     if (at(TOK_INT))     { advance_tok(); return 0; }
     if (at(TOK_VOID))    { advance_tok(); return 1; }
     if (at(TOK_CHAR_KW)) { advance_tok(); return 2; }
+    if (at(TOK_STRUCT))  { advance_tok(); if (at(TOK_IDENT)) advance_tok(); return 0; }
     error(cur.line, cur.col, "expected type");
     return 0;
 }
@@ -722,11 +797,61 @@ static Node *parse_func(void) {
     return n;
 }
 
+/* --- Top-level struct definition --- */
+
+static void parse_struct_def(void) {
+    advance_tok(); /* skip 'struct' */
+    if (!at(TOK_IDENT)) error(cur.line, cur.col, "expected struct name");
+    if (nstructs >= MAX_STRUCTS) error(cur.line, cur.col, "too many structs");
+    StructDef *sd = &structs_reg[nstructs++];
+    strncpy(sd->name, cur.text, sizeof(sd->name) - 1);
+    sd->nfields = 0;
+    advance_tok(); /* skip name */
+    expect(TOK_LBRACE, "expected '{' in struct definition");
+    int offset = 0;
+    while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+        /* field: type *name ; */
+        if (at(TOK_STRUCT)) {
+            advance_tok();
+            if (at(TOK_IDENT)) advance_tok();
+        } else {
+            parse_type();
+        }
+        while (at(TOK_STAR)) advance_tok();
+        if (!at(TOK_IDENT)) error(cur.line, cur.col, "expected field name");
+        strncpy(sd->fields[sd->nfields].name, cur.text,
+                sizeof(sd->fields[sd->nfields].name) - 1);
+        sd->fields[sd->nfields].offset = offset;
+        sd->nfields++;
+        offset += 4;
+        advance_tok();
+        expect(TOK_SEMI, "expected ';' after field");
+    }
+    expect(TOK_RBRACE, "expected '}'");
+    sd->size = offset;
+    expect(TOK_SEMI, "expected ';' after struct definition");
+}
+
 static Node *parse_program(void) {
     Node *prog = node_new(ND_PROGRAM, 1, 1);
     NList decls = {0};
-    while (!at(TOK_EOF))
+    while (!at(TOK_EOF)) {
+        /* struct definition: struct Name { ... }; */
+        if (at(TOK_STRUCT)) {
+            int sp = L.pos, sl = L.line, sc = L.col;
+            Token st = cur;
+            advance_tok(); /* skip 'struct' */
+            int is_def = 0;
+            if (at(TOK_IDENT)) {
+                advance_tok();
+                is_def = at(TOK_LBRACE);
+            }
+            L.pos = sp; L.line = sl; L.col = sc;
+            cur = st;
+            if (is_def) { parse_struct_def(); continue; }
+        }
         nlist_push(&decls, parse_func());
+    }
     prog->program.decls  = decls.items;
     prog->program.ndecls = decls.count;
     return prog;
@@ -840,6 +965,30 @@ static void gen_expr(Node *n) {
             }
             emit("local.set $__atmp");
             gen_expr(tgt->unary.operand);
+            emit("local.get $__atmp");
+            emit("i32.store");
+            emit("local.get $__atmp");
+        } else if (tgt->kind == ND_MEMBER) {
+            int off = resolve_field_offset(tgt->member.field);
+            if (off < 0) error(tgt->line, tgt->col, "unknown struct field");
+            if (n->assign.op == TOK_EQ) {
+                gen_expr(n->assign.value);
+            } else if (n->assign.op == TOK_PLUS_EQ) {
+                gen_expr(tgt->member.base);
+                if (off > 0) { emit("i32.const %d", off); emit("i32.add"); }
+                emit("i32.load");
+                gen_expr(n->assign.value);
+                emit("i32.add");
+            } else if (n->assign.op == TOK_MINUS_EQ) {
+                gen_expr(tgt->member.base);
+                if (off > 0) { emit("i32.const %d", off); emit("i32.add"); }
+                emit("i32.load");
+                gen_expr(n->assign.value);
+                emit("i32.sub");
+            }
+            emit("local.set $__atmp");
+            gen_expr(tgt->member.base);
+            if (off > 0) { emit("i32.const %d", off); emit("i32.add"); }
             emit("local.get $__atmp");
             emit("i32.store");
             emit("local.get $__atmp");
@@ -965,6 +1114,24 @@ static void gen_expr(Node *n) {
     case ND_STR_LIT:
         emit("i32.const %d", str_table[n->str_lit.id].offset);
         break;
+    case ND_MEMBER: {
+        int off = resolve_field_offset(n->member.field);
+        if (off < 0) error(n->line, n->col, "unknown struct field");
+        gen_expr(n->member.base);
+        if (off > 0) { emit("i32.const %d", off); emit("i32.add"); }
+        emit("i32.load");
+        break;
+    }
+    case ND_SIZEOF: {
+        StructDef *sd = find_struct(n->sizeof_expr.type_name);
+        if (sd) {
+            emit("i32.const %d", sd->size);
+        } else {
+            /* int, char, void*, any pointer — all 4 bytes */
+            emit("i32.const 4");
+        }
+        break;
+    }
     default:
         error(n->line, n->col, "unsupported expression in codegen");
     }
