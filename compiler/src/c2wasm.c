@@ -549,6 +549,29 @@ static Node *parse_expr_bp(int min_bp) {
 
     /* infix operators */
     for (;;) {
+        /* array subscript: arr[idx] → *(arr + idx * 4) */
+        if (at(TOK_LBRACKET) && 25 >= min_bp) {
+            int line = cur.line, col = cur.col;
+            advance_tok(); /* skip '[' */
+            Node *idx = parse_expr();
+            expect(TOK_RBRACKET, "expected ']'");
+            Node *scale = node_new(ND_BINARY, line, col);
+            scale->binary.op = TOK_STAR;
+            scale->binary.left = idx;
+            Node *four = node_new(ND_INT_LIT, line, col);
+            four->lit.val = 4;
+            scale->binary.right = four;
+            Node *add = node_new(ND_BINARY, line, col);
+            add->binary.op = TOK_PLUS;
+            add->binary.left = left;
+            add->binary.right = scale;
+            Node *deref = node_new(ND_UNARY, line, col);
+            deref->unary.op = TOK_STAR;
+            deref->unary.operand = add;
+            left = deref;
+            continue;
+        }
+
         int rbp;
         int lbp = infix_bp(cur.kind, &rbp);
         if (lbp < 0 || lbp < min_bp) break;
