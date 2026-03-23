@@ -81,6 +81,7 @@
 #define TOK_SWITCH 61
 #define TOK_CASE 62
 #define TOK_DEFAULT 63
+#define TOK_CONST 64
 
 /* Node kinds */
 #define ND_PROGRAM 0
@@ -290,6 +291,7 @@ int kw_lookup(char *s) {
     if (strcmp(s, "switch") == 0) return TOK_SWITCH;
     if (strcmp(s, "case") == 0) return TOK_CASE;
     if (strcmp(s, "default") == 0) return TOK_DEFAULT;
+    if (strcmp(s, "const") == 0) return TOK_CONST;
     if (strcmp(s, "struct") == 0) return TOK_STRUCT;
     if (strcmp(s, "sizeof") == 0) return TOK_SIZEOF;
     return 0;
@@ -884,6 +886,7 @@ void expect(int kind, char *msg) {
 }
 
 int is_type_token(void) {
+    if (at(TOK_CONST)) return 1;
     if (at(TOK_INT)) return 1;
     if (at(TOK_CHAR_KW)) return 1;
     if (at(TOK_VOID)) return 1;
@@ -1040,6 +1043,7 @@ struct Node *parse_atom(void) {
         advance_tok();
         /* type cast */
         if (is_type_token()) {
+            while (at(TOK_CONST)) advance_tok();
             if (at(TOK_STRUCT)) {
                 advance_tok();
                 if (at(TOK_IDENT)) advance_tok();
@@ -1228,6 +1232,7 @@ struct Node *parse_var_decl(void) {
     line = cur->line;
     col = cur->col;
     is_char = 0;
+    while (at(TOK_CONST)) advance_tok();
     if (at(TOK_STRUCT)) {
         advance_tok();
         advance_tok();
@@ -1483,6 +1488,7 @@ struct Node *parse_block(void) {
 /* --- Top-level --- */
 
 int parse_type(void) {
+    while (at(TOK_CONST)) advance_tok();
     if (at(TOK_INT)) {
         advance_tok();
         return 0;
@@ -1624,6 +1630,7 @@ void parse_global_var(void) {
     int neg;
 
     is_char = 0;
+    while (at(TOK_CONST)) advance_tok();
     if (at(TOK_STRUCT)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
@@ -1709,6 +1716,7 @@ struct Node *parse_program(void) {
             advance_tok();
             if (at(TOK_IDENT)) advance_tok();
         } else {
+            while (at(TOK_CONST)) advance_tok();
             advance_tok();
         }
         while (at(TOK_STAR)) advance_tok();
