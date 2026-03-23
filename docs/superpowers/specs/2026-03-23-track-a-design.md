@@ -44,15 +44,52 @@ New node kinds: `ND_POST_INC`, `ND_POST_DEC`.
 
 In `parse_expr_bp`'s infix loop, after the standard `infix_bp` dispatch: if `TOK_PLUS_PLUS` or `TOK_MINUS_MINUS` is seen at precedence ≥ min_bp (postfix binds tighter than prefix, use precedence 27), wrap the current `left` node.
 
-Codegen for `ND_POST_INC` on a local ident:
+Codegen — four target kinds mirroring the compound-assignment pattern:
+
+**Local ident** (`a++`):
 ```
-local.get $a     ← push old value (expression result)
+local.get $a       ← push old value (expression result left on stack)
 local.get $a
 i32.const 1
 i32.add
-local.set $a     ← store incremented
+local.set $a       ← store incremented; old value already on stack
 ```
-For pointer/subscript/member targets: save old value to `$__atmp`, increment via the same path as `+=`, leave `$__atmp` on stack.
+
+**Global ident** (`g++`):
+```
+global.get $g      ← save old to $__atmp
+local.set $__atmp
+global.get $g
+i32.const 1
+i32.add
+local.set $__atmp2  ← need second temp... actually:
+```
+Simpler: use `$__atmp` for old value, emit global read twice:
+```
+global.get $g          ← old value on stack
+local.set $__atmp
+global.get $g
+i32.const 1
+i32.add
+global.set $g          ← store incremented
+local.get $__atmp      ← push old value (expression result)
+```
+
+**Pointer dereference** (`*p++`) — target is `ND_UNARY+TOK_STAR`:
+```
+<gen addr of p>        ← compute address
+i32.load8_u / i32.load ← load old value
+local.set $__atmp
+<gen addr of p>        ← recompute address
+<gen addr of p>
+i32.load8_u / i32.load ← reload
+i32.const 1
+i32.add
+i32.store8 / i32.store ← store incremented
+local.get $__atmp      ← push old value
+```
+
+**Subscript** (`arr[i]++`) and **member** (`s.f++`) — same save/reload pattern as pointer dereference using `$__atmp`.
 
 ### Codegen changes
 - `ND_BINARY`: add `TOK_CARET` → `i32.xor`
@@ -100,6 +137,9 @@ Pushes `brk_lbl[loop_sp]` and `cont_lbl[loop_sp]` before emitting, pops after.
 
 ### New tokens
 `TOK_QUESTION` (`?`), `TOK_COLON` (`:`).
+
+### Lexer
+- `:` → `TOK_COLON` (simple single-character token, added to the lexer's operator dispatch; reused by A4 for `case:` and `default:`).
 
 ### New node
 `ND_TERNARY`: `c0=condition`, `c1=then_expr`, `c2=else_expr`.
@@ -188,6 +228,9 @@ An if-chain dispatch (not `br_table`) handles non-consecutive case values withou
 
 `break` inside any case: `br $brk_N`. `continue` is NOT redefined by switch (it still refers to the enclosing loop).
 
+### Break label stack
+Before emitting blocks, push `brk_lbl[loop_sp] = N` and increment `loop_sp`. Do NOT set `cont_lbl` — switches are not loop contexts and `continue` must pass through to the enclosing loop's `cont_lbl`. After emitting all blocks, decrement `loop_sp`.
+
 ### Test
 `compiler/tests/programs/33_switch.c` — basic cases, fallthrough, break, default, nested loops+break. `// EXPECT_EXIT: 42`.
 
@@ -199,15 +242,17 @@ An if-chain dispatch (not `br_table`) handles non-consecutive case values withou
 
 ### Fixes
 1. **`sizeof(char)` codegen**: currently returns 4. Fix: check `n->sval` for `"char"` → emit `i32.const 1`.
-2. **Pointer types**: parser skips `*` stars but doesn't record them. Use `n->ival` as a pointer flag (1 if any `*` consumed). Codegen: if `n->ival == 1`, always emit `i32.const 4`.
+2. **Pointer types**: parser skips `*` stars but doesn't record them. Use `n->ival` as a pointer flag (1 if any `*` consumed). In codegen, check `n->ival == 1` **before** the struct lookup — pointer-to-struct (`sizeof(struct S *)`) must return 4, not the struct size.
 
 ### Extension: `sizeof expr` (best-effort)
-If after `sizeof` there is no `(` followed by a type keyword, parse an expression node and infer size:
-- `ND_IDENT` → look up var type (char → 1, else → 4)
-- `ND_INT_LIT` → 4
-- anything else → 4
+After `sizeof`, if `(` is present AND the next token is a type keyword (checked by a lookahead call to `is_type_token()` after peeking one ahead), use the existing type-form path. Otherwise treat as expr-form:
+- If `(` is present but not followed by a type keyword: parse expression inside parens normally.
+- If no `(`: parse expression at high binding power.
 
-No new node kind needed; store the expression in `c0` with a flag distinguishing type-form from expr-form.
+Store the expression in `c0`. Infer size:
+- `ND_IDENT` → look up var type (char → 1, else → 4)
+- `ND_INT_LIT`, `ND_STR_LIT`, `ND_CALL`, etc. → 4
+- anything else → 4
 
 ### Codegen
 ```
@@ -236,7 +281,7 @@ sizeof expr      → inferred constant
 - No AST node, no enforcement.
 
 ### Test
-Extend an existing test (e.g., add `const int` declarations to `06_vars.c`) — no new file needed. Alternatively: `compiler/tests/programs/35_const.c` with `const int`, `const char *`, `int * const`. `// EXPECT_EXIT: 42`.
+Extend an existing test with `const int` and `const char *` declarations — no new numbered test file. The const keyword only affects parsing; no new behavior to validate beyond "it compiles and produces correct results."
 
 ---
 
@@ -355,7 +400,7 @@ local.set $arr
 ```
 
 ### Codegen — global arrays
-For global array declarations with initializers, emit element stores in the module-level init sequence (before calling `main`), or treat as data segments if all initializers are integer constants.
+Global arrays with **all-constant initializers**: emit element stores via a module-level `$__init` function called before `main`. For example, global `int g[3] = {10,20,30}` allocates from the bump heap at startup and stores three constants. Global arrays without initializers: allocate from bump heap in `$__init`. Global arrays with **non-constant initializers** (expressions involving variables): not supported in this implementation — emit a compiler error.
 
 ### `collect_locals`
 Array variables are still just `i32` locals (they hold a pointer). No change needed.
@@ -370,5 +415,5 @@ Array variables are still just `i32` locals (they hold a pointer). No change nee
 - **Self-hosting**: all new syntax in user programs must compile with the compiler's own already-supported subset (which it is — `#define` constants are used throughout, no new C syntax in compiler source).
 - **No new global variable kinds**: all new tables (`enum_consts`, `type_aliases`) follow the existing `malloc(N * sizeof(void*))` pattern.
 - **All 30 existing tests remain green** after every individual feature.
-- **Test numbering**: 30 (operators), 31 (do-while), 32 (ternary), 33 (switch), 34 (sizeof), 35 (enum), 36 (typedef), 37 (array_init). Note: const may share test 35 or use a separate file.
+- **Test numbering**: 30 (operators), 31 (do-while), 32 (ternary), 33 (switch), 34 (sizeof), 35 (enum), 36 (typedef), 37 (array_init). The `const` feature (A6) has no new test file — it is validated by the existing tests compiling cleanly after the keyword is recognized.
 - **Implementation order**: A1→A2→A3→A4→A6→A5→A7→A8→A9 (const before sizeof because the fix is trivial; const before enum/typedef since those tests may use `const`).
