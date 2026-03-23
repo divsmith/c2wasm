@@ -278,6 +278,31 @@ static Token next_token(void) {
 }
 
 /* ================================================================
+ * String Literal Table (populated during parsing, emitted during codegen)
+ * ================================================================ */
+
+#define MAX_STRINGS 512
+#define MAX_STR_DATA 512
+static struct {
+    char data[MAX_STR_DATA];
+    int len;
+    int offset;
+} str_table[MAX_STRINGS];
+static int nstrings;
+static int data_ptr = 1024; /* static data starts at 1024 (0-1023 reserved for I/O) */
+
+static int add_string(const char *data, int len) {
+    int id = nstrings++;
+    if (len >= MAX_STR_DATA) len = MAX_STR_DATA - 1;
+    memcpy(str_table[id].data, data, len);
+    str_table[id].data[len] = '\0';
+    str_table[id].len = len;
+    str_table[id].offset = data_ptr;
+    data_ptr += len + 1;
+    return id;
+}
+
+/* ================================================================
  * AST
  * ================================================================ */
 
@@ -290,6 +315,7 @@ enum {
     ND_IF, ND_WHILE, ND_FOR,
     ND_BREAK, ND_CONTINUE, ND_EXPR_STMT,
     ND_CALL,
+    ND_STR_LIT,
 };
 
 struct Node {
@@ -313,6 +339,7 @@ struct Node {
         struct { Node *init; Node *cond; Node *step; Node *body; } for_s;
         struct { Node *expr; }                                  expr_stmt;
         struct { char name[128]; Node **args; int nargs; }      call;
+        struct { int id; int len; }                             str_lit;
     };
 };
 
@@ -391,6 +418,13 @@ static Node *parse_atom(void) {
     if (at(TOK_CHAR_LIT)) {
         Node *n = node_new(ND_INT_LIT, cur.line, cur.col);
         n->lit.val = cur.int_val;
+        advance_tok();
+        return n;
+    }
+    if (at(TOK_STR_LIT)) {
+        Node *n = node_new(ND_STR_LIT, cur.line, cur.col);
+        n->str_lit.id = add_string(cur.text, cur.int_val);
+        n->str_lit.len = cur.int_val;
         advance_tok();
         return n;
     }
@@ -815,9 +849,71 @@ static void gen_expr(Node *n) {
         }
         break;
     case ND_CALL:
-        for (int i = 0; i < n->call.nargs; i++)
-            gen_expr(n->call.args[i]);
-        emit("call $%s", n->call.name);
+        if (!strcmp(n->call.name, "printf")) {
+            /* compile-time printf lowering */
+            if (n->call.nargs < 1 || n->call.args[0]->kind != ND_STR_LIT)
+                error(n->line, n->col, "printf requires string literal format");
+            int sid = n->call.args[0]->str_lit.id;
+            char *fmt = str_table[sid].data;
+            int flen = str_table[sid].len;
+            int ai = 1;
+            for (int fi = 0; fi < flen; fi++) {
+                if (fmt[fi] == '%' && fi + 1 < flen) {
+                    fi++;
+                    switch (fmt[fi]) {
+                    case 'd':
+                        if (ai >= n->call.nargs) error(n->line, n->col, "printf: missing arg for %d");
+                        gen_expr(n->call.args[ai++]);
+                        emit("call $__print_int");
+                        break;
+                    case 's':
+                        if (ai >= n->call.nargs) error(n->line, n->col, "printf: missing arg for %s");
+                        gen_expr(n->call.args[ai++]);
+                        emit("call $__print_str");
+                        break;
+                    case 'c':
+                        if (ai >= n->call.nargs) error(n->line, n->col, "printf: missing arg for %c");
+                        gen_expr(n->call.args[ai++]);
+                        emit("call $putchar");
+                        emit("drop");
+                        break;
+                    case 'x':
+                        if (ai >= n->call.nargs) error(n->line, n->col, "printf: missing arg for %x");
+                        gen_expr(n->call.args[ai++]);
+                        emit("call $__print_hex");
+                        break;
+                    case '%':
+                        emit("i32.const 37");
+                        emit("call $putchar");
+                        emit("drop");
+                        break;
+                    default:
+                        error(n->line, n->col, "unsupported printf format");
+                    }
+                } else {
+                    emit("i32.const %d", (unsigned char)fmt[fi]);
+                    emit("call $putchar");
+                    emit("drop");
+                }
+            }
+            emit("i32.const 0");
+        } else if (!strcmp(n->call.name, "putchar")) {
+            gen_expr(n->call.args[0]);
+            emit("call $putchar");
+        } else if (!strcmp(n->call.name, "getchar")) {
+            emit("call $getchar");
+        } else if (!strcmp(n->call.name, "exit")) {
+            gen_expr(n->call.args[0]);
+            emit("call $__proc_exit");
+            emit("i32.const 0");
+        } else {
+            for (int i = 0; i < n->call.nargs; i++)
+                gen_expr(n->call.args[i]);
+            emit("call $%s", n->call.name);
+        }
+        break;
+    case ND_STR_LIT:
+        emit("i32.const %d", str_table[n->str_lit.id].offset);
         break;
     default:
         error(n->line, n->col, "unsupported expression in codegen");
@@ -996,6 +1092,17 @@ static void gen_func(Node *n) {
     emit(")");
 }
 
+/* --- WAT escape helper for data section --- */
+static void emit_wat_string(const char *data, int len) {
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)data[i];
+        if (c >= 32 && c < 127 && c != '"' && c != '\\')
+            putchar(c);
+        else
+            printf("\\%02x", c);
+    }
+}
+
 /* --- Module codegen --- */
 
 static void gen_module(Node *prog) {
@@ -1004,9 +1111,122 @@ static void gen_module(Node *prog) {
 
     /* WASI imports */
     emit("(import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__proc_exit (param i32)))");
+    emit("(import \"wasi_snapshot_preview1\" \"fd_write\" (func $__fd_write (param i32 i32 i32 i32) (result i32)))");
+    emit("(import \"wasi_snapshot_preview1\" \"fd_read\" (func $__fd_read (param i32 i32 i32 i32) (result i32)))");
+    emit("");
 
     /* memory */
     emit("(memory (export \"memory\") 1)");
+    emit("");
+
+    /* static data section (string literals) */
+    for (int i = 0; i < nstrings; i++) {
+        printf("  (data (i32.const %d) \"", str_table[i].offset);
+        emit_wat_string(str_table[i].data, str_table[i].len);
+        printf("\\00\")\n"); /* null terminator */
+    }
+    if (nstrings > 0) emit("");
+
+    /* heap pointer — starts after static data */
+    emit("(global $__heap_ptr (mut i32) (i32.const %d))", data_ptr);
+    emit("");
+
+    /* --- Runtime helper functions --- */
+
+    /* putchar: write one byte to stdout, return the char */
+    emit("(func $putchar (param $ch i32) (result i32)");
+    emit("  (i32.store8 (i32.const 0) (local.get $ch))");
+    emit("  (i32.store (i32.const 4) (i32.const 0))");
+    emit("  (i32.store (i32.const 8) (i32.const 1))");
+    emit("  (drop (call $__fd_write (i32.const 1) (i32.const 4) (i32.const 1) (i32.const 12)))");
+    emit("  (local.get $ch)");
+    emit(")");
+
+    /* getchar: read one byte from stdin, return -1 on EOF */
+    emit("(func $getchar (result i32)");
+    emit("  (i32.store (i32.const 4) (i32.const 0))");
+    emit("  (i32.store (i32.const 8) (i32.const 1))");
+    emit("  (drop (call $__fd_read (i32.const 0) (i32.const 4) (i32.const 1) (i32.const 12)))");
+    emit("  (if (result i32) (i32.eqz (i32.load (i32.const 12)))");
+    emit("    (then (i32.const -1))");
+    emit("    (else (i32.load8_u (i32.const 0)))");
+    emit("  )");
+    emit(")");
+
+    /* __print_int: print signed integer to stdout */
+    emit("(func $__print_int (param $n i32)");
+    emit("  (local $buf i32)");
+    emit("  (local $len i32)");
+    emit("  (if (i32.lt_s (local.get $n) (i32.const 0))");
+    emit("    (then");
+    emit("      (drop (call $putchar (i32.const 45)))");
+    emit("      (local.set $n (i32.sub (i32.const 0) (local.get $n)))");
+    emit("    )");
+    emit("  )");
+    emit("  (if (i32.eqz (local.get $n))");
+    emit("    (then (drop (call $putchar (i32.const 48))) (return))");
+    emit("  )");
+    emit("  (local.set $buf (i32.const 48))");
+    emit("  (local.set $len (i32.const 0))");
+    emit("  (block $done (loop $digit");
+    emit("    (br_if $done (i32.eqz (local.get $n)))");
+    emit("    (local.set $buf (i32.sub (local.get $buf) (i32.const 1)))");
+    emit("    (i32.store8 (local.get $buf) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10))))");
+    emit("    (local.set $n (i32.div_u (local.get $n) (i32.const 10)))");
+    emit("    (local.set $len (i32.add (local.get $len) (i32.const 1)))");
+    emit("    (br $digit)");
+    emit("  ))");
+    emit("  (block $pd (loop $pl");
+    emit("    (br_if $pd (i32.eqz (local.get $len)))");
+    emit("    (drop (call $putchar (i32.load8_u (local.get $buf))))");
+    emit("    (local.set $buf (i32.add (local.get $buf) (i32.const 1)))");
+    emit("    (local.set $len (i32.sub (local.get $len) (i32.const 1)))");
+    emit("    (br $pl)");
+    emit("  ))");
+    emit(")");
+
+    /* __print_str: print null-terminated string */
+    emit("(func $__print_str (param $ptr i32)");
+    emit("  (local $ch i32)");
+    emit("  (block $done (loop $next");
+    emit("    (local.set $ch (i32.load8_u (local.get $ptr)))");
+    emit("    (br_if $done (i32.eqz (local.get $ch)))");
+    emit("    (drop (call $putchar (local.get $ch)))");
+    emit("    (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))");
+    emit("    (br $next)");
+    emit("  ))");
+    emit(")");
+
+    /* __print_hex: print unsigned integer in hex */
+    emit("(func $__print_hex (param $n i32)");
+    emit("  (local $buf i32)");
+    emit("  (local $len i32)");
+    emit("  (local $d i32)");
+    emit("  (if (i32.eqz (local.get $n))");
+    emit("    (then (drop (call $putchar (i32.const 48))) (return))");
+    emit("  )");
+    emit("  (local.set $buf (i32.const 48))");
+    emit("  (local.set $len (i32.const 0))");
+    emit("  (block $done (loop $digit");
+    emit("    (br_if $done (i32.eqz (local.get $n)))");
+    emit("    (local.set $buf (i32.sub (local.get $buf) (i32.const 1)))");
+    emit("    (local.set $d (i32.and (local.get $n) (i32.const 15)))");
+    emit("    (if (i32.lt_u (local.get $d) (i32.const 10))");
+    emit("      (then (i32.store8 (local.get $buf) (i32.add (i32.const 48) (local.get $d))))");
+    emit("      (else (i32.store8 (local.get $buf) (i32.add (i32.const 87) (local.get $d))))");
+    emit("    )");
+    emit("    (local.set $n (i32.shr_u (local.get $n) (i32.const 4)))");
+    emit("    (local.set $len (i32.add (local.get $len) (i32.const 1)))");
+    emit("    (br $digit)");
+    emit("  ))");
+    emit("  (block $pd (loop $pl");
+    emit("    (br_if $pd (i32.eqz (local.get $len)))");
+    emit("    (drop (call $putchar (i32.load8_u (local.get $buf))))");
+    emit("    (local.set $buf (i32.add (local.get $buf) (i32.const 1)))");
+    emit("    (local.set $len (i32.sub (local.get $len) (i32.const 1)))");
+    emit("    (br $pl)");
+    emit("  ))");
+    emit(")");
     emit("");
 
     /* user functions */
