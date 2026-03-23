@@ -2,12 +2,12 @@
 
 **A self-hosting C compiler that targets WebAssembly, running entirely in your browser.**
 
-[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://parker.github.io/c2wasm/)
-[![GitHub](https://img.shields.io/badge/github-c2wasm-blue)](https://github.com/parker/c2wasm)
+[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://divsmith.github.io/c2wasm/)
+[![GitHub](https://img.shields.io/badge/github-c2wasm-blue)](https://github.com/divsmith/c2wasm)
 
 ---
 
-## [→ Try the Live Demo](https://parker.github.io/c2wasm/)
+## [→ Try the Live Demo](https://divsmith.github.io/c2wasm/)
 
 Write C in the browser. Click **Compile & Run**. See the output instantly — no servers, no plugins, no waiting. Everything happens in your browser tab.
 
