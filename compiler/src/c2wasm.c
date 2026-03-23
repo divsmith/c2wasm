@@ -1301,13 +1301,35 @@ struct Node *parse_expr(void) {
 
 struct Node *parse_var_decl(void) {
     struct Node *n;
+    struct Node *blk;
+    struct Node *size_node;
+    struct Node *idx_lit;
+    struct Node *id_node;
+    struct Node *sub_node;
+    struct Node *asgn_node;
+    struct Node *estmt;
+    struct NList *blk_stmts;
+    struct NList *init_elems;
     int line;
     int col;
     int is_char;
+    int arr_size;
+    int ei;
 
     line = cur->line;
     col = cur->col;
     is_char = 0;
+    arr_size = 0;
+    blk = (struct Node *)0;
+    size_node = (struct Node *)0;
+    idx_lit = (struct Node *)0;
+    id_node = (struct Node *)0;
+    sub_node = (struct Node *)0;
+    asgn_node = (struct Node *)0;
+    estmt = (struct Node *)0;
+    blk_stmts = (struct NList *)0;
+    init_elems = (struct NList *)0;
+    ei = 0;
     while (at(TOK_CONST)) advance_tok();
     if (at(TOK_STRUCT)) {
         advance_tok();
@@ -1322,7 +1344,57 @@ struct Node *parse_var_decl(void) {
     n->sval = strdupn(cur->text, 127);
     n->ival2 = is_char;
     advance_tok();
-    if (at(TOK_EQ)) {
+    /* check for array size: int name[N] */
+    if (at(TOK_LBRACKET)) {
+        advance_tok(); /* consume '[' */
+        size_node = parse_expr();
+        arr_size = size_node->ival;
+        n->ival = arr_size;
+        expect(TOK_RBRACKET, "expected ']'");
+    }
+    /* brace initializer: int name[N] = {e0, e1, ...} */
+    if (arr_size > 0 && at(TOK_EQ)) {
+        advance_tok(); /* consume '=' */
+        expect(TOK_LBRACE, "expected '{'");
+        init_elems = (struct NList *)malloc(sizeof(struct NList));
+        init_elems->items = (struct Node **)0;
+        init_elems->count = 0;
+        init_elems->cap = 0;
+        while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+            nlist_push(init_elems, parse_expr());
+            if (at(TOK_COMMA)) advance_tok();
+        }
+        expect(TOK_RBRACE, "expected '}'");
+        expect(TOK_SEMI, "expected ';'");
+        /* build ND_BLOCK: [var_decl] + [assignment stmts per element] */
+        blk_stmts = (struct NList *)malloc(sizeof(struct NList));
+        blk_stmts->items = (struct Node **)0;
+        blk_stmts->count = 0;
+        blk_stmts->cap = 0;
+        nlist_push(blk_stmts, n);
+        for (ei = 0; ei < init_elems->count; ei = ei + 1) {
+            idx_lit = node_new(ND_INT_LIT, line, col);
+            idx_lit->ival = ei;
+            id_node = node_new(ND_IDENT, line, col);
+            id_node->sval = n->sval;
+            sub_node = node_new(ND_SUBSCRIPT, line, col);
+            sub_node->c0 = id_node;
+            sub_node->c1 = idx_lit;
+            asgn_node = node_new(ND_ASSIGN, line, col);
+            asgn_node->ival = TOK_EQ;
+            asgn_node->c0 = sub_node;
+            asgn_node->c1 = init_elems->items[ei];
+            estmt = node_new(ND_EXPR_STMT, line, col);
+            estmt->c0 = asgn_node;
+            nlist_push(blk_stmts, estmt);
+        }
+        blk = node_new(ND_BLOCK, line, col);
+        blk->list = blk_stmts->items;
+        blk->ival2 = blk_stmts->count;
+        return blk;
+    }
+    /* scalar initializer: int name = expr */
+    if (arr_size == 0 && at(TOK_EQ)) {
         advance_tok();
         n->c0 = parse_expr();
     }
@@ -1493,13 +1565,23 @@ struct Node *parse_stmt(void) {
     if (at(TOK_SWITCH)) return parse_switch();
     if (at(TOK_CASE)) {
         int cv;
+        int eci_case;
         struct Node *cn;
         advance_tok();
-        if (!at(TOK_INT_LIT) && !at(TOK_CHAR_LIT)) {
-            error(cur->line, cur->col, "expected integer constant in case");
+        eci_case = -1;
+        if (at(TOK_IDENT)) {
+            eci_case = find_enum_const(cur->text);
         }
-        cv = cur->int_val;
-        advance_tok();
+        if (eci_case >= 0) {
+            cv = enum_consts[eci_case]->val;
+            advance_tok();
+        } else {
+            if (!at(TOK_INT_LIT) && !at(TOK_CHAR_LIT)) {
+                error(cur->line, cur->col, "expected integer constant in case");
+            }
+            cv = cur->int_val;
+            advance_tok();
+        }
         expect(TOK_COLON, "expected ':' after case value");
         cn = node_new(ND_CASE, cur->line, cur->col);
         cn->ival = cv;
@@ -1720,7 +1802,7 @@ void parse_global_var(void) {
 
     is_char = 0;
     while (at(TOK_CONST)) advance_tok();
-    if (at(TOK_STRUCT)) {
+    if (at(TOK_STRUCT) || at(TOK_ENUM)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
     } else {
@@ -1752,6 +1834,15 @@ void parse_global_var(void) {
                 globals_tbl[nglobals]->init_val = cur->int_val;
             }
             advance_tok();
+        } else if (at(TOK_IDENT)) {
+            int eci_g;
+            eci_g = find_enum_const(cur->text);
+            if (eci_g >= 0) {
+                globals_tbl[nglobals]->init_val = enum_consts[eci_g]->val;
+            } else {
+                error(cur->line, cur->col, "unknown initializer");
+            }
+            advance_tok();
         }
     }
     nglobals = nglobals + 1;
@@ -1775,8 +1866,10 @@ void parse_enum_def(void) {
             advance_tok();
             if (at(TOK_MINUS)) {
                 advance_tok();
+                if (!at(TOK_INT_LIT)) error(cur->line, cur->col, "expected integer after '-' in enum");
                 val = -cur->int_val;
             } else {
+                if (!at(TOK_INT_LIT)) error(cur->line, cur->col, "expected integer constant in enum");
                 val = cur->int_val;
             }
             advance_tok();
@@ -2763,6 +2856,7 @@ void gen_body(struct Node *n) {
 void gen_stmt(struct Node *n) {
     int lbl;
     int i;
+    int bsz;
 
     if (n->kind == ND_RETURN) {
         if (n->c0 != (struct Node *)0) {
@@ -2771,7 +2865,17 @@ void gen_stmt(struct Node *n) {
         emit_indent();
         printf("return\n");
     } else if (n->kind == ND_VAR_DECL) {
-        if (n->c0 != (struct Node *)0) {
+        if (n->ival > 0) {
+            /* Array: allocate n->ival elements of the given size */
+            bsz = n->ival;
+            if (n->ival2 == 0) { bsz = bsz * 4; }
+            emit_indent();
+            printf("i32.const %d\n", bsz);
+            emit_indent();
+            printf("call $malloc\n");
+            emit_indent();
+            printf("local.set $%s\n", n->sval);
+        } else if (n->c0 != (struct Node *)0) {
             gen_expr(n->c0);
             emit_indent();
             printf("local.set $%s\n", n->sval);
