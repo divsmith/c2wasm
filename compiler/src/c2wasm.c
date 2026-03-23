@@ -82,6 +82,7 @@
 #define TOK_CASE 62
 #define TOK_DEFAULT 63
 #define TOK_CONST 64
+#define TOK_ENUM 65
 
 /* Node kinds */
 #define ND_PROGRAM 0
@@ -125,6 +126,7 @@
 #define MAX_LOCALS 256
 #define MAX_LOOP_DEPTH 64
 #define MAX_CASES 256
+#define MAX_ENUM_CONSTS 512
 
 /* ================================================================
  * Error reporting
@@ -292,6 +294,7 @@ int kw_lookup(char *s) {
     if (strcmp(s, "case") == 0) return TOK_CASE;
     if (strcmp(s, "default") == 0) return TOK_DEFAULT;
     if (strcmp(s, "const") == 0) return TOK_CONST;
+    if (strcmp(s, "enum") == 0) return TOK_ENUM;
     if (strcmp(s, "struct") == 0) return TOK_STRUCT;
     if (strcmp(s, "sizeof") == 0) return TOK_SIZEOF;
     return 0;
@@ -808,6 +811,31 @@ int func_is_void(char *name) {
 }
 
 /* ================================================================
+ * Enum Constant Table
+ * ================================================================ */
+
+struct EnumConst {
+    char *name;
+    int val;
+};
+
+struct EnumConst **enum_consts;
+int nenum_consts;
+
+void init_enum_consts(void) {
+    enum_consts = (struct EnumConst **)malloc(MAX_ENUM_CONSTS * sizeof(void *));
+    nenum_consts = 0;
+}
+
+int find_enum_const(char *name) {
+    int i;
+    for (i = 0; i < nenum_consts; i = i + 1) {
+        if (strcmp(enum_consts[i]->name, name) == 0) return i;
+    }
+    return -1;
+}
+
+/* ================================================================
  * AST Node (flat struct instead of union)
  * ================================================================ */
 
@@ -891,6 +919,7 @@ int is_type_token(void) {
     if (at(TOK_CHAR_KW)) return 1;
     if (at(TOK_VOID)) return 1;
     if (at(TOK_STRUCT)) return 1;
+    if (at(TOK_ENUM)) return 1;
     return 0;
 }
 
@@ -1026,6 +1055,14 @@ struct Node *parse_atom(void) {
         return n;
     }
     if (at(TOK_IDENT)) {
+        int eci;
+        eci = find_enum_const(cur->text);
+        if (eci >= 0) {
+            n = node_new(ND_INT_LIT, cur->line, cur->col);
+            n->ival = enum_consts[eci]->val;
+            advance_tok();
+            return n;
+        }
         n = node_new(ND_IDENT, cur->line, cur->col);
         n->sval = strdupn(cur->text, 127);
         advance_tok();
@@ -1519,6 +1556,11 @@ int parse_type(void) {
         if (at(TOK_IDENT)) advance_tok();
         return 0;
     }
+    if (at(TOK_ENUM)) {
+        advance_tok();
+        if (at(TOK_IDENT)) advance_tok();
+        return 0;
+    }
     error(cur->line, cur->col, "expected type");
     return 0;
 }
@@ -1682,6 +1724,43 @@ void parse_global_var(void) {
     expect(TOK_SEMI, "expected ';' after global declaration");
 }
 
+void parse_enum_def(void) {
+    int val;
+    char *ename;
+    struct EnumConst *ec;
+
+    advance_tok(); /* consume 'enum' */
+    if (at(TOK_IDENT)) advance_tok(); /* skip optional tag */
+    expect(TOK_LBRACE, "expected '{' in enum");
+    val = 0;
+    while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+        if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected enum constant name");
+        ename = strdupn(cur->text, 127);
+        advance_tok();
+        if (at(TOK_EQ)) {
+            advance_tok();
+            if (at(TOK_MINUS)) {
+                advance_tok();
+                val = -cur->int_val;
+            } else {
+                val = cur->int_val;
+            }
+            advance_tok();
+        }
+        if (nenum_consts < MAX_ENUM_CONSTS) {
+            ec = (struct EnumConst *)malloc(sizeof(struct EnumConst));
+            ec->name = ename;
+            ec->val = val;
+            enum_consts[nenum_consts] = ec;
+            nenum_consts = nenum_consts + 1;
+        }
+        val = val + 1;
+        if (at(TOK_COMMA)) advance_tok();
+    }
+    expect(TOK_RBRACE, "expected '}'");
+    expect(TOK_SEMI, "expected ';' after enum");
+}
+
 struct Node *parse_program(void) {
     struct Node *prog;
     struct NList *decls;
@@ -1698,6 +1777,24 @@ struct Node *parse_program(void) {
     decls->count = 0;
     decls->cap = 0;
     while (!at(TOK_EOF)) {
+        /* enum definition */
+        if (at(TOK_ENUM)) {
+            int sp2;
+            int sl2;
+            int sc2;
+            struct Token *st2;
+            int is_enum_def;
+            sp2 = lex_pos; sl2 = lex_line; sc2 = lex_col; st2 = cur;
+            advance_tok(); /* look past 'enum' */
+            if (at(TOK_IDENT)) advance_tok(); /* look past tag */
+            is_enum_def = at(TOK_LBRACE);
+            lex_pos = sp2; lex_line = sl2; lex_col = sc2; cur = st2;
+            if (is_enum_def) {
+                parse_enum_def();
+                continue;
+            }
+        }
+
         /* struct definition */
         if (at(TOK_STRUCT)) {
             sp = lex_pos;
@@ -1725,7 +1822,7 @@ struct Node *parse_program(void) {
         sl = lex_line;
         sc = lex_col;
         st = cur;
-        if (at(TOK_STRUCT)) {
+        if (at(TOK_STRUCT) || at(TOK_ENUM)) {
             advance_tok();
             if (at(TOK_IDENT)) advance_tok();
         } else {
@@ -3372,6 +3469,7 @@ int main(void) {
     init_structs();
     init_globals();
     init_func_sigs();
+    init_enum_consts();
     init_local_tracking();
     init_loop_labels();
 
