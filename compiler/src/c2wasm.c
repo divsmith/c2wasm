@@ -78,6 +78,9 @@
 #define TOK_DO 58
 #define TOK_QUESTION 59
 #define TOK_COLON 60
+#define TOK_SWITCH 61
+#define TOK_CASE 62
+#define TOK_DEFAULT 63
 
 /* Node kinds */
 #define ND_PROGRAM 0
@@ -105,6 +108,9 @@
 #define ND_POST_DEC 22
 #define ND_DO_WHILE 23
 #define ND_TERNARY 24
+#define ND_SWITCH 25
+#define ND_CASE 26
+#define ND_DEFAULT 27
 
 /* Limits */
 #define MAX_SRC 2097152
@@ -117,6 +123,7 @@
 #define MAX_FUNC_SIGS 256
 #define MAX_LOCALS 256
 #define MAX_LOOP_DEPTH 64
+#define MAX_CASES 256
 
 /* ================================================================
  * Error reporting
@@ -280,6 +287,9 @@ int kw_lookup(char *s) {
     if (strcmp(s, "for") == 0) return TOK_FOR;
     if (strcmp(s, "break") == 0) return TOK_BREAK;
     if (strcmp(s, "continue") == 0) return TOK_CONTINUE;
+    if (strcmp(s, "switch") == 0) return TOK_SWITCH;
+    if (strcmp(s, "case") == 0) return TOK_CASE;
+    if (strcmp(s, "default") == 0) return TOK_DEFAULT;
     if (strcmp(s, "struct") == 0) return TOK_STRUCT;
     if (strcmp(s, "sizeof") == 0) return TOK_SIZEOF;
     return 0;
@@ -1350,6 +1360,35 @@ struct Node *parse_do_while(void) {
     return n;
 }
 
+struct Node *parse_switch(void) {
+    struct Node *n;
+    struct Node *expr;
+    int line;
+    int col;
+    struct NList *stmts;
+
+    line = cur->line;
+    col = cur->col;
+    advance_tok();
+    expect(TOK_LPAREN, "expected '(' after switch");
+    expr = parse_expr();
+    expect(TOK_RPAREN, "expected ')'");
+    expect(TOK_LBRACE, "expected '{' after switch(...)");
+    stmts = (struct NList *)malloc(sizeof(struct NList));
+    stmts->items = (struct Node **)0;
+    stmts->count = 0;
+    stmts->cap = 0;
+    while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+        nlist_push(stmts, parse_stmt());
+    }
+    expect(TOK_RBRACE, "expected '}'");
+    n = node_new(ND_SWITCH, line, col);
+    n->c0 = expr;
+    n->list = stmts->items;
+    n->ival2 = stmts->count;
+    return n;
+}
+
 struct Node *parse_stmt(void) {
     struct Node *n;
     struct Node *expr;
@@ -1369,6 +1408,26 @@ struct Node *parse_stmt(void) {
     }
     if (at(TOK_IF)) return parse_if();
     if (at(TOK_DO)) return parse_do_while();
+    if (at(TOK_SWITCH)) return parse_switch();
+    if (at(TOK_CASE)) {
+        int cv;
+        struct Node *cn;
+        advance_tok();
+        if (!at(TOK_INT_LIT) && !at(TOK_CHAR_LIT)) {
+            error(cur->line, cur->col, "expected integer constant in case");
+        }
+        cv = cur->int_val;
+        advance_tok();
+        expect(TOK_COLON, "expected ':' after case value");
+        cn = node_new(ND_CASE, cur->line, cur->col);
+        cn->ival = cv;
+        return cn;
+    }
+    if (at(TOK_DEFAULT)) {
+        advance_tok();
+        expect(TOK_COLON, "expected ':' after default");
+        return node_new(ND_DEFAULT, cur->line, cur->col);
+    }
     if (at(TOK_WHILE)) return parse_while();
     if (at(TOK_FOR)) return parse_for();
     if (at(TOK_BREAK)) {
@@ -1739,6 +1798,11 @@ void collect_locals(struct Node *n) {
         collect_locals(n->c3);
     } else if (n->kind == ND_DO_WHILE) {
         collect_locals(n->c0);
+    } else if (n->kind == ND_SWITCH) {
+        int i;
+        for (i = 0; i < n->ival2; i = i + 1) {
+            collect_locals(n->list[i]);
+        }
     } else if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
         collect_locals(n->c0);
     }
@@ -2632,6 +2696,116 @@ void gen_stmt(struct Node *n) {
         for (i = 0; i < n->ival2; i = i + 1) {
             gen_stmt(n->list[i]);
         }
+    } else if (n->kind == ND_SWITCH) {
+        int case_vals[256];
+        int case_start[256];
+        int nc;
+        int dflt_pos;
+        int has_dflt;
+        int k;
+        int j;
+        int next_start;
+        int sw_lbl;
+        int si;
+
+        nc = 0;
+        dflt_pos = -1;
+        has_dflt = 0;
+        for (si = 0; si < n->ival2; si = si + 1) {
+            if (n->list[si]->kind == ND_CASE) {
+                if (nc < 256) {
+                    case_vals[nc] = n->list[si]->ival;
+                    case_start[nc] = si;
+                    nc = nc + 1;
+                }
+            } else if (n->list[si]->kind == ND_DEFAULT) {
+                dflt_pos = si;
+                has_dflt = 1;
+            }
+        }
+
+        sw_lbl = label_cnt;
+        label_cnt = label_cnt + 1;
+        brk_lbl[loop_sp] = sw_lbl;
+        if (loop_sp > 0) {
+            cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
+        } else {
+            cont_lbl[loop_sp] = -1;
+        }
+        loop_sp = loop_sp + 1;
+
+        /* save switch value */
+        gen_expr(n->c0);
+        emit_indent();
+        printf("local.set $__stmp\n");
+
+        /* outer break block */
+        emit_indent();
+        printf("(block $brk_%d\n", sw_lbl);
+        indent_level = indent_level + 1;
+
+        /* default target block (outermost) */
+        emit_indent();
+        printf("(block $sw%d_dflt\n", sw_lbl);
+        indent_level = indent_level + 1;
+
+        /* open case blocks in reverse order: first case = innermost */
+        for (k = nc - 1; k >= 0; k = k - 1) {
+            emit_indent();
+            printf("(block $sw%d_c%d\n", sw_lbl, k);
+            indent_level = indent_level + 1;
+        }
+
+        /* dispatch: compare and branch for each case */
+        for (k = 0; k < nc; k = k + 1) {
+            emit_indent(); printf("local.get $__stmp\n");
+            emit_indent(); printf("i32.const %d\n", case_vals[k]);
+            emit_indent(); printf("i32.eq\n");
+            emit_indent(); printf("br_if $sw%d_c%d\n", sw_lbl, k);
+        }
+        emit_indent();
+        if (has_dflt) {
+            printf("br $sw%d_dflt\n", sw_lbl);
+        } else {
+            printf("br $brk_%d\n", sw_lbl);
+        }
+
+        /* close case blocks in forward order and emit case bodies */
+        for (k = 0; k < nc; k = k + 1) {
+            indent_level = indent_level - 1;
+            emit_indent(); printf(")\n");
+            if (k + 1 < nc) {
+                next_start = case_start[k + 1];
+            } else if (has_dflt) {
+                next_start = dflt_pos;
+            } else {
+                next_start = n->ival2;
+            }
+            for (j = case_start[k] + 1; j < next_start; j = j + 1) {
+                if (n->list[j]->kind == ND_CASE) continue;
+                if (n->list[j]->kind == ND_DEFAULT) continue;
+                gen_stmt(n->list[j]);
+            }
+        }
+
+        /* close default target block */
+        indent_level = indent_level - 1;
+        emit_indent(); printf(")\n");
+
+        /* emit default body */
+        if (has_dflt) {
+            for (j = dflt_pos + 1; j < n->ival2; j = j + 1) {
+                if (n->list[j]->kind == ND_CASE) continue;
+                if (n->list[j]->kind == ND_DEFAULT) continue;
+                gen_stmt(n->list[j]);
+            }
+        }
+
+        /* close break block */
+        indent_level = indent_level - 1;
+        emit_indent(); printf(")\n");
+
+        loop_sp = loop_sp - 1;
     } else {
         error(n->nline, n->ncol, "unsupported statement in codegen");
     }
@@ -2676,6 +2850,8 @@ void gen_func(struct Node *n) {
     }
     emit_indent();
     printf("(local $__atmp i32)\n");
+    emit_indent();
+    printf("(local $__stmp i32)\n");
     body = n->c0;
     for (i = 0; i < body->ival2; i = i + 1) {
         gen_stmt(body->list[i]);
