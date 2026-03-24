@@ -84,7 +84,11 @@ enum {
     TOK_DEFAULT = 63,
     TOK_CONST = 64,
     TOK_ENUM = 65,
-    TOK_TYPEDEF = 66
+    TOK_TYPEDEF = 66,
+    TOK_UNSIGNED = 67,
+    TOK_SIGNED = 68,
+    TOK_SHORT = 69,
+    TOK_LONG = 70
 };
 
 /* Node kinds */
@@ -296,6 +300,10 @@ int kw_lookup(char *s) {
     if (strcmp(s, "typedef") == 0) return TOK_TYPEDEF;
     if (strcmp(s, "struct") == 0) return TOK_STRUCT;
     if (strcmp(s, "sizeof") == 0) return TOK_SIZEOF;
+    if (strcmp(s, "unsigned") == 0) return TOK_UNSIGNED;
+    if (strcmp(s, "signed") == 0) return TOK_SIGNED;
+    if (strcmp(s, "short") == 0) return TOK_SHORT;
+    if (strcmp(s, "long") == 0) return TOK_LONG;
     return 0;
 }
 
@@ -768,7 +776,8 @@ int resolve_field_offset(char *field_name) {
 struct GlobalVar {
     char *name;
     int init_val;
-    int gv_is_char;
+    int gv_elem_size;     /* 1=char, 2=short, 4=int */
+    int gv_is_unsigned;
 };
 
 struct GlobalVar **globals_tbl;
@@ -846,6 +855,8 @@ struct TypeAlias {
 struct TypeAlias **type_aliases;
 int ntype_aliases;
 int last_type_is_ptr;
+int last_type_is_unsigned;
+int last_type_elem_size;  /* 1=char, 2=short, 4=int/long */
 
 void init_type_aliases(void) {
     type_aliases = (struct TypeAlias **)malloc(MAX_TYPE_ALIASES * sizeof(void *));
@@ -871,6 +882,7 @@ struct Node {
     int ncol;
     int ival;
     int ival2;
+    int ival3;
     char *sval;
     struct Node *c0;
     struct Node *c1;
@@ -946,6 +958,10 @@ int is_type_token(void) {
     if (at(TOK_VOID)) return 1;
     if (at(TOK_STRUCT)) return 1;
     if (at(TOK_ENUM)) return 1;
+    if (at(TOK_UNSIGNED)) return 1;
+    if (at(TOK_SIGNED)) return 1;
+    if (at(TOK_SHORT)) return 1;
+    if (at(TOK_LONG)) return 1;
     if (at(TOK_IDENT) && find_type_alias(cur->text) >= 0) return 1;
     return 0;
 }
@@ -1069,11 +1085,44 @@ struct Node *parse_atom(void) {
                     advance_tok();
                 }
                 while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
-            } else if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID)) {
-                n->sval = strdupn(cur->text, 127);
-                advance_tok();
-                while (at(TOK_CONST)) advance_tok();
-                while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+            } else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG) ||
+                       at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID)) {
+                {
+                    int sz_esz;
+                    sz_esz = 4;
+                    /* consume modifiers */
+                    for (;;) {
+                        if (at(TOK_UNSIGNED) || at(TOK_SIGNED)) {
+                            advance_tok();
+                        } else if (at(TOK_SHORT)) {
+                            sz_esz = 2;
+                            advance_tok();
+                        } else if (at(TOK_LONG)) {
+                            sz_esz = 4;
+                            advance_tok();
+                        } else {
+                            break;
+                        }
+                    }
+                    if (at(TOK_CHAR_KW)) {
+                        sz_esz = 1;
+                        n->sval = strdupn("char", 127);
+                        advance_tok();
+                    } else if (at(TOK_INT)) {
+                        /* elem size already set by modifiers */
+                        n->sval = (char *)0;
+                        advance_tok();
+                    } else if (at(TOK_VOID)) {
+                        n->sval = strdupn("void", 127);
+                        advance_tok();
+                    } else {
+                        /* bare modifiers: unsigned, short, long */
+                        n->sval = (char *)0;
+                    }
+                    n->ival2 = sz_esz;
+                    while (at(TOK_CONST)) advance_tok();
+                    while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+                }
             } else {
                 /* sizeof(expr) */
                 n->c0 = parse_expr();
@@ -1325,18 +1374,22 @@ struct Node *parse_var_decl(void) {
     struct NList *init_elems;
     int line;
     int col;
-    int is_char;
+    int vd_elem_size;
+    int vd_is_unsigned;
     int is_ptr;
     int arr_size;
     int ei;
     int tai_vd;
+    int had_mod_vd;
 
     line = cur->line;
     col = cur->col;
-    is_char = 0;
+    vd_elem_size = 4;
+    vd_is_unsigned = 0;
     is_ptr = 0;
     arr_size = 0;
     tai_vd = -1;
+    had_mod_vd = 0;
     blk = (struct Node *)0;
     size_node = (struct Node *)0;
     idx_lit = (struct Node *)0;
@@ -1351,26 +1404,59 @@ struct Node *parse_var_decl(void) {
     if (at(TOK_STRUCT)) {
         advance_tok();
         advance_tok();
+    } else if (at(TOK_ENUM)) {
+        advance_tok();
+        if (at(TOK_IDENT)) advance_tok();
     } else {
+        /* consume sign/size modifiers */
+        for (;;) {
+            if (at(TOK_UNSIGNED)) {
+                vd_is_unsigned = 1;
+                had_mod_vd = 1;
+                advance_tok();
+            } else if (at(TOK_SIGNED)) {
+                vd_is_unsigned = 0;
+                had_mod_vd = 1;
+                advance_tok();
+            } else if (at(TOK_SHORT)) {
+                vd_elem_size = 2;
+                had_mod_vd = 1;
+                advance_tok();
+            } else if (at(TOK_LONG)) {
+                vd_elem_size = 4;
+                had_mod_vd = 1;
+                advance_tok();
+            } else {
+                break;
+            }
+        }
         if (at(TOK_CHAR_KW)) {
-            is_char = 1;
+            vd_elem_size = 1;
+            advance_tok();
+        } else if (at(TOK_INT)) {
+            advance_tok();
+        } else if (at(TOK_VOID)) {
+            advance_tok();
         } else if (at(TOK_IDENT)) {
             tai_vd = find_type_alias(cur->text);
             if (tai_vd >= 0 && type_aliases[tai_vd]->resolved_kind == 2) {
-                is_char = 1;
+                vd_elem_size = 1;
             }
             if (tai_vd >= 0 && type_aliases[tai_vd]->is_ptr) {
                 is_ptr = 1;
             }
+            if (tai_vd >= 0 || !had_mod_vd) {
+                advance_tok();
+            }
         }
-        advance_tok();
     }
     while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
     if (last_type_is_ptr) is_ptr = 1;
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     n = node_new(ND_VAR_DECL, line, col);
     n->sval = strdupn(cur->text, 127);
-    n->ival2 = is_char;
+    n->ival2 = vd_elem_size;
+    n->ival3 = vd_is_unsigned;
     advance_tok();
     /* check for array size: int name[N] */
     if (at(TOK_LBRACKET)) {
@@ -1675,14 +1761,45 @@ struct Node *parse_block(void) {
 
 int parse_type(void) {
     int taidx;
+    int had_modifier;
     last_type_is_ptr = 0;
+    last_type_is_unsigned = 0;
+    last_type_elem_size = 4;
     while (at(TOK_CONST)) advance_tok();
     if (at(TOK_IDENT)) {
         taidx = find_type_alias(cur->text);
         if (taidx >= 0) {
             last_type_is_ptr = type_aliases[taidx]->is_ptr;
+            if (type_aliases[taidx]->resolved_kind == 2) last_type_elem_size = 1;
             advance_tok();
             return type_aliases[taidx]->resolved_kind;
+        }
+    }
+    /* consume sign/size modifiers */
+    had_modifier = 0;
+    for (;;) {
+        if (at(TOK_UNSIGNED)) {
+            last_type_is_unsigned = 1;
+            had_modifier = 1;
+            advance_tok();
+        } else if (at(TOK_SIGNED)) {
+            last_type_is_unsigned = 0;
+            had_modifier = 1;
+            advance_tok();
+        } else if (at(TOK_SHORT)) {
+            last_type_elem_size = 2;
+            had_modifier = 1;
+            advance_tok();
+            if (at(TOK_INT)) advance_tok();
+            if (had_modifier) return 0;
+        } else if (at(TOK_LONG)) {
+            last_type_elem_size = 4;
+            had_modifier = 1;
+            advance_tok();
+            if (at(TOK_INT)) advance_tok();
+            if (had_modifier) return 0;
+        } else {
+            break;
         }
     }
     if (at(TOK_INT)) {
@@ -1694,6 +1811,7 @@ int parse_type(void) {
         return 1;
     }
     if (at(TOK_CHAR_KW)) {
+        last_type_elem_size = 1;
         advance_tok();
         return 2;
     }
@@ -1707,6 +1825,7 @@ int parse_type(void) {
         if (at(TOK_IDENT)) advance_tok();
         return 0;
     }
+    if (had_modifier) return 0;
     error(cur->line, cur->col, "expected type");
     return 0;
 }
@@ -1757,7 +1876,8 @@ struct Node *parse_func(void) {
             if (at(TOK_IDENT)) {
                 pn = node_new(ND_IDENT, cur->line, cur->col);
                 pn->sval = strdupn(cur->text, 127);
-                if (pty == 2) { pn->ival2 = 1; } else { pn->ival2 = 0; }
+                pn->ival2 = last_type_elem_size;
+                pn->ival3 = last_type_is_unsigned;
                 nlist_push(params, pn);
                 advance_tok();
             }
@@ -1768,7 +1888,8 @@ struct Node *parse_func(void) {
                 if (at(TOK_IDENT)) {
                     pn = node_new(ND_IDENT, cur->line, cur->col);
                     pn->sval = strdupn(cur->text, 127);
-                    if (pty == 2) { pn->ival2 = 1; } else { pn->ival2 = 0; }
+                    pn->ival2 = last_type_elem_size;
+                    pn->ival3 = last_type_is_unsigned;
                     nlist_push(params, pn);
                     advance_tok();
                 }
@@ -1827,31 +1948,63 @@ void parse_struct_def(void) {
 }
 
 void parse_global_var(void) {
-    int is_char;
+    int gv_es;
+    int gv_uns;
     int is_ptr;
     int neg;
     int tai_gv;
+    int had_mod_gv;
 
-    is_char = 0;
+    gv_es = 4;
+    gv_uns = 0;
     is_ptr = 0;
     tai_gv = -1;
+    had_mod_gv = 0;
     while (at(TOK_CONST)) advance_tok();
     if (at(TOK_STRUCT) || at(TOK_ENUM)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
     } else {
+        for (;;) {
+            if (at(TOK_UNSIGNED)) {
+                gv_uns = 1;
+                had_mod_gv = 1;
+                advance_tok();
+            } else if (at(TOK_SIGNED)) {
+                gv_uns = 0;
+                had_mod_gv = 1;
+                advance_tok();
+            } else if (at(TOK_SHORT)) {
+                gv_es = 2;
+                had_mod_gv = 1;
+                advance_tok();
+            } else if (at(TOK_LONG)) {
+                gv_es = 4;
+                had_mod_gv = 1;
+                advance_tok();
+            } else {
+                break;
+            }
+        }
         if (at(TOK_CHAR_KW)) {
-            is_char = 1;
+            gv_es = 1;
+            advance_tok();
+        } else if (at(TOK_INT)) {
+            advance_tok();
+        } else if (at(TOK_VOID)) {
+            advance_tok();
         } else if (at(TOK_IDENT)) {
             tai_gv = find_type_alias(cur->text);
             if (tai_gv >= 0 && type_aliases[tai_gv]->resolved_kind == 2) {
-                is_char = 1;
+                gv_es = 1;
             }
             if (tai_gv >= 0 && type_aliases[tai_gv]->is_ptr) {
                 is_ptr = 1;
             }
+            if (tai_gv >= 0 || !had_mod_gv) {
+                advance_tok();
+            }
         }
-        advance_tok();
     }
     while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
     if (last_type_is_ptr) is_ptr = 1;
@@ -1860,7 +2013,8 @@ void parse_global_var(void) {
     globals_tbl[nglobals] = (struct GlobalVar *)malloc(sizeof(struct GlobalVar));
     globals_tbl[nglobals]->name = strdupn(cur->text, 127);
     globals_tbl[nglobals]->init_val = 0;
-    globals_tbl[nglobals]->gv_is_char = is_char;
+    globals_tbl[nglobals]->gv_elem_size = gv_es;
+    globals_tbl[nglobals]->gv_is_unsigned = gv_uns;
     advance_tok();
     if (at(TOK_EQ)) {
         advance_tok();
@@ -2102,7 +2256,8 @@ void emit_indent(void) {
 
 struct LocalVar {
     char *name;
-    int lv_is_char;
+    int lv_elem_size;     /* 1=char, 2=short, 4=int */
+    int lv_is_unsigned;
 };
 
 struct LocalVar **local_vars;
@@ -2121,7 +2276,7 @@ int find_local(char *name) {
     return -1;
 }
 
-void add_local(char *name, int is_char) {
+void add_local(char *name, int elem_size, int is_unsigned) {
     if (find_local(name) >= 0) return;
     if (nlocals >= MAX_LOCALS) {
         printf("too many locals\n");
@@ -2129,7 +2284,8 @@ void add_local(char *name, int is_char) {
     }
     local_vars[nlocals] = (struct LocalVar *)malloc(sizeof(struct LocalVar));
     local_vars[nlocals]->name = strdupn(name, 127);
-    local_vars[nlocals]->lv_is_char = is_char;
+    local_vars[nlocals]->lv_elem_size = elem_size;
+    local_vars[nlocals]->lv_is_unsigned = is_unsigned;
     nlocals++;
 }
 
@@ -2138,7 +2294,7 @@ void collect_locals(struct Node *n) {
     if (n == (struct Node *)0) return;
     switch (n->kind) {
     case ND_VAR_DECL:
-        add_local(n->sval, n->ival2);
+        add_local(n->sval, n->ival2, n->ival3);
         break;
     case ND_BLOCK:
         for (i = 0; i < n->ival2; i++) {
@@ -2191,20 +2347,40 @@ int var_elem_size(char *name) {
     int gi;
     li = find_local(name);
     if (li >= 0) {
-        if (local_vars[li]->lv_is_char) return 1;
-        return 4;
+        return local_vars[li]->lv_elem_size;
     }
     gi = find_global(name);
     if (gi >= 0) {
-        if (globals_tbl[gi]->gv_is_char) return 1;
-        return 4;
+        return globals_tbl[gi]->gv_elem_size;
     }
     return 4;
 }
 
+int var_is_unsigned(char *name) {
+    int li;
+    int gi;
+    li = find_local(name);
+    if (li >= 0) {
+        return local_vars[li]->lv_is_unsigned;
+    }
+    gi = find_global(name);
+    if (gi >= 0) {
+        return globals_tbl[gi]->gv_is_unsigned;
+    }
+    return 0;
+}
+
 int expr_elem_size(struct Node *n) {
     if (n->kind == ND_IDENT) return var_elem_size(n->sval);
+    if (n->kind == ND_BINARY && (n->ival == TOK_PLUS || n->ival == TOK_MINUS)) {
+        if (n->c0->kind == ND_IDENT) return var_elem_size(n->c0->sval);
+    }
     return 4;
+}
+
+int expr_is_unsigned(struct Node *n) {
+    if (n->kind == ND_IDENT) return var_is_unsigned(n->sval);
+    return 0;
 }
 
 /* --- Expression codegen --- */
@@ -2302,6 +2478,8 @@ void gen_expr(struct Node *n) {
                 emit_indent();
                 if (esz == 1) {
                     printf("i32.load8_u\n");
+                } else if (esz == 2) {
+                    printf("i32.load16_s\n");
                 } else {
                     printf("i32.load\n");
                 }
@@ -2313,6 +2491,8 @@ void gen_expr(struct Node *n) {
                 emit_indent();
                 if (esz == 1) {
                     printf("i32.load8_u\n");
+                } else if (esz == 2) {
+                    printf("i32.load16_s\n");
                 } else {
                     printf("i32.load\n");
                 }
@@ -2326,6 +2506,8 @@ void gen_expr(struct Node *n) {
                 emit_indent();
                 if (esz == 1) {
                     printf("i32.load8_u\n");
+                } else if (esz == 2) {
+                    printf("i32.load16_s\n");
                 } else {
                     printf("i32.load\n");
                 }
@@ -2345,6 +2527,8 @@ void gen_expr(struct Node *n) {
             emit_indent();
             if (esz == 1) {
                 printf("i32.store8\n");
+            } else if (esz == 2) {
+                printf("i32.store16\n");
             } else {
                 printf("i32.store\n");
             }
@@ -2434,6 +2618,8 @@ void gen_expr(struct Node *n) {
                 emit_indent();
                 if (esz == 1) {
                     printf("i32.load8_u\n");
+                } else if (esz == 2) {
+                    printf("i32.load16_s\n");
                 } else {
                     printf("i32.load\n");
                 }
@@ -2454,6 +2640,8 @@ void gen_expr(struct Node *n) {
                 emit_indent();
                 if (esz == 1) {
                     printf("i32.load8_u\n");
+                } else if (esz == 2) {
+                    printf("i32.load16_s\n");
                 } else {
                     printf("i32.load\n");
                 }
@@ -2476,6 +2664,8 @@ void gen_expr(struct Node *n) {
                 emit_indent();
                 if (esz == 1) {
                     printf("i32.load8_u\n");
+                } else if (esz == 2) {
+                    printf("i32.load16_s\n");
                 } else {
                     printf("i32.load\n");
                 }
@@ -2504,6 +2694,8 @@ void gen_expr(struct Node *n) {
             emit_indent();
             if (esz == 1) {
                 printf("i32.store8\n");
+            } else if (esz == 2) {
+                printf("i32.store16\n");
             } else {
                 printf("i32.store\n");
             }
@@ -2534,6 +2726,8 @@ void gen_expr(struct Node *n) {
             emit_indent();
             if (esz == 1) {
                 printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
             } else {
                 printf("i32.load\n");
             }
@@ -2552,21 +2746,21 @@ void gen_expr(struct Node *n) {
         } else if (n->ival == TOK_STAR) {
             printf("i32.mul\n");
         } else if (n->ival == TOK_SLASH) {
-            printf("i32.div_s\n");
+            if (expr_is_unsigned(n->c0)) { printf("i32.div_u\n"); } else { printf("i32.div_s\n"); }
         } else if (n->ival == TOK_PERCENT) {
-            printf("i32.rem_s\n");
+            if (expr_is_unsigned(n->c0)) { printf("i32.rem_u\n"); } else { printf("i32.rem_s\n"); }
         } else if (n->ival == TOK_EQ_EQ) {
             printf("i32.eq\n");
         } else if (n->ival == TOK_BANG_EQ) {
             printf("i32.ne\n");
         } else if (n->ival == TOK_LT) {
-            printf("i32.lt_s\n");
+            if (expr_is_unsigned(n->c0)) { printf("i32.lt_u\n"); } else { printf("i32.lt_s\n"); }
         } else if (n->ival == TOK_GT) {
-            printf("i32.gt_s\n");
+            if (expr_is_unsigned(n->c0)) { printf("i32.gt_u\n"); } else { printf("i32.gt_s\n"); }
         } else if (n->ival == TOK_LT_EQ) {
-            printf("i32.le_s\n");
+            if (expr_is_unsigned(n->c0)) { printf("i32.le_u\n"); } else { printf("i32.le_s\n"); }
         } else if (n->ival == TOK_GT_EQ) {
-            printf("i32.ge_s\n");
+            if (expr_is_unsigned(n->c0)) { printf("i32.ge_u\n"); } else { printf("i32.ge_s\n"); }
         } else if (n->ival == TOK_AMP_AMP) {
             printf("i32.and\n");
         } else if (n->ival == TOK_PIPE_PIPE) {
@@ -2578,7 +2772,7 @@ void gen_expr(struct Node *n) {
         } else if (n->ival == TOK_LSHIFT) {
             printf("i32.shl\n");
         } else if (n->ival == TOK_RSHIFT) {
-            printf("i32.shr_s\n");
+            if (expr_is_unsigned(n->c0)) { printf("i32.shr_u\n"); } else { printf("i32.shr_s\n"); }
         } else if (n->ival == TOK_CARET) {
             printf("i32.xor\n");
         } else {
@@ -2755,6 +2949,8 @@ void gen_expr(struct Node *n) {
             } else {
                 sz = 4;
             }
+        } else if (n->ival2 > 0) {
+            sz = n->ival2;
         } else {
             sz = 4;
         }
@@ -2777,6 +2973,8 @@ void gen_expr(struct Node *n) {
         emit_indent();
         if (esz == 1) {
             printf("i32.load8_u\n");
+        } else if (esz == 2) {
+            printf("i32.load16_s\n");
         } else {
             printf("i32.load\n");
         }
@@ -2815,17 +3013,17 @@ void gen_expr(struct Node *n) {
             pesz = expr_elem_size(tgt2->c0);
             gen_expr(tgt2->c0);
             emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else { printf("i32.load\n"); }
+            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
             emit_indent(); printf("local.set $__atmp\n");
             gen_expr(tgt2->c0);
             gen_expr(tgt2->c0);
             emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else { printf("i32.load\n"); }
+            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
             emit_indent(); printf("i32.const 1\n");
             emit_indent();
             if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
             emit_indent();
-            if (pesz == 1) { printf("i32.store8\n"); } else { printf("i32.store\n"); }
+            if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
             emit_indent(); printf("local.get $__atmp\n");
         } else if (tgt2->kind == ND_SUBSCRIPT) {
             /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
@@ -2835,7 +3033,7 @@ void gen_expr(struct Node *n) {
             if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
             emit_indent(); printf("i32.add\n");
             emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else { printf("i32.load\n"); }
+            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
             emit_indent(); printf("local.set $__atmp\n");
             gen_expr(tgt2->c0); gen_expr(tgt2->c1);
             if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
@@ -2844,12 +3042,12 @@ void gen_expr(struct Node *n) {
             if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
             emit_indent(); printf("i32.add\n");
             emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else { printf("i32.load\n"); }
+            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
             emit_indent(); printf("i32.const 1\n");
             emit_indent();
             if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
             emit_indent();
-            if (pesz == 1) { printf("i32.store8\n"); } else { printf("i32.store\n"); }
+            if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
             emit_indent(); printf("local.get $__atmp\n");
         } else if (tgt2->kind == ND_MEMBER) {
             poff = resolve_field_offset(tgt2->sval);
@@ -2932,9 +3130,8 @@ void gen_stmt(struct Node *n) {
         break;
     case ND_VAR_DECL:
         if (n->ival > 0) {
-            /* Array: allocate n->ival elements of the given size */
-            bsz = n->ival;
-            if (n->ival2 == 0) { bsz = bsz * 4; }
+            /* Array: allocate n->ival elements of elem_size bytes */
+            bsz = n->ival * n->ival2;
             emit_indent();
             printf("i32.const %d\n", bsz);
             emit_indent();
@@ -3258,7 +3455,7 @@ void gen_func(struct Node *n) {
     loop_sp = 0;
     /* register params as locals for is_char tracking */
     for (i = 0; i < n->ival2; i++) {
-        add_local(n->list[i]->sval, n->list[i]->ival2);
+        add_local(n->list[i]->sval, n->list[i]->ival2, n->list[i]->ival3);
     }
     nparam_locals = nlocals;
     collect_locals(n->c0);
@@ -4194,12 +4391,14 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             } else if (n->ival == TOK_PLUS_EQ) {
                 gen_expr_bin(o, tgt->c0);
                 if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
                 else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
                 gen_expr_bin(o, n->c1);
                 bv_push(o, 0x6A);
             } else if (n->ival == TOK_MINUS_EQ) {
                 gen_expr_bin(o, tgt->c0);
                 if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
                 else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
                 gen_expr_bin(o, n->c1);
                 bv_push(o, 0x6B);
@@ -4208,6 +4407,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                        n->ival == TOK_RSHIFT_EQ) {
                 gen_expr_bin(o, tgt->c0);
                 if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
                 else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
                 gen_expr_bin(o, n->c1);
                 if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
@@ -4221,6 +4421,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             gen_expr_bin(o, tgt->c0);
             bv_push(o, 0x20); bv_u32(o, li);
             if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
             bv_push(o, 0x20); bv_u32(o, li);
         } else if (tgt->kind == ND_MEMBER) {
@@ -4270,6 +4471,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                 if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
                 bv_push(o, 0x6A);
                 if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
                 else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
                 gen_expr_bin(o, n->c1);
                 bv_push(o, 0x6A);
@@ -4279,6 +4481,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                 if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
                 bv_push(o, 0x6A);
                 if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
                 else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
                 gen_expr_bin(o, n->c1);
                 bv_push(o, 0x6B);
@@ -4290,6 +4493,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                 if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
                 bv_push(o, 0x6A);
                 if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
                 else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
                 gen_expr_bin(o, n->c1);
                 if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
@@ -4306,6 +4510,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             bv_push(o, 0x6A);
             bv_push(o, 0x20); bv_u32(o, li);
             if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
             bv_push(o, 0x20); bv_u32(o, li);
         }
@@ -4326,6 +4531,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             esz = expr_elem_size(n->c0);
             gen_expr_bin(o, n->c0);
             if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
         } else if (n->ival == TOK_AMP) {
             error(n->nline, n->ncol, "cannot take address of this expression");
@@ -4337,20 +4543,20 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         if (n->ival == TOK_PLUS) { bv_push(o, 0x6A); }
         else if (n->ival == TOK_MINUS) { bv_push(o, 0x6B); }
         else if (n->ival == TOK_STAR) { bv_push(o, 0x6C); }
-        else if (n->ival == TOK_SLASH) { bv_push(o, 0x6D); }
-        else if (n->ival == TOK_PERCENT) { bv_push(o, 0x6F); }
+        else if (n->ival == TOK_SLASH) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x6E); } else { bv_push(o, 0x6D); } }
+        else if (n->ival == TOK_PERCENT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x70); } else { bv_push(o, 0x6F); } }
         else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x46); }
         else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x47); }
-        else if (n->ival == TOK_LT) { bv_push(o, 0x48); }
-        else if (n->ival == TOK_GT) { bv_push(o, 0x4A); }
-        else if (n->ival == TOK_LT_EQ) { bv_push(o, 0x4C); }
-        else if (n->ival == TOK_GT_EQ) { bv_push(o, 0x4E); }
+        else if (n->ival == TOK_LT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x49); } else { bv_push(o, 0x48); } }
+        else if (n->ival == TOK_GT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4B); } else { bv_push(o, 0x4A); } }
+        else if (n->ival == TOK_LT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4D); } else { bv_push(o, 0x4C); } }
+        else if (n->ival == TOK_GT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4F); } else { bv_push(o, 0x4E); } }
         else if (n->ival == TOK_AMP_AMP) { bv_push(o, 0x71); }
         else if (n->ival == TOK_PIPE_PIPE) { bv_push(o, 0x72); }
         else if (n->ival == TOK_AMP) { bv_push(o, 0x71); }
         else if (n->ival == TOK_PIPE) { bv_push(o, 0x72); }
         else if (n->ival == TOK_LSHIFT) { bv_push(o, 0x74); }
-        else if (n->ival == TOK_RSHIFT) { bv_push(o, 0x75); }
+        else if (n->ival == TOK_RSHIFT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x76); } else { bv_push(o, 0x75); } }
         else if (n->ival == TOK_CARET) { bv_push(o, 0x73); }
         else { error(n->nline, n->ncol, "unsupported binary operator"); }
         break;
@@ -4488,6 +4694,8 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             } else {
                 sz = 4;
             }
+        } else if (n->ival2 > 0) {
+            sz = n->ival2;
         } else {
             sz = 4;
         }
@@ -4501,6 +4709,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
         bv_push(o, 0x6A);
         if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
         else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
         break;
     case ND_POST_INC:
@@ -4536,15 +4745,18 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             pesz = expr_elem_size(tgt2->c0);
             gen_expr_bin(o, tgt2->c0);
             if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
             bv_push(o, 0x21); bv_u32(o, atmp);
             gen_expr_bin(o, tgt2->c0);
             gen_expr_bin(o, tgt2->c0);
             if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
             bv_push(o, 0x41); bv_i32(o, 1);
             if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
             if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
             bv_push(o, 0x20); bv_u32(o, atmp);
         } else if (tgt2->kind == ND_SUBSCRIPT) {
@@ -4553,6 +4765,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
             bv_push(o, 0x6A);
             if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
             bv_push(o, 0x21); bv_u32(o, atmp);
             gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
@@ -4562,10 +4775,12 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
             bv_push(o, 0x6A);
             if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
             bv_push(o, 0x41); bv_i32(o, 1);
             if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
             if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
             else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
             bv_push(o, 0x20); bv_u32(o, atmp);
         } else if (tgt2->kind == ND_MEMBER) {
@@ -4631,8 +4846,7 @@ void gen_stmt_bin(struct ByteVec *o, struct Node *n) {
         break;
     case ND_VAR_DECL:
         if (n->ival > 0) {
-            bsz = n->ival;
-            if (n->ival2 == 0) { bsz = bsz * 4; }
+            bsz = n->ival * n->ival2;
             bv_push(o, 0x41); bv_i32(o, bsz);
             bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
             bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
@@ -4877,12 +5091,12 @@ void gen_func_bin(struct ByteVec *cs, struct Node *n) {
     bin_lbl_sp = 0;
 
     for (i = 0; i < n->ival2; i++) {
-        add_local(n->list[i]->sval, n->list[i]->ival2);
+        add_local(n->list[i]->sval, n->list[i]->ival2, n->list[i]->ival3);
     }
     nparam_locals = nlocals;
     collect_locals(n->c0);
-    add_local("__atmp", 0);
-    add_local("__stmp", 0);
+    add_local("__atmp", 4, 0);
+    add_local("__stmp", 4, 0);
 
     fb = bv_new(4096);
 
