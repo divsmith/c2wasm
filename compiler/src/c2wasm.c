@@ -2899,6 +2899,132 @@ void gen_expr(struct Node *n) {
             gen_expr(n->list[2]);
             emit_indent();
             printf("call $memcmp\n");
+        /* --- new libc builtins --- */
+        } else if (strcmp(n->sval, "isdigit") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $isdigit\n");
+        } else if (strcmp(n->sval, "isalpha") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $isalpha\n");
+        } else if (strcmp(n->sval, "isalnum") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $isalnum\n");
+        } else if (strcmp(n->sval, "isspace") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $isspace\n");
+        } else if (strcmp(n->sval, "isupper") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $isupper\n");
+        } else if (strcmp(n->sval, "islower") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $islower\n");
+        } else if (strcmp(n->sval, "isprint") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $isprint\n");
+        } else if (strcmp(n->sval, "ispunct") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $ispunct\n");
+        } else if (strcmp(n->sval, "isxdigit") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $isxdigit\n");
+        } else if (strcmp(n->sval, "toupper") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $toupper\n");
+        } else if (strcmp(n->sval, "tolower") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $tolower\n");
+        } else if (strcmp(n->sval, "abs") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $abs\n");
+        } else if (strcmp(n->sval, "atoi") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $atoi\n");
+        } else if (strcmp(n->sval, "puts") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $puts\n");
+        } else if (strcmp(n->sval, "srand") == 0) {
+            gen_expr(n->list[0]);
+            emit_indent();
+            printf("call $srand\n");
+            emit_indent();
+            printf("i32.const 0\n");
+        } else if (strcmp(n->sval, "rand") == 0) {
+            emit_indent();
+            printf("call $rand\n");
+        } else if (strcmp(n->sval, "strcpy") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            emit_indent();
+            printf("call $strcpy\n");
+        } else if (strcmp(n->sval, "strcat") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            emit_indent();
+            printf("call $strcat\n");
+        } else if (strcmp(n->sval, "strchr") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            emit_indent();
+            printf("call $strchr\n");
+        } else if (strcmp(n->sval, "strrchr") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            emit_indent();
+            printf("call $strrchr\n");
+        } else if (strcmp(n->sval, "strstr") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            emit_indent();
+            printf("call $strstr\n");
+        } else if (strcmp(n->sval, "calloc") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            emit_indent();
+            printf("call $calloc\n");
+        } else if (strcmp(n->sval, "strncmp") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            gen_expr(n->list[2]);
+            emit_indent();
+            printf("call $strncmp\n");
+        } else if (strcmp(n->sval, "strncat") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            gen_expr(n->list[2]);
+            emit_indent();
+            printf("call $strncat\n");
+        } else if (strcmp(n->sval, "memmove") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            gen_expr(n->list[2]);
+            emit_indent();
+            printf("call $memmove\n");
+        } else if (strcmp(n->sval, "memchr") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            gen_expr(n->list[2]);
+            emit_indent();
+            printf("call $memchr\n");
+        } else if (strcmp(n->sval, "strtol") == 0) {
+            gen_expr(n->list[0]);
+            gen_expr(n->list[1]);
+            gen_expr(n->list[2]);
+            emit_indent();
+            printf("call $strtol\n");
         } else {
             for (i = 0; i < n->ival2; i++) {
                 gen_expr(n->list[i]);
@@ -3565,6 +3691,8 @@ void gen_module(struct Node *prog) {
     printf("(global $__heap_ptr (mut i32) (i32.const %d))\n", data_ptr);
     emit_indent();
     printf("(global $__free_list (mut i32) (i32.const 0))\n");
+    emit_indent();
+    printf("(global $__rand_seed (mut i32) (i32.const 1))\n");
 
     /* user global variables */
     for (gi = 0; gi < nglobals; gi++) {
@@ -4105,6 +4233,560 @@ void gen_module(struct Node *prog) {
     emit_indent();
     printf("\n");
 
+    /* --- new libc helper functions --- */
+
+    /* isdigit */
+    emit_indent();
+    printf("(func $isdigit (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.and\n");
+    emit_indent();
+    printf("    (i32.ge_u (local.get $c) (i32.const 48))\n");
+    emit_indent();
+    printf("    (i32.le_u (local.get $c) (i32.const 57)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* isalpha */
+    emit_indent();
+    printf("(func $isalpha (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.or\n");
+    emit_indent();
+    printf("    (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 90)))\n");
+    emit_indent();
+    printf("    (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 122))))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* isalnum */
+    emit_indent();
+    printf("(func $isalnum (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.or (call $isdigit (local.get $c)) (call $isalpha (local.get $c)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* isspace */
+    emit_indent();
+    printf("(func $isspace (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.or\n");
+    emit_indent();
+    printf("    (i32.or\n");
+    emit_indent();
+    printf("      (i32.eq (local.get $c) (i32.const 32))\n");
+    emit_indent();
+    printf("      (i32.eq (local.get $c) (i32.const 9)))\n");
+    emit_indent();
+    printf("    (i32.or\n");
+    emit_indent();
+    printf("      (i32.eq (local.get $c) (i32.const 10))\n");
+    emit_indent();
+    printf("      (i32.or\n");
+    emit_indent();
+    printf("        (i32.eq (local.get $c) (i32.const 13))\n");
+    emit_indent();
+    printf("        (i32.eq (local.get $c) (i32.const 12)))))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* isupper */
+    emit_indent();
+    printf("(func $isupper (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 90)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* islower */
+    emit_indent();
+    printf("(func $islower (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 122)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* isprint */
+    emit_indent();
+    printf("(func $isprint (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.and (i32.ge_u (local.get $c) (i32.const 32)) (i32.le_u (local.get $c) (i32.const 126)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* ispunct */
+    emit_indent();
+    printf("(func $ispunct (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.and (call $isprint (local.get $c))\n");
+    emit_indent();
+    printf("    (i32.and (i32.eqz (call $isalnum (local.get $c)))\n");
+    emit_indent();
+    printf("             (i32.ne (local.get $c) (i32.const 32))))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* isxdigit */
+    emit_indent();
+    printf("(func $isxdigit (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.or (call $isdigit (local.get $c))\n");
+    emit_indent();
+    printf("    (i32.or\n");
+    emit_indent();
+    printf("      (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 70)))\n");
+    emit_indent();
+    printf("      (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 102)))))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* toupper */
+    emit_indent();
+    printf("(func $toupper (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (if (result i32) (call $islower (local.get $c))\n");
+    emit_indent();
+    printf("    (then (i32.sub (local.get $c) (i32.const 32)))\n");
+    emit_indent();
+    printf("    (else (local.get $c)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* tolower */
+    emit_indent();
+    printf("(func $tolower (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (if (result i32) (call $isupper (local.get $c))\n");
+    emit_indent();
+    printf("    (then (i32.add (local.get $c) (i32.const 32)))\n");
+    emit_indent();
+    printf("    (else (local.get $c)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* abs */
+    emit_indent();
+    printf("(func $abs (param $n i32) (result i32)\n");
+    emit_indent();
+    printf("  (if (result i32) (i32.lt_s (local.get $n) (i32.const 0))\n");
+    emit_indent();
+    printf("    (then (i32.sub (i32.const 0) (local.get $n)))\n");
+    emit_indent();
+    printf("    (else (local.get $n)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* atoi */
+    emit_indent();
+    printf("(func $atoi (param $s i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $n i32) (local $neg i32) (local $c i32)\n");
+    emit_indent();
+    printf("  (local.set $n (i32.const 0))\n");
+    emit_indent();
+    printf("  (local.set $neg (i32.const 0))\n");
+    emit_indent();
+    printf("  (block $dsp (loop $sp\n");
+    emit_indent();
+    printf("    (local.set $c (i32.load8_u (local.get $s)))\n");
+    emit_indent();
+    printf("    (br_if $dsp (i32.ne (local.get $c) (i32.const 32)))\n");
+    emit_indent();
+    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $sp)))\n");
+    emit_indent();
+    printf("  (local.set $c (i32.load8_u (local.get $s)))\n");
+    emit_indent();
+    printf("  (if (i32.eq (local.get $c) (i32.const 45))\n");
+    emit_indent();
+    printf("    (then (local.set $neg (i32.const 1))\n");
+    emit_indent();
+    printf("           (local.set $s (i32.add (local.get $s) (i32.const 1)))))\n");
+    emit_indent();
+    printf("  (if (i32.eq (local.get $c) (i32.const 43))\n");
+    emit_indent();
+    printf("    (then (local.set $s (i32.add (local.get $s) (i32.const 1)))))\n");
+    emit_indent();
+    printf("  (block $done (loop $dig\n");
+    emit_indent();
+    printf("    (local.set $c (i32.load8_u (local.get $s)))\n");
+    emit_indent();
+    printf("    (br_if $done (i32.or (i32.lt_u (local.get $c) (i32.const 48)) (i32.gt_u (local.get $c) (i32.const 57))))\n");
+    emit_indent();
+    printf("    (local.set $n (i32.add (i32.mul (local.get $n) (i32.const 10)) (i32.sub (local.get $c) (i32.const 48))))\n");
+    emit_indent();
+    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $dig)))\n");
+    emit_indent();
+    printf("  (if (result i32) (local.get $neg) (then (i32.sub (i32.const 0) (local.get $n))) (else (local.get $n)))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* srand */
+    emit_indent();
+    printf("(func $srand (param $seed i32)\n");
+    emit_indent();
+    printf("  (global.set $__rand_seed (local.get $seed))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* rand */
+    emit_indent();
+    printf("(func $rand (result i32)\n");
+    emit_indent();
+    printf("  (global.set $__rand_seed\n");
+    emit_indent();
+    printf("    (i32.add (i32.mul (global.get $__rand_seed) (i32.const 1103515245)) (i32.const 12345)))\n");
+    emit_indent();
+    printf("  (i32.and (i32.shr_u (global.get $__rand_seed) (i32.const 16)) (i32.const 32767))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* calloc */
+    emit_indent();
+    printf("(func $calloc (param $nmemb i32) (param $size i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $ptr i32) (local $total i32)\n");
+    emit_indent();
+    printf("  (local.set $total (i32.mul (local.get $nmemb) (local.get $size)))\n");
+    emit_indent();
+    printf("  (local.set $ptr (call $malloc (local.get $total)))\n");
+    emit_indent();
+    printf("  (drop (call $memset (local.get $ptr) (i32.const 0) (local.get $total)))\n");
+    emit_indent();
+    printf("  (local.get $ptr)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* strcpy */
+    emit_indent();
+    printf("(func $strcpy (param $dst i32) (param $src i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $d i32)\n");
+    emit_indent();
+    printf("  (local.set $d (local.get $dst))\n");
+    emit_indent();
+    printf("  (block $done (loop $copy\n");
+    emit_indent();
+    printf("    (i32.store8 (local.get $d) (i32.load8_u (local.get $src)))\n");
+    emit_indent();
+    printf("    (br_if $done (i32.eqz (i32.load8_u (local.get $src))))\n");
+    emit_indent();
+    printf("    (local.set $d (i32.add (local.get $d) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (local.set $src (i32.add (local.get $src) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $copy)))\n");
+    emit_indent();
+    printf("  (local.get $dst)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* strcat */
+    emit_indent();
+    printf("(func $strcat (param $dst i32) (param $src i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $d i32)\n");
+    emit_indent();
+    printf("  (local.set $d (i32.add (local.get $dst) (call $strlen (local.get $dst))))\n");
+    emit_indent();
+    printf("  (drop (call $strcpy (local.get $d) (local.get $src)))\n");
+    emit_indent();
+    printf("  (local.get $dst)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* strchr */
+    emit_indent();
+    printf("(func $strchr (param $s i32) (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $ch i32)\n");
+    emit_indent();
+    printf("  (block $done (loop $scan\n");
+    emit_indent();
+    printf("    (local.set $ch (i32.load8_u (local.get $s)))\n");
+    emit_indent();
+    printf("    (if (i32.eq (local.get $ch) (local.get $c)) (then (return (local.get $s))))\n");
+    emit_indent();
+    printf("    (br_if $done (i32.eqz (local.get $ch)))\n");
+    emit_indent();
+    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $scan)))\n");
+    emit_indent();
+    printf("  (i32.const 0)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* strrchr */
+    emit_indent();
+    printf("(func $strrchr (param $s i32) (param $c i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $last i32) (local $ch i32)\n");
+    emit_indent();
+    printf("  (local.set $last (i32.const 0))\n");
+    emit_indent();
+    printf("  (block $done (loop $scan\n");
+    emit_indent();
+    printf("    (local.set $ch (i32.load8_u (local.get $s)))\n");
+    emit_indent();
+    printf("    (if (i32.eq (local.get $ch) (local.get $c)) (then (local.set $last (local.get $s))))\n");
+    emit_indent();
+    printf("    (br_if $done (i32.eqz (local.get $ch)))\n");
+    emit_indent();
+    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $scan)))\n");
+    emit_indent();
+    printf("  (local.get $last)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* strstr */
+    emit_indent();
+    printf("(func $strstr (param $hay i32) (param $needle i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $h i32) (local $n i32)\n");
+    emit_indent();
+    printf("  (if (i32.eqz (i32.load8_u (local.get $needle))) (then (return (local.get $hay))))\n");
+    emit_indent();
+    printf("  (block $notfound (loop $outer\n");
+    emit_indent();
+    printf("    (br_if $notfound (i32.eqz (i32.load8_u (local.get $hay))))\n");
+    emit_indent();
+    printf("    (local.set $h (local.get $hay))\n");
+    emit_indent();
+    printf("    (local.set $n (local.get $needle))\n");
+    emit_indent();
+    printf("    (block $nomatch (loop $inner\n");
+    emit_indent();
+    printf("      (if (i32.eqz (i32.load8_u (local.get $n))) (then (return (local.get $hay))))\n");
+    emit_indent();
+    printf("      (br_if $nomatch (i32.ne (i32.load8_u (local.get $h)) (i32.load8_u (local.get $n))))\n");
+    emit_indent();
+    printf("      (local.set $h (i32.add (local.get $h) (i32.const 1)))\n");
+    emit_indent();
+    printf("      (local.set $n (i32.add (local.get $n) (i32.const 1)))\n");
+    emit_indent();
+    printf("      (br $inner)))\n");
+    emit_indent();
+    printf("    (local.set $hay (i32.add (local.get $hay) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $outer)))\n");
+    emit_indent();
+    printf("  (i32.const 0)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* strncmp */
+    emit_indent();
+    printf("(func $strncmp (param $a i32) (param $b i32) (param $n i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $i i32) (local $ca i32) (local $cb i32)\n");
+    emit_indent();
+    printf("  (local.set $i (i32.const 0))\n");
+    emit_indent();
+    printf("  (block $done (loop $cmp\n");
+    emit_indent();
+    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    emit_indent();
+    printf("    (local.set $ca (i32.load8_u (local.get $a)))\n");
+    emit_indent();
+    printf("    (local.set $cb (i32.load8_u (local.get $b)))\n");
+    emit_indent();
+    printf("    (if (i32.ne (local.get $ca) (local.get $cb))\n");
+    emit_indent();
+    printf("      (then (return (i32.sub (local.get $ca) (local.get $cb)))))\n");
+    emit_indent();
+    printf("    (br_if $done (i32.eqz (local.get $ca)))\n");
+    emit_indent();
+    printf("    (local.set $a (i32.add (local.get $a) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (local.set $b (i32.add (local.get $b) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $cmp)))\n");
+    emit_indent();
+    printf("  (i32.const 0)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* strncat */
+    emit_indent();
+    printf("(func $strncat (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $d i32) (local $i i32)\n");
+    emit_indent();
+    printf("  (local.set $d (i32.add (local.get $dst) (call $strlen (local.get $dst))))\n");
+    emit_indent();
+    printf("  (local.set $i (i32.const 0))\n");
+    emit_indent();
+    printf("  (block $done (loop $cp\n");
+    emit_indent();
+    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    emit_indent();
+    printf("    (br_if $done (i32.eqz (i32.load8_u (local.get $src))))\n");
+    emit_indent();
+    printf("    (i32.store8 (local.get $d) (i32.load8_u (local.get $src)))\n");
+    emit_indent();
+    printf("    (local.set $d (i32.add (local.get $d) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (local.set $src (i32.add (local.get $src) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $cp)))\n");
+    emit_indent();
+    printf("  (i32.store8 (local.get $d) (i32.const 0))\n");
+    emit_indent();
+    printf("  (local.get $dst)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* memmove */
+    emit_indent();
+    printf("(func $memmove (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $i i32)\n");
+    emit_indent();
+    printf("  (if (i32.le_u (local.get $dst) (local.get $src))\n");
+    emit_indent();
+    printf("    (then (drop (call $memcpy (local.get $dst) (local.get $src) (local.get $n))))\n");
+    emit_indent();
+    printf("    (else\n");
+    emit_indent();
+    printf("      (local.set $i (local.get $n))\n");
+    emit_indent();
+    printf("      (block $done (loop $bk\n");
+    emit_indent();
+    printf("        (br_if $done (i32.eqz (local.get $i)))\n");
+    emit_indent();
+    printf("        (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n");
+    emit_indent();
+    printf("        (i32.store8 (i32.add (local.get $dst) (local.get $i))\n");
+    emit_indent();
+    printf("                    (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n");
+    emit_indent();
+    printf("        (br $bk)))))\n");
+    emit_indent();
+    printf("  (local.get $dst)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* memchr */
+    emit_indent();
+    printf("(func $memchr (param $s i32) (param $c i32) (param $n i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $i i32)\n");
+    emit_indent();
+    printf("  (local.set $i (i32.const 0))\n");
+    emit_indent();
+    printf("  (block $done (loop $scan\n");
+    emit_indent();
+    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    emit_indent();
+    printf("    (if (i32.eq (i32.load8_u (i32.add (local.get $s) (local.get $i))) (local.get $c))\n");
+    emit_indent();
+    printf("      (then (return (i32.add (local.get $s) (local.get $i)))))\n");
+    emit_indent();
+    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $scan)))\n");
+    emit_indent();
+    printf("  (i32.const 0)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* puts */
+    emit_indent();
+    printf("(func $puts (param $s i32) (result i32)\n");
+    emit_indent();
+    printf("  (local $c i32)\n");
+    emit_indent();
+    printf("  (block $done (loop $pr\n");
+    emit_indent();
+    printf("    (local.set $c (i32.load8_u (local.get $s)))\n");
+    emit_indent();
+    printf("    (br_if $done (i32.eqz (local.get $c)))\n");
+    emit_indent();
+    printf("    (drop (call $putchar (local.get $c)))\n");
+    emit_indent();
+    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    emit_indent();
+    printf("    (br $pr)))\n");
+    emit_indent();
+    printf("  (drop (call $putchar (i32.const 10)))\n");
+    emit_indent();
+    printf("  (i32.const 0)\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* strtol (simplified: base 10 only, ignores endptr) */
+    emit_indent();
+    printf("(func $strtol (param $s i32) (param $endptr i32) (param $base i32) (result i32)\n");
+    emit_indent();
+    printf("  (call $atoi (local.get $s))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
     /* user functions */
     for (i = 0; i < prog->ival2; i++) {
         gen_func(prog->list[i]);
@@ -4297,8 +4979,9 @@ int bin_global_idx(char *name) {
     int i;
     if (strcmp(name, "__heap_ptr") == 0) return 0;
     if (strcmp(name, "__free_list") == 0) return 1;
+    if (strcmp(name, "__rand_seed") == 0) return 2;
     for (i = 0; i < nglobals; i++) {
-        if (strcmp(globals_tbl[i]->name, name) == 0) return i + 2;
+        if (strcmp(globals_tbl[i]->name, name) == 0) return i + 3;
     }
     return 0;
 }
@@ -4654,6 +5337,104 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             gen_expr_bin(o, n->list[1]);
             gen_expr_bin(o, n->list[2]);
             bv_push(o, 0x10); bv_u32(o, bin_find_func("memcmp"));
+        /* --- new libc builtins (binary) --- */
+        } else if (strcmp(n->sval, "isdigit") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("isdigit"));
+        } else if (strcmp(n->sval, "isalpha") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("isalpha"));
+        } else if (strcmp(n->sval, "isalnum") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("isalnum"));
+        } else if (strcmp(n->sval, "isspace") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("isspace"));
+        } else if (strcmp(n->sval, "isupper") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("isupper"));
+        } else if (strcmp(n->sval, "islower") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("islower"));
+        } else if (strcmp(n->sval, "isprint") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("isprint"));
+        } else if (strcmp(n->sval, "ispunct") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("ispunct"));
+        } else if (strcmp(n->sval, "isxdigit") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("isxdigit"));
+        } else if (strcmp(n->sval, "toupper") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("toupper"));
+        } else if (strcmp(n->sval, "tolower") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("tolower"));
+        } else if (strcmp(n->sval, "abs") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("abs"));
+        } else if (strcmp(n->sval, "atoi") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("atoi"));
+        } else if (strcmp(n->sval, "puts") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("puts"));
+        } else if (strcmp(n->sval, "srand") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("srand"));
+            bv_push(o, 0x41); bv_i32(o, 0);
+        } else if (strcmp(n->sval, "rand") == 0) {
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("rand"));
+        } else if (strcmp(n->sval, "strcpy") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcpy"));
+        } else if (strcmp(n->sval, "strcat") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcat"));
+        } else if (strcmp(n->sval, "strchr") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strchr"));
+        } else if (strcmp(n->sval, "strrchr") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strrchr"));
+        } else if (strcmp(n->sval, "strstr") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strstr"));
+        } else if (strcmp(n->sval, "calloc") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("calloc"));
+        } else if (strcmp(n->sval, "strncmp") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncmp"));
+        } else if (strcmp(n->sval, "strncat") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncat"));
+        } else if (strcmp(n->sval, "memmove") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("memmove"));
+        } else if (strcmp(n->sval, "memchr") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("memchr"));
+        } else if (strcmp(n->sval, "strtol") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strtol"));
         } else {
             for (i = 0; i < n->ival2; i++) {
                 gen_expr_bin(o, n->list[i]);
@@ -5915,6 +6696,846 @@ void emit_helper_memcmp(struct ByteVec *o) {
     bv_push(o, 0x0B);
 }
 
+void emit_helper_isdigit(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* (i32.ge_u c 48) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x4F);
+    /* (i32.le_u c 57) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 57);
+    bv_push(o, 0x4D);
+    /* i32.and */
+    bv_push(o, 0x71);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_isalpha(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* (i32.ge_u c 65) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 65);
+    bv_push(o, 0x4F);
+    /* (i32.le_u c 90) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 90);
+    bv_push(o, 0x4D);
+    bv_push(o, 0x71);
+    /* (i32.ge_u c 97) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 97);
+    bv_push(o, 0x4F);
+    /* (i32.le_u c 122) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 122);
+    bv_push(o, 0x4D);
+    bv_push(o, 0x71);
+    /* i32.or */
+    bv_push(o, 0x72);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_isalnum(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* call isdigit(c) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("isdigit"));
+    /* call isalpha(c) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("isalpha"));
+    /* i32.or */
+    bv_push(o, 0x72);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_isspace(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* (i32.eq c 32) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 32);
+    bv_push(o, 0x46);
+    /* (i32.eq c 9) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 9);
+    bv_push(o, 0x46);
+    bv_push(o, 0x72);
+    /* (i32.eq c 10) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 10);
+    bv_push(o, 0x46);
+    /* (i32.eq c 13) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 13);
+    bv_push(o, 0x46);
+    /* (i32.eq c 12) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 12);
+    bv_push(o, 0x46);
+    bv_push(o, 0x72);
+    bv_push(o, 0x72);
+    bv_push(o, 0x72);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_isupper(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 65);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 90);
+    bv_push(o, 0x4D);
+    bv_push(o, 0x71);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_islower(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 97);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 122);
+    bv_push(o, 0x4D);
+    bv_push(o, 0x71);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_isprint(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 32);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 126);
+    bv_push(o, 0x4D);
+    bv_push(o, 0x71);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_ispunct(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* call isprint(c) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("isprint"));
+    /* i32.eqz (call isalnum(c)) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("isalnum"));
+    bv_push(o, 0x45);
+    /* i32.ne c 32 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 32);
+    bv_push(o, 0x47);
+    bv_push(o, 0x71);
+    bv_push(o, 0x71);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_isxdigit(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* call isdigit(c) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("isdigit"));
+    /* (i32.and (i32.ge_u c 65) (i32.le_u c 70)) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 65);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 70);
+    bv_push(o, 0x4D);
+    bv_push(o, 0x71);
+    /* (i32.and (i32.ge_u c 97) (i32.le_u c 102)) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 97);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 102);
+    bv_push(o, 0x4D);
+    bv_push(o, 0x71);
+    bv_push(o, 0x72);
+    bv_push(o, 0x72);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_toupper(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* call islower(c) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("islower"));
+    /* if (result i32) */
+    bv_push(o, 0x04); bv_push(o, 0x7F);
+    /* then: c - 32 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 32);
+    bv_push(o, 0x6B);
+    /* else */
+    bv_push(o, 0x05);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_tolower(struct ByteVec *o) {
+    /* (param $c i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* call isupper(c) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("isupper"));
+    /* if (result i32) */
+    bv_push(o, 0x04); bv_push(o, 0x7F);
+    /* then: c + 32 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 32);
+    bv_push(o, 0x6A);
+    /* else */
+    bv_push(o, 0x05);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_abs(struct ByteVec *o) {
+    /* (param $n i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    /* i32.lt_s n 0 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x48);
+    /* if (result i32) */
+    bv_push(o, 0x04); bv_push(o, 0x7F);
+    /* then: 0 - n */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x6B);
+    /* else: n */
+    bv_push(o, 0x05);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_atoi(struct ByteVec *o) {
+    /* (param $s i32) (result i32), 3 extra locals: $n(1), $neg(2), $c(3) */
+    bv_u32(o, 1); bv_u32(o, 3); bv_push(o, 0x7F);
+    /* n = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* neg = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* block $dsp { loop $sp -- skip spaces */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* c = load8_u(s) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br_if $dsp (c != 32) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 32);
+    bv_push(o, 0x47);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* s = s + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* br $sp */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* c = load8_u(s) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* if (c == 45) { neg = 1; s++ } */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 45);
+    bv_push(o, 0x46);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    /* if (c == 43) { s++ } */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 43);
+    bv_push(o, 0x46);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    /* block $done { loop $dig -- digit loop */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* c = load8_u(s) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br_if $done (i32.or (c < 48) (c > 57)) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x49);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 57);
+    bv_push(o, 0x4B);
+    bv_push(o, 0x72);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* n = n*10 + (c - 48) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 10);
+    bv_push(o, 0x6C);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* s = s + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* br $dig */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* if (result i32) neg (then 0-n) (else n) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x04); bv_push(o, 0x7F);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x05);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_puts(struct ByteVec *o) {
+    /* (param $s i32) (result i32), 1 extra local: $c(1) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* block $done { loop $pr */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* c = load8_u(s) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* br_if $done (eqz c) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* drop(call putchar(c)) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+    bv_push(o, 0x1A);
+    /* s = s + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* br $pr */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* drop(call putchar(10)) */
+    bv_push(o, 0x41); bv_i32(o, 10);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+    bv_push(o, 0x1A);
+    /* return 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_srand(struct ByteVec *o) {
+    /* (param $seed i32), no result, no extra locals */
+    bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x24); bv_u32(o, bin_global_idx("__rand_seed"));
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_rand(struct ByteVec *o) {
+    /* (result i32), no params, no extra locals */
+    bv_u32(o, 0);
+    /* seed = seed * 1103515245 + 12345 */
+    bv_push(o, 0x23); bv_u32(o, bin_global_idx("__rand_seed"));
+    bv_push(o, 0x41); bv_i32(o, 1103515245);
+    bv_push(o, 0x6C);
+    bv_push(o, 0x41); bv_i32(o, 12345);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x24); bv_u32(o, bin_global_idx("__rand_seed"));
+    /* return (seed >> 16) & 0x7fff */
+    bv_push(o, 0x23); bv_u32(o, bin_global_idx("__rand_seed"));
+    bv_push(o, 0x41); bv_i32(o, 16);
+    bv_push(o, 0x76);
+    bv_push(o, 0x41); bv_i32(o, 32767);
+    bv_push(o, 0x71);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_calloc(struct ByteVec *o) {
+    /* (param $nmemb i32) (param $size i32) (result i32), 2 extra locals: $ptr(2), $total(3) */
+    bv_u32(o, 1); bv_u32(o, 2); bv_push(o, 0x7F);
+    /* total = nmemb * size */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x6C);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* ptr = malloc(total) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* drop(memset(ptr, 0, total)) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("memset"));
+    bv_push(o, 0x1A);
+    /* return ptr */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strcpy(struct ByteVec *o) {
+    /* (param $dst i32) (param $src i32) (result i32), 1 extra local: $d(2) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* d = dst */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* block $done { loop $copy */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* store8 d, load8_u(src) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* br_if $done (eqz load8_u(src)) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* d = d + 1 */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* src = src + 1 */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* br $copy */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return dst */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strcat(struct ByteVec *o) {
+    /* (param $dst i32) (param $src i32) (result i32), 1 extra local: $d(2) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* d = dst + strlen(dst) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("strlen"));
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* drop(strcpy(d, src)) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("strcpy"));
+    bv_push(o, 0x1A);
+    /* return dst */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strchr(struct ByteVec *o) {
+    /* (param $s i32) (param $c i32) (result i32), 1 extra local: $ch(2) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* block $done { loop $scan */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* ch = load8_u(s) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* if (ch == c) return s */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x46);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0F);
+    bv_push(o, 0x0B);
+    /* br_if $done (eqz ch) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* s = s + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* br $scan */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strrchr(struct ByteVec *o) {
+    /* (param $s i32) (param $c i32) (result i32), 2 extra locals: $last(2), $ch(3) */
+    bv_u32(o, 1); bv_u32(o, 2); bv_push(o, 0x7F);
+    /* last = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* block $done { loop $scan */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* ch = load8_u(s) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* if (ch == c) last = s */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x46);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    bv_push(o, 0x0B);
+    /* br_if $done (eqz ch) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* s = s + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* br $scan */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return last */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strstr(struct ByteVec *o) {
+    /* (param $hay i32) (param $needle i32) (result i32), 2 extra locals: $h(2), $n(3) */
+    bv_u32(o, 1); bv_u32(o, 2); bv_push(o, 0x7F);
+    /* if (eqz load8_u(needle)) return hay */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0F);
+    bv_push(o, 0x0B);
+    /* block $notfound { loop $outer */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $notfound (eqz load8_u(hay)) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* h = hay */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* n = needle */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* block $nomatch { loop $inner */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* if (eqz load8_u(n)) return hay */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0F);
+    bv_push(o, 0x0B);
+    /* br_if $nomatch (ne load8_u(h) load8_u(n)) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x47);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* h = h + 1 */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* n = n + 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br $inner */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* hay = hay + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* br $outer */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strncmp(struct ByteVec *o) {
+    /* (param $a i32) (param $b i32) (param $n i32) (result i32)
+       3 extra locals: $i(3), $ca(4), $cb(5) */
+    bv_u32(o, 1); bv_u32(o, 3); bv_push(o, 0x7F);
+    /* i = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* block $done { loop $cmp */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i >= n) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* ca = load8_u(a) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 4);
+    /* cb = load8_u(b) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 5);
+    /* if (ca != cb) return ca - cb */
+    bv_push(o, 0x20); bv_u32(o, 4);
+    bv_push(o, 0x20); bv_u32(o, 5);
+    bv_push(o, 0x47);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 4);
+    bv_push(o, 0x20); bv_u32(o, 5);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x0F);
+    bv_push(o, 0x0B);
+    /* br_if $done (eqz ca) */
+    bv_push(o, 0x20); bv_u32(o, 4);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* a = a + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* b = b + 1 */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* i = i + 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br $cmp */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strncat(struct ByteVec *o) {
+    /* (param $dst i32) (param $src i32) (param $n i32) (result i32)
+       2 extra locals: $d(3), $i(4) */
+    bv_u32(o, 1); bv_u32(o, 2); bv_push(o, 0x7F);
+    /* d = dst + strlen(dst) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("strlen"));
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* i = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 4);
+    /* block $done { loop $cp */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i >= n) */
+    bv_push(o, 0x20); bv_u32(o, 4);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* br_if $done (eqz load8_u(src)) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* store8 d, load8_u(src) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* d = d + 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* src = src + 1 */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* i = i + 1 */
+    bv_push(o, 0x20); bv_u32(o, 4);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 4);
+    /* br $cp */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* store8 d, 0 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* return dst */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_memmove(struct ByteVec *o) {
+    /* (param $dst i32) (param $src i32) (param $n i32) (result i32), 1 extra local: $i(3) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* if (dst <= src) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x4D);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    /* then: drop(memcpy(dst, src, n)) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("memcpy"));
+    bv_push(o, 0x1A);
+    /* else: backward copy */
+    bv_push(o, 0x05);
+    /* i = n */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* block $done { loop $bk */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (eqz i) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* i = i - 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* store8(dst+i, load8_u(src+i)) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* br $bk */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* end if */
+    bv_push(o, 0x0B);
+    /* return dst */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_memchr(struct ByteVec *o) {
+    /* (param $s i32) (param $c i32) (param $n i32) (result i32), 1 extra local: $i(3) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* i = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* block $done { loop $scan */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i >= n) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* if (load8_u(s+i) == c) return s+i */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x46);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x0F);
+    bv_push(o, 0x0B);
+    /* i = i + 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br $scan */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strtol(struct ByteVec *o) {
+    /* (param $s i32) (param $endptr i32) (param $base i32) (result i32), no extra locals */
+    bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("atoi"));
+    bv_push(o, 0x0B);
+}
+
 /* --- Binary module codegen --- */
 
 void gen_module_bin(struct Node *prog) {
@@ -5955,6 +7576,34 @@ void gen_module_bin(struct Node *prog) {
     bin_add_func("memcpy", 3, 1);
     bin_add_func("memset", 3, 1);
     bin_add_func("memcmp", 3, 1);
+    /* new libc helpers */
+    bin_add_func("isdigit", 1, 1);
+    bin_add_func("isalpha", 1, 1);
+    bin_add_func("isalnum", 1, 1);
+    bin_add_func("isspace", 1, 1);
+    bin_add_func("isupper", 1, 1);
+    bin_add_func("islower", 1, 1);
+    bin_add_func("isprint", 1, 1);
+    bin_add_func("ispunct", 1, 1);
+    bin_add_func("isxdigit", 1, 1);
+    bin_add_func("toupper", 1, 1);
+    bin_add_func("tolower", 1, 1);
+    bin_add_func("abs", 1, 1);
+    bin_add_func("atoi", 1, 1);
+    bin_add_func("puts", 1, 1);
+    bin_add_func("srand", 1, 0);
+    bin_add_func("rand", 0, 1);
+    bin_add_func("calloc", 2, 1);
+    bin_add_func("strcpy", 2, 1);
+    bin_add_func("strcat", 2, 1);
+    bin_add_func("strchr", 2, 1);
+    bin_add_func("strrchr", 2, 1);
+    bin_add_func("strstr", 2, 1);
+    bin_add_func("strncmp", 3, 1);
+    bin_add_func("strncat", 3, 1);
+    bin_add_func("memmove", 3, 1);
+    bin_add_func("memchr", 3, 1);
+    bin_add_func("strtol", 3, 1);
     for (i = 0; i < prog->ival2; i++) {
         bin_add_func(prog->list[i]->sval,
                      prog->list[i]->ival2,
@@ -6021,12 +7670,15 @@ void gen_module_bin(struct Node *prog) {
 
     /* Global section (id=6) */
     bv_reset(sec);
-    bv_u32(sec, 2 + nglobals);
+    bv_u32(sec, 3 + nglobals);
     bv_push(sec, 0x7F); bv_push(sec, 0x01);
     bv_push(sec, 0x41); bv_i32(sec, data_ptr); bv_push(sec, 0x0B);
     /* __free_list = 0 */
     bv_push(sec, 0x7F); bv_push(sec, 0x01);
     bv_push(sec, 0x41); bv_i32(sec, 0); bv_push(sec, 0x0B);
+    /* __rand_seed = 1 */
+    bv_push(sec, 0x7F); bv_push(sec, 0x01);
+    bv_push(sec, 0x41); bv_i32(sec, 1); bv_push(sec, 0x0B);
     for (i = 0; i < nglobals; i++) {
         bv_push(sec, 0x7F); bv_push(sec, 0x01);
         bv_push(sec, 0x41); bv_i32(sec, globals_tbl[i]->init_val); bv_push(sec, 0x0B);
@@ -6060,6 +7712,33 @@ void gen_module_bin(struct Node *prog) {
     bv_reset(fb); emit_helper_memcpy(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
     bv_reset(fb); emit_helper_memset(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
     bv_reset(fb); emit_helper_memcmp(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_isdigit(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_isalpha(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_isalnum(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_isspace(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_isupper(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_islower(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_isprint(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_ispunct(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_isxdigit(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_toupper(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_tolower(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_abs(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_atoi(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_puts(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_srand(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_rand(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_calloc(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strcpy(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strcat(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strchr(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strrchr(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strstr(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strncmp(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strncat(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_memmove(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_memchr(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strtol(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
     for (i = 0; i < prog->ival2; i++) {
         gen_func_bin(sec, prog->list[i]);
     }
