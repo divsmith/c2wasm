@@ -13,13 +13,17 @@ ifeq ($(WASI_SDK),)
   endif
 endif
 
-.PHONY: all clean test bootstrap wasm wasm-wasi wasm-emcc serve
+.PHONY: all clean test test-binary bootstrap wasm wasm-wasi wasm-wat wasm-emcc serve
 
 all: $(BIN)
 
 $(BIN): $(SRC)
 	mkdir -p $(dir $(BIN))
 	$(CC) $(CFLAGS) -o $@ $<
+
+$(BIN)-bin: $(SRC)
+	mkdir -p $(dir $(BIN))
+	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | $(CC) $(CFLAGS) -o $@ -x c -
 
 test: $(BIN)
 	bash tests/run_tests.sh
@@ -32,12 +36,25 @@ test: $(BIN)
 		echo "Skipping bootstrap (wat2wasm/wasmtime not found)"; \
 	fi
 
+test-binary: $(BIN)-bin
+	bash tests/run_tests.sh --binary
+
 bootstrap: $(BIN)
 	bash ../tools/bootstrap.sh
 
 # ── WASM build targets ──
 
 wasm-wasi: $(SRC)
+	@if [ -z "$(WASI_SDK)" ]; then \
+		echo "Error: wasi-sdk not found. Install it and set WASI_SDK=/path/to/wasi-sdk, or place it at /opt/wasi-sdk or ~/.local/wasi-sdk"; \
+		exit 1; \
+	fi
+	mkdir -p $(DEMO)
+	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | \
+		$(WASI_SDK)/bin/clang -x c - -O2 -o $(DEMO)/compiler.wasm \
+		--sysroot=$(WASI_SDK)/share/wasi-sysroot
+
+wasm-wat: $(SRC)
 	@if [ -z "$(WASI_SDK)" ]; then \
 		echo "Error: wasi-sdk not found. Install it and set WASI_SDK=/path/to/wasi-sdk, or place it at /opt/wasi-sdk or ~/.local/wasi-sdk"; \
 		exit 1; \
@@ -62,4 +79,4 @@ serve:
 	cd $(DEMO) && python3 server.py
 
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(BIN)-bin

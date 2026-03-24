@@ -35,7 +35,7 @@ var CompilerAPI = (function () {
    * Create a WASI import object that reads from `inputBytes` and captures
    * stdout/stderr into string arrays.
    */
-  function createWasiImports(inputBytes) {
+  function createWasiImports(inputBytes, rawMode) {
     // State is stored on an object (not bare closure variables) to avoid
     // a V8 optimization issue where WASM-to-JS calls can miscompile
     // direct closure variable access.
@@ -43,8 +43,10 @@ var CompilerAPI = (function () {
       memory: null,
       inputPos: 0,
       stdoutChunks: [],
+      stdoutByteChunks: [],
       stderrChunks: [],
-      exitCode: 0
+      exitCode: 0,
+      rawMode: rawMode || false
     };
     var EXIT_TAG = { __wasi_exit: true };
 
@@ -60,15 +62,25 @@ var CompilerAPI = (function () {
           var view = new DataView(buf);
           var bytes = new Uint8Array(buf);
           var total = 0;
-          var chunks = fd === 2 ? state.stderrChunks : state.stdoutChunks;
-          var decoder = new TextDecoder('utf-8', { fatal: false });
 
-          for (var i = 0; i < iovs_len; i++) {
-            var ptr = view.getUint32(iovs + i * 8, true);
-            var len = view.getUint32(iovs + i * 8 + 4, true);
-            var isLast = i === iovs_len - 1;
-            chunks.push(decoder.decode(bytes.slice(ptr, ptr + len), { stream: !isLast }));
-            total += len;
+          if (fd !== 2 && state.rawMode) {
+            for (var i = 0; i < iovs_len; i++) {
+              var ptr = view.getUint32(iovs + i * 8, true);
+              var len = view.getUint32(iovs + i * 8 + 4, true);
+              state.stdoutByteChunks.push(bytes.slice(ptr, ptr + len));
+              total += len;
+            }
+          } else {
+            var chunks = fd === 2 ? state.stderrChunks : state.stdoutChunks;
+            var decoder = new TextDecoder('utf-8', { fatal: false });
+
+            for (var i = 0; i < iovs_len; i++) {
+              var ptr = view.getUint32(iovs + i * 8, true);
+              var len = view.getUint32(iovs + i * 8 + 4, true);
+              var isLast = i === iovs_len - 1;
+              chunks.push(decoder.decode(bytes.slice(ptr, ptr + len), { stream: !isLast }));
+              total += len;
+            }
           }
 
           view.setUint32(nwritten_ptr, total, true);
@@ -141,6 +153,19 @@ var CompilerAPI = (function () {
       setMemory: function (m) { state.memory = m; },
       get exitCode() { return state.exitCode; },
       get stdout() { return state.stdoutChunks.join(''); },
+      get stdoutBytes() {
+        var total = 0;
+        var i;
+        for (i = 0; i < state.stdoutByteChunks.length; i++)
+          total += state.stdoutByteChunks[i].length;
+        var result = new Uint8Array(total);
+        var offset = 0;
+        for (i = 0; i < state.stdoutByteChunks.length; i++) {
+          result.set(state.stdoutByteChunks[i], offset);
+          offset += state.stdoutByteChunks[i].length;
+        }
+        return result;
+      },
       get stderr() { return state.stderrChunks.join(''); },
       isExit: function (e) { return e === EXIT_TAG; }
     };
@@ -170,5 +195,35 @@ var CompilerAPI = (function () {
     });
   }
 
-  return { compile: compile, init: init };
+  /**
+   * Compile C source to WASM binary bytes.
+   * Uses raw byte capture so binary output is not mangled by TextDecoder.
+   * Returns a Promise<Uint8Array>.
+   */
+  function compileBinary(cSource) {
+    return init().then(function () {
+      var inputBytes = new TextEncoder().encode(cSource);
+      var ctx = createWasiImports(inputBytes, true);
+      var instance = new WebAssembly.Instance(compiledModule, ctx.imports);
+      ctx.setMemory(instance.exports.memory);
+
+      try {
+        instance.exports._start();
+      } catch (e) {
+        if (!ctx.isExit(e)) throw e;
+        if (ctx.exitCode !== 0) {
+          throw new Error(ctx.stderr || 'Compiler exited with code ' + ctx.exitCode);
+        }
+      }
+
+      var bytes = ctx.stdoutBytes;
+      if (bytes.length === 0) {
+        throw new Error(ctx.stderr || 'Compiler produced no output');
+      }
+
+      return bytes;
+    });
+  }
+
+  return { compile: compile, compileBinary: compileBinary, init: init };
 })();

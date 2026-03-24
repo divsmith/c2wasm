@@ -3754,6 +3754,1701 @@ void gen_module(struct Node *prog) {
 }
 
 /* ================================================================
+ * WASM Binary Emitter
+ * ================================================================ */
+
+int binary_mode = 0;
+
+/* --- Growable byte buffer --- */
+
+struct ByteVec {
+    char *data;
+    int len;
+    int cap;
+};
+
+void bv_init(struct ByteVec *v, int cap) {
+    v->data = (char *)malloc(cap);
+    v->len = 0;
+    v->cap = cap;
+}
+
+struct ByteVec *bv_new(int cap) {
+    struct ByteVec *v;
+    v = (struct ByteVec *)malloc(sizeof(struct ByteVec));
+    bv_init(v, cap);
+    return v;
+}
+
+void bv_reset(struct ByteVec *v) {
+    v->len = 0;
+}
+
+void bv_push(struct ByteVec *v, int b) {
+    char *nd;
+    if (v->len >= v->cap) {
+        nd = (char *)malloc(v->cap * 2);
+        memcpy(nd, v->data, v->len);
+        v->data = nd;
+        v->cap = v->cap * 2;
+    }
+    v->data[v->len] = (char)(b & 0xFF);
+    v->len++;
+}
+
+void bv_append(struct ByteVec *dst, struct ByteVec *src) {
+    int i;
+    for (i = 0; i < src->len; i++) {
+        bv_push(dst, src->data[i] & 0xFF);
+    }
+}
+
+void bv_u32(struct ByteVec *v, int val) {
+    int b;
+    if (val < 0) val = 0;
+    do {
+        b = val & 0x7F;
+        val = val >> 7;
+        if (val != 0) b = b | 0x80;
+        bv_push(v, b);
+    } while (val != 0);
+}
+
+void bv_i32(struct ByteVec *v, int val) {
+    int b;
+    int more;
+    more = 1;
+    while (more) {
+        b = val & 0x7F;
+        val = val >> 7;
+        if ((val == 0 && (b & 0x40) == 0) || (val == -1 && (b & 0x40) != 0)) {
+            more = 0;
+        } else {
+            b = b | 0x80;
+        }
+        bv_push(v, b);
+    }
+}
+
+void bv_name(struct ByteVec *v, char *s, int slen) {
+    int i;
+    bv_u32(v, slen);
+    for (i = 0; i < slen; i++) {
+        bv_push(v, s[i] & 0xFF);
+    }
+}
+
+void bv_section(struct ByteVec *out, int id, struct ByteVec *content) {
+    bv_push(out, id);
+    bv_u32(out, content->len);
+    bv_append(out, content);
+}
+
+/* --- Binary type deduplication --- */
+
+#define MAX_BIN_TYPES 64
+
+struct BinTypeEntry {
+    int nparams;
+    int has_result;
+};
+
+struct BinTypeEntry **bin_types;
+int bin_ntypes;
+
+int bin_find_or_add_type(int nparams, int has_result) {
+    int i;
+    for (i = 0; i < bin_ntypes; i++) {
+        if (bin_types[i]->nparams == nparams && bin_types[i]->has_result == has_result) {
+            return i;
+        }
+    }
+    if (bin_ntypes >= MAX_BIN_TYPES) {
+        printf("too many binary types\n");
+        exit(1);
+    }
+    bin_types[bin_ntypes] = (struct BinTypeEntry *)malloc(sizeof(struct BinTypeEntry));
+    bin_types[bin_ntypes]->nparams = nparams;
+    bin_types[bin_ntypes]->has_result = has_result;
+    bin_ntypes++;
+    return bin_ntypes - 1;
+}
+
+/* --- Binary function index table --- */
+
+#define MAX_BIN_FUNCS 512
+
+struct BinFuncEntry {
+    char *name;
+    int idx;
+    int nparams;
+    int has_result;
+    int type_idx;
+};
+
+struct BinFuncEntry **bin_funcs;
+int bin_nfuncs;
+
+int bin_add_func(char *name, int nparams, int has_result) {
+    int ti;
+    if (bin_nfuncs >= MAX_BIN_FUNCS) {
+        printf("too many binary functions\n");
+        exit(1);
+    }
+    ti = bin_find_or_add_type(nparams, has_result);
+    bin_funcs[bin_nfuncs] = (struct BinFuncEntry *)malloc(sizeof(struct BinFuncEntry));
+    bin_funcs[bin_nfuncs]->name = name;
+    bin_funcs[bin_nfuncs]->idx = bin_nfuncs;
+    bin_funcs[bin_nfuncs]->nparams = nparams;
+    bin_funcs[bin_nfuncs]->has_result = has_result;
+    bin_funcs[bin_nfuncs]->type_idx = ti;
+    bin_nfuncs++;
+    return bin_nfuncs - 1;
+}
+
+int bin_find_func(char *name) {
+    int i;
+    for (i = 0; i < bin_nfuncs; i++) {
+        if (strcmp(bin_funcs[i]->name, name) == 0) return i;
+    }
+    return 0;
+}
+
+/* --- Binary global index --- */
+
+int bin_global_idx(char *name) {
+    int i;
+    if (strcmp(name, "__heap_ptr") == 0) return 0;
+    for (i = 0; i < nglobals; i++) {
+        if (strcmp(globals_tbl[i]->name, name) == 0) return i + 1;
+    }
+    return 0;
+}
+
+/* --- Binary label depth tracking --- */
+
+int bin_lbl_sp;
+int *bin_brk_at;
+int *bin_cont_at;
+int *bin_loop_at;
+
+/* --- Binary expression codegen --- */
+
+void gen_expr_bin(struct ByteVec *o, struct Node *n) {
+    struct Node *tgt;
+    char *name;
+    int is_global;
+    int off;
+    int esz;
+    char *fmt;
+    int flen;
+    int ai;
+    int fi;
+    int sid;
+    int i;
+    int li;
+
+    switch (n->kind) {
+    case ND_INT_LIT:
+        bv_push(o, 0x41); bv_i32(o, n->ival);
+        break;
+    case ND_IDENT:
+        if (find_global(n->sval) >= 0) {
+            bv_push(o, 0x23); bv_u32(o, bin_global_idx(n->sval));
+        } else {
+            bv_push(o, 0x20); bv_u32(o, find_local(n->sval));
+        }
+        break;
+    case ND_ASSIGN:
+        tgt = n->c0;
+        if (tgt->kind == ND_IDENT) {
+            name = tgt->sval;
+            is_global = (find_global(name) >= 0);
+            if (n->ival == TOK_EQ) {
+                gen_expr_bin(o, n->c1);
+            } else if (n->ival == TOK_PLUS_EQ) {
+                if (is_global) {
+                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+                } else {
+                    bv_push(o, 0x20); bv_u32(o, find_local(name));
+                }
+                gen_expr_bin(o, n->c1);
+                bv_push(o, 0x6A);
+            } else if (n->ival == TOK_MINUS_EQ) {
+                if (is_global) {
+                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+                } else {
+                    bv_push(o, 0x20); bv_u32(o, find_local(name));
+                }
+                gen_expr_bin(o, n->c1);
+                bv_push(o, 0x6B);
+            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                       n->ival == TOK_RSHIFT_EQ) {
+                if (is_global) {
+                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+                } else {
+                    bv_push(o, 0x20); bv_u32(o, find_local(name));
+                }
+                gen_expr_bin(o, n->c1);
+                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+                else { bv_push(o, 0x75); }
+            }
+            if (is_global) {
+                li = find_local("__atmp");
+                bv_push(o, 0x21); bv_u32(o, li);
+                bv_push(o, 0x20); bv_u32(o, li);
+                bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
+                bv_push(o, 0x20); bv_u32(o, li);
+            } else {
+                bv_push(o, 0x22); bv_u32(o, find_local(name));
+            }
+        } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
+            esz = expr_elem_size(tgt->c0);
+            if (n->ival == TOK_EQ) {
+                gen_expr_bin(o, n->c1);
+            } else if (n->ival == TOK_PLUS_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+                gen_expr_bin(o, n->c1);
+                bv_push(o, 0x6A);
+            } else if (n->ival == TOK_MINUS_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+                gen_expr_bin(o, n->c1);
+                bv_push(o, 0x6B);
+            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                       n->ival == TOK_RSHIFT_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+                gen_expr_bin(o, n->c1);
+                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+                else { bv_push(o, 0x75); }
+            }
+            li = find_local("__atmp");
+            bv_push(o, 0x21); bv_u32(o, li);
+            gen_expr_bin(o, tgt->c0);
+            bv_push(o, 0x20); bv_u32(o, li);
+            if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+            bv_push(o, 0x20); bv_u32(o, li);
+        } else if (tgt->kind == ND_MEMBER) {
+            off = resolve_field_offset(tgt->sval);
+            if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
+            if (n->ival == TOK_EQ) {
+                gen_expr_bin(o, n->c1);
+            } else if (n->ival == TOK_PLUS_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+                gen_expr_bin(o, n->c1);
+                bv_push(o, 0x6A);
+            } else if (n->ival == TOK_MINUS_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+                gen_expr_bin(o, n->c1);
+                bv_push(o, 0x6B);
+            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                       n->ival == TOK_RSHIFT_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+                gen_expr_bin(o, n->c1);
+                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+                else { bv_push(o, 0x75); }
+            }
+            li = find_local("__atmp");
+            bv_push(o, 0x21); bv_u32(o, li);
+            gen_expr_bin(o, tgt->c0);
+            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+            bv_push(o, 0x20); bv_u32(o, li);
+            bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+            bv_push(o, 0x20); bv_u32(o, li);
+        } else if (tgt->kind == ND_SUBSCRIPT) {
+            esz = expr_elem_size(tgt->c0);
+            if (n->ival == TOK_EQ) {
+                gen_expr_bin(o, n->c1);
+            } else if (n->ival == TOK_PLUS_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                gen_expr_bin(o, tgt->c1);
+                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+                bv_push(o, 0x6A);
+                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+                gen_expr_bin(o, n->c1);
+                bv_push(o, 0x6A);
+            } else if (n->ival == TOK_MINUS_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                gen_expr_bin(o, tgt->c1);
+                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+                bv_push(o, 0x6A);
+                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+                gen_expr_bin(o, n->c1);
+                bv_push(o, 0x6B);
+            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                       n->ival == TOK_RSHIFT_EQ) {
+                gen_expr_bin(o, tgt->c0);
+                gen_expr_bin(o, tgt->c1);
+                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+                bv_push(o, 0x6A);
+                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+                gen_expr_bin(o, n->c1);
+                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+                else { bv_push(o, 0x75); }
+            }
+            li = find_local("__atmp");
+            bv_push(o, 0x21); bv_u32(o, li);
+            gen_expr_bin(o, tgt->c0);
+            gen_expr_bin(o, tgt->c1);
+            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            bv_push(o, 0x20); bv_u32(o, li);
+            if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+            bv_push(o, 0x20); bv_u32(o, li);
+        }
+        break;
+    case ND_UNARY:
+        if (n->ival == TOK_MINUS) {
+            bv_push(o, 0x41); bv_i32(o, 0);
+            gen_expr_bin(o, n->c0);
+            bv_push(o, 0x6B);
+        } else if (n->ival == TOK_BANG) {
+            gen_expr_bin(o, n->c0);
+            bv_push(o, 0x45);
+        } else if (n->ival == TOK_TILDE) {
+            bv_push(o, 0x41); bv_i32(o, -1);
+            gen_expr_bin(o, n->c0);
+            bv_push(o, 0x73);
+        } else if (n->ival == TOK_STAR) {
+            esz = expr_elem_size(n->c0);
+            gen_expr_bin(o, n->c0);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        } else if (n->ival == TOK_AMP) {
+            error(n->nline, n->ncol, "cannot take address of this expression");
+        }
+        break;
+    case ND_BINARY:
+        gen_expr_bin(o, n->c0);
+        gen_expr_bin(o, n->c1);
+        if (n->ival == TOK_PLUS) { bv_push(o, 0x6A); }
+        else if (n->ival == TOK_MINUS) { bv_push(o, 0x6B); }
+        else if (n->ival == TOK_STAR) { bv_push(o, 0x6C); }
+        else if (n->ival == TOK_SLASH) { bv_push(o, 0x6D); }
+        else if (n->ival == TOK_PERCENT) { bv_push(o, 0x6F); }
+        else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x46); }
+        else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x47); }
+        else if (n->ival == TOK_LT) { bv_push(o, 0x48); }
+        else if (n->ival == TOK_GT) { bv_push(o, 0x4A); }
+        else if (n->ival == TOK_LT_EQ) { bv_push(o, 0x4C); }
+        else if (n->ival == TOK_GT_EQ) { bv_push(o, 0x4E); }
+        else if (n->ival == TOK_AMP_AMP) { bv_push(o, 0x71); }
+        else if (n->ival == TOK_PIPE_PIPE) { bv_push(o, 0x72); }
+        else if (n->ival == TOK_AMP) { bv_push(o, 0x71); }
+        else if (n->ival == TOK_PIPE) { bv_push(o, 0x72); }
+        else if (n->ival == TOK_LSHIFT) { bv_push(o, 0x74); }
+        else if (n->ival == TOK_RSHIFT) { bv_push(o, 0x75); }
+        else if (n->ival == TOK_CARET) { bv_push(o, 0x73); }
+        else { error(n->nline, n->ncol, "unsupported binary operator"); }
+        break;
+    case ND_CALL:
+        if (strcmp(n->sval, "printf") == 0) {
+            if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
+                error(n->nline, n->ncol, "printf requires string literal format");
+            }
+            sid = n->list[0]->ival;
+            fmt = str_table[sid]->data;
+            flen = str_table[sid]->len;
+            ai = 1;
+            for (fi = 0; fi < flen; fi++) {
+                if (fmt[fi] == '%' && fi + 1 < flen) {
+                    fi++;
+                    if (fmt[fi] == 'd') {
+                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
+                        gen_expr_bin(o, n->list[ai]);
+                        ai++;
+                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_int"));
+                    } else if (fmt[fi] == 's') {
+                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
+                        gen_expr_bin(o, n->list[ai]);
+                        ai++;
+                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_str"));
+                    } else if (fmt[fi] == 'c') {
+                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
+                        gen_expr_bin(o, n->list[ai]);
+                        ai++;
+                        bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+                        bv_push(o, 0x1A);
+                    } else if (fmt[fi] == 'x') {
+                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
+                        gen_expr_bin(o, n->list[ai]);
+                        ai++;
+                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_hex"));
+                    } else if (fmt[fi] == '%') {
+                        bv_push(o, 0x41); bv_i32(o, 37);
+                        bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+                        bv_push(o, 0x1A);
+                    } else {
+                        error(n->nline, n->ncol, "unsupported printf format");
+                    }
+                } else {
+                    bv_push(o, 0x41); bv_i32(o, fmt[fi] & 255);
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+                    bv_push(o, 0x1A);
+                }
+            }
+            bv_push(o, 0x41); bv_i32(o, 0);
+        } else if (strcmp(n->sval, "putchar") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+        } else if (strcmp(n->sval, "getchar") == 0) {
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("getchar"));
+        } else if (strcmp(n->sval, "exit") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, 0);
+            bv_push(o, 0x41); bv_i32(o, 0);
+        } else if (strcmp(n->sval, "malloc") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
+        } else if (strcmp(n->sval, "free") == 0) {
+            if (n->ival2 > 0) {
+                gen_expr_bin(o, n->list[0]);
+            } else {
+                bv_push(o, 0x41); bv_i32(o, 0);
+            }
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("free"));
+            bv_push(o, 0x41); bv_i32(o, 0);
+        } else if (strcmp(n->sval, "strlen") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strlen"));
+        } else if (strcmp(n->sval, "strcmp") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcmp"));
+        } else if (strcmp(n->sval, "strncpy") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncpy"));
+        } else if (strcmp(n->sval, "memcpy") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("memcpy"));
+        } else if (strcmp(n->sval, "memset") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("memset"));
+        } else if (strcmp(n->sval, "memcmp") == 0) {
+            gen_expr_bin(o, n->list[0]);
+            gen_expr_bin(o, n->list[1]);
+            gen_expr_bin(o, n->list[2]);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("memcmp"));
+        } else {
+            for (i = 0; i < n->ival2; i++) {
+                gen_expr_bin(o, n->list[i]);
+            }
+            bv_push(o, 0x10); bv_u32(o, bin_find_func(n->sval));
+            if (func_is_void(n->sval)) {
+                bv_push(o, 0x41); bv_i32(o, 0);
+            }
+        }
+        break;
+    case ND_STR_LIT:
+        bv_push(o, 0x41); bv_i32(o, str_table[n->ival]->offset);
+        break;
+    case ND_MEMBER:
+        off = resolve_field_offset(n->sval);
+        if (off < 0) error(n->nline, n->ncol, "unknown struct field");
+        gen_expr_bin(o, n->c0);
+        if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+        break;
+    case ND_SIZEOF: {
+        struct StructDef *sd;
+        int sz;
+        if (n->ival == 1) {
+            sz = 4;
+        } else if (n->c0 != (struct Node *)0) {
+            if (n->c0->kind == ND_IDENT) {
+                sz = var_elem_size(n->c0->sval);
+            } else {
+                sz = 4;
+            }
+        } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
+            sz = 1;
+        } else if (n->sval != (char *)0) {
+            sd = find_struct(n->sval);
+            if (sd != (struct StructDef *)0) {
+                sz = sd->size;
+            } else {
+                sz = 4;
+            }
+        } else {
+            sz = 4;
+        }
+        bv_push(o, 0x41); bv_i32(o, sz);
+        break;
+    }
+    case ND_SUBSCRIPT:
+        esz = expr_elem_size(n->c0);
+        gen_expr_bin(o, n->c0);
+        gen_expr_bin(o, n->c1);
+        if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        break;
+    case ND_POST_INC:
+    case ND_POST_DEC: {
+        struct Node *tgt2;
+        char *pname;
+        int pis_global;
+        int pesz;
+        int poff;
+        int atmp;
+        atmp = find_local("__atmp");
+        tgt2 = n->c0;
+        if (tgt2->kind == ND_IDENT) {
+            pname = tgt2->sval;
+            pis_global = (find_global(pname) >= 0);
+            if (pis_global) {
+                bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
+                bv_push(o, 0x21); bv_u32(o, atmp);
+                bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
+                bv_push(o, 0x41); bv_i32(o, 1);
+                if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+                bv_push(o, 0x24); bv_u32(o, bin_global_idx(pname));
+                bv_push(o, 0x20); bv_u32(o, atmp);
+            } else {
+                li = find_local(pname);
+                bv_push(o, 0x20); bv_u32(o, li);
+                bv_push(o, 0x20); bv_u32(o, li);
+                bv_push(o, 0x41); bv_i32(o, 1);
+                if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+                bv_push(o, 0x21); bv_u32(o, li);
+            }
+        } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
+            pesz = expr_elem_size(tgt2->c0);
+            gen_expr_bin(o, tgt2->c0);
+            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            bv_push(o, 0x21); bv_u32(o, atmp);
+            gen_expr_bin(o, tgt2->c0);
+            gen_expr_bin(o, tgt2->c0);
+            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            bv_push(o, 0x41); bv_i32(o, 1);
+            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+            if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+            bv_push(o, 0x20); bv_u32(o, atmp);
+        } else if (tgt2->kind == ND_SUBSCRIPT) {
+            pesz = expr_elem_size(tgt2->c0);
+            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            bv_push(o, 0x21); bv_u32(o, atmp);
+            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            bv_push(o, 0x41); bv_i32(o, 1);
+            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+            if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+            bv_push(o, 0x20); bv_u32(o, atmp);
+        } else if (tgt2->kind == ND_MEMBER) {
+            poff = resolve_field_offset(tgt2->sval);
+            if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
+            gen_expr_bin(o, tgt2->c0);
+            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+            bv_push(o, 0x21); bv_u32(o, atmp);
+            gen_expr_bin(o, tgt2->c0);
+            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+            gen_expr_bin(o, tgt2->c0);
+            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+            bv_push(o, 0x41); bv_i32(o, 1);
+            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+            bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+            bv_push(o, 0x20); bv_u32(o, atmp);
+        } else {
+            error(n->nline, n->ncol, "unsupported post-inc/dec target");
+        }
+        break;
+    }
+    case ND_TERNARY:
+        gen_expr_bin(o, n->c0);
+        bv_push(o, 0x04); bv_push(o, 0x7F); bin_lbl_sp++;
+        gen_expr_bin(o, n->c1);
+        bv_push(o, 0x05);
+        gen_expr_bin(o, n->c2);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        break;
+    default:
+        error(n->nline, n->ncol, "unsupported expression in codegen");
+    }
+}
+
+/* --- Binary statement codegen --- */
+
+void gen_stmt_bin(struct ByteVec *o, struct Node *n);
+
+void gen_body_bin(struct ByteVec *o, struct Node *n) {
+    int i;
+    if (n->kind == ND_BLOCK) {
+        for (i = 0; i < n->ival2; i++) {
+            gen_stmt_bin(o, n->list[i]);
+        }
+    } else {
+        gen_stmt_bin(o, n);
+    }
+}
+
+void gen_stmt_bin(struct ByteVec *o, struct Node *n) {
+    int lbl;
+    int i;
+    int bsz;
+
+    switch (n->kind) {
+    case ND_RETURN:
+        if (n->c0 != (struct Node *)0) {
+            gen_expr_bin(o, n->c0);
+        }
+        bv_push(o, 0x0F);
+        break;
+    case ND_VAR_DECL:
+        if (n->ival > 0) {
+            bsz = n->ival;
+            if (n->ival2 == 0) { bsz = bsz * 4; }
+            bv_push(o, 0x41); bv_i32(o, bsz);
+            bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
+            bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
+        } else if (n->c0 != (struct Node *)0) {
+            gen_expr_bin(o, n->c0);
+            bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
+        }
+        break;
+    case ND_EXPR_STMT:
+        gen_expr_bin(o, n->c0);
+        bv_push(o, 0x1A);
+        break;
+    case ND_IF:
+        gen_expr_bin(o, n->c0);
+        if (n->c2 != (struct Node *)0) {
+            bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
+            gen_body_bin(o, n->c1);
+            bv_push(o, 0x05);
+            gen_body_bin(o, n->c2);
+            bv_push(o, 0x0B); bin_lbl_sp--;
+        } else {
+            bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
+            gen_body_bin(o, n->c1);
+            bv_push(o, 0x0B); bin_lbl_sp--;
+        }
+        break;
+    case ND_WHILE:
+        lbl = label_cnt;
+        label_cnt++;
+        brk_lbl[loop_sp] = lbl;
+        cont_lbl[loop_sp] = lbl;
+        bin_brk_at[loop_sp] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        bin_loop_at[loop_sp] = bin_lbl_sp;
+        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+        loop_sp++;
+        gen_expr_bin(o, n->c0);
+        bv_push(o, 0x45);
+        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+        bin_cont_at[loop_sp - 1] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        gen_body_bin(o, n->c1);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        loop_sp--;
+        break;
+    case ND_FOR:
+        if (n->c0 != (struct Node *)0) {
+            gen_stmt_bin(o, n->c0);
+        }
+        lbl = label_cnt;
+        label_cnt++;
+        brk_lbl[loop_sp] = lbl;
+        cont_lbl[loop_sp] = lbl;
+        bin_brk_at[loop_sp] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        bin_loop_at[loop_sp] = bin_lbl_sp;
+        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+        loop_sp++;
+        if (n->c1 != (struct Node *)0) {
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x45);
+            bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+        }
+        bin_cont_at[loop_sp - 1] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        gen_body_bin(o, n->c3);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        if (n->c2 != (struct Node *)0) {
+            gen_expr_bin(o, n->c2);
+            bv_push(o, 0x1A);
+        }
+        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        loop_sp--;
+        break;
+    case ND_DO_WHILE:
+        lbl = label_cnt;
+        label_cnt++;
+        brk_lbl[loop_sp] = lbl;
+        cont_lbl[loop_sp] = lbl;
+        bin_brk_at[loop_sp] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        bin_loop_at[loop_sp] = bin_lbl_sp;
+        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+        bin_cont_at[loop_sp] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        loop_sp++;
+        gen_body_bin(o, n->c0);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        gen_expr_bin(o, n->c1);
+        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        loop_sp--;
+        break;
+    case ND_BREAK:
+        if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
+        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+        break;
+    case ND_CONTINUE:
+        if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
+        if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
+        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_cont_at[loop_sp - 1] - 1);
+        break;
+    case ND_BLOCK:
+        for (i = 0; i < n->ival2; i++) {
+            gen_stmt_bin(o, n->list[i]);
+        }
+        break;
+    case ND_SWITCH: {
+        int case_vals[256];
+        int case_start[256];
+        int case_depth[256];
+        int nc;
+        int dflt_pos;
+        int has_dflt;
+        int k;
+        int j;
+        int next_start;
+        int sw_lbl;
+        int si;
+        int last_case_pos;
+        int dflt_depth;
+
+        nc = 0;
+        dflt_pos = -1;
+        has_dflt = 0;
+        for (si = 0; si < n->ival2; si++) {
+            if (n->list[si]->kind == ND_CASE) {
+                if (nc >= MAX_CASES) {
+                    error(n->nline, n->ncol, "too many cases in switch");
+                }
+                case_vals[nc] = n->list[si]->ival;
+                case_start[nc] = si;
+                nc++;
+            } else if (n->list[si]->kind == ND_DEFAULT) {
+                dflt_pos = si;
+                has_dflt = 1;
+            }
+        }
+
+        if (has_dflt) {
+            last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
+            if (dflt_pos < last_case_pos) {
+                error(n->c0->nline, n->c0->ncol,
+                      "default must appear after all case labels");
+            }
+        }
+
+        sw_lbl = label_cnt;
+        label_cnt++;
+        brk_lbl[loop_sp] = sw_lbl;
+        if (loop_sp > 0) {
+            cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
+            bin_cont_at[loop_sp] = bin_cont_at[loop_sp - 1];
+        } else {
+            cont_lbl[loop_sp] = -1;
+        }
+
+        gen_expr_bin(o, n->c0);
+        bv_push(o, 0x21); bv_u32(o, find_local("__stmp"));
+
+        bin_brk_at[loop_sp] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+
+        dflt_depth = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+
+        for (k = nc - 1; k >= 0; k--) {
+            case_depth[k] = bin_lbl_sp;
+            bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        }
+
+        loop_sp++;
+
+        for (k = 0; k < nc; k++) {
+            bv_push(o, 0x20); bv_u32(o, find_local("__stmp"));
+            bv_push(o, 0x41); bv_i32(o, case_vals[k]);
+            bv_push(o, 0x46);
+            bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - case_depth[k] - 1);
+        }
+        if (has_dflt) {
+            bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - dflt_depth - 1);
+        } else {
+            bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+        }
+
+        for (k = 0; k < nc; k++) {
+            bv_push(o, 0x0B); bin_lbl_sp--;
+            if (k + 1 < nc) {
+                next_start = case_start[k + 1];
+            } else if (has_dflt) {
+                next_start = dflt_pos;
+            } else {
+                next_start = n->ival2;
+            }
+            for (j = case_start[k] + 1; j < next_start; j++) {
+                if (n->list[j]->kind == ND_CASE) continue;
+                if (n->list[j]->kind == ND_DEFAULT) continue;
+                gen_stmt_bin(o, n->list[j]);
+            }
+        }
+
+        bv_push(o, 0x0B); bin_lbl_sp--;
+
+        if (has_dflt) {
+            for (j = dflt_pos + 1; j < n->ival2; j++) {
+                if (n->list[j]->kind == ND_CASE) continue;
+                if (n->list[j]->kind == ND_DEFAULT) continue;
+                gen_stmt_bin(o, n->list[j]);
+            }
+        }
+
+        bv_push(o, 0x0B); bin_lbl_sp--;
+
+        loop_sp--;
+        break;
+    }
+    default:
+        error(n->nline, n->ncol, "unsupported statement in codegen");
+    }
+}
+
+/* --- Binary function codegen --- */
+
+void gen_func_bin(struct ByteVec *cs, struct Node *n) {
+    struct ByteVec *fb;
+    struct Node *body;
+    int i;
+    int nparam_locals;
+    int nextra;
+
+    if (n->c0 == (struct Node *)0) return;
+
+    nlocals = 0;
+    label_cnt = 0;
+    loop_sp = 0;
+    bin_lbl_sp = 0;
+
+    for (i = 0; i < n->ival2; i++) {
+        add_local(n->list[i]->sval, n->list[i]->ival2);
+    }
+    nparam_locals = nlocals;
+    collect_locals(n->c0);
+    add_local("__atmp", 0);
+    add_local("__stmp", 0);
+
+    fb = bv_new(4096);
+
+    nextra = nlocals - nparam_locals;
+    if (nextra > 0) {
+        bv_u32(fb, 1);
+        bv_u32(fb, nextra);
+        bv_push(fb, 0x7F);
+    } else {
+        bv_u32(fb, 0);
+    }
+
+    body = n->c0;
+    for (i = 0; i < body->ival2; i++) {
+        gen_stmt_bin(fb, body->list[i]);
+    }
+
+    if (n->ival != 1) {
+        bv_push(fb, 0x41); bv_i32(fb, 0);
+    }
+
+    bv_push(fb, 0x0B);
+
+    bv_u32(cs, fb->len);
+    bv_append(cs, fb);
+}
+
+/* --- Runtime helper binary encoders --- */
+
+void emit_helper_putchar(struct ByteVec *o) {
+    /* (param $ch i32) (result i32), 0 extra locals */
+    bv_u32(o, 0);
+    /* i32.store8 [0] = ch */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* i32.store [4] = 0 (iov.base) */
+    bv_push(o, 0x41); bv_i32(o, 4);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+    /* i32.store [8] = 1 (iov.len) */
+    bv_push(o, 0x41); bv_i32(o, 8);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+    /* drop(call fd_write(1, 4, 1, 12)) */
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 4);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 12);
+    bv_push(o, 0x10); bv_u32(o, 1);
+    bv_push(o, 0x1A);
+    /* return ch */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_getchar(struct ByteVec *o) {
+    /* (result i32), 0 params, 0 extra locals */
+    bv_u32(o, 0);
+    /* i32.store [4] = 0 (iov.base) */
+    bv_push(o, 0x41); bv_i32(o, 4);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+    /* i32.store [8] = 1 (iov.len) */
+    bv_push(o, 0x41); bv_i32(o, 8);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+    /* drop(call fd_read(0, 4, 1, 12)) */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 4);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 12);
+    bv_push(o, 0x10); bv_u32(o, 2);
+    bv_push(o, 0x1A);
+    /* if (i32.eqz (i32.load [12])) then -1 else i32.load8_u [0] */
+    bv_push(o, 0x41); bv_i32(o, 12);
+    bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x04); bv_push(o, 0x7F);
+    bv_push(o, 0x41); bv_i32(o, -1);
+    bv_push(o, 0x05);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_print_int(struct ByteVec *o) {
+    /* (param $n i32), 2 extra locals: $buf(1), $len(2) */
+    bv_u32(o, 1); bv_u32(o, 2); bv_push(o, 0x7F);
+    /* if (n < 0) then putchar(45); n = 0-n */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x48);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x41); bv_i32(o, 45);
+    bv_push(o, 0x10); bv_u32(o, 3);
+    bv_push(o, 0x1A);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    /* if (n == 0) then putchar(48); return */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x10); bv_u32(o, 3);
+    bv_push(o, 0x1A);
+    bv_push(o, 0x0F);
+    bv_push(o, 0x0B);
+    /* buf = 48; len = 0 */
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* block $done { loop $digit */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i32.eqz n) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* buf = buf - 1 */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* i32.store8 [buf] = 48 + (n rem_u 10) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 10);
+    bv_push(o, 0x70);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* n = n div_u 10 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 10);
+    bv_push(o, 0x6E);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* len = len + 1 */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* br $digit */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    /* end loop, end block */
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* print loop: block $pd { loop $pl */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $pd (i32.eqz len) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* drop(call putchar(i32.load8_u [buf])) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, 3);
+    bv_push(o, 0x1A);
+    /* buf = buf + 1 */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* len = len - 1 */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* br $pl */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    /* end loop, end block */
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_print_str(struct ByteVec *o) {
+    /* (param $ptr i32), 1 extra local: $ch(1) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* block $done { loop $next */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* ch = i32.load8_u [ptr] */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* br_if $done (i32.eqz ch) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* drop(call putchar(ch)) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x10); bv_u32(o, 3);
+    bv_push(o, 0x1A);
+    /* ptr = ptr + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* br $next */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    /* end loop, end block */
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_print_hex(struct ByteVec *o) {
+    /* (param $n i32), 3 extra locals: $buf(1), $len(2), $d(3) */
+    bv_u32(o, 1); bv_u32(o, 3); bv_push(o, 0x7F);
+    /* if (n == 0) then putchar(48); return */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x10); bv_u32(o, 3);
+    bv_push(o, 0x1A);
+    bv_push(o, 0x0F);
+    bv_push(o, 0x0B);
+    /* buf = 48; len = 0 */
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* block $done { loop $digit */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i32.eqz n) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* buf = buf - 1 */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* d = n & 15 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 15);
+    bv_push(o, 0x71);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* if (d < 10) store8 [buf] = 48+d  else store8 [buf] = 87+d */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 10);
+    bv_push(o, 0x49);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x05);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 87);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    /* n = n shr_u 4 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 4);
+    bv_push(o, 0x76);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* len = len + 1 */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* br $digit */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    /* end loop, end block */
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* print loop */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x10); bv_u32(o, 3);
+    bv_push(o, 0x1A);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_malloc(struct ByteVec *o) {
+    /* (param $size i32) (result i32), 1 extra local: $ptr(1) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* ptr = global.get __heap_ptr */
+    bv_push(o, 0x23); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* global.set __heap_ptr = __heap_ptr + ((size + 7) & -8) */
+    bv_push(o, 0x23); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 7);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x41); bv_i32(o, -8);
+    bv_push(o, 0x71);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x24); bv_u32(o, 0);
+    /* return ptr */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_free(struct ByteVec *o) {
+    /* (param $ptr i32), 0 extra locals — empty body */
+    bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strlen(struct ByteVec *o) {
+    /* (param $s i32) (result i32), 1 extra local: $n(1) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* n = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* block $done { loop $next */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i32.eqz (i32.load8_u (s + n))) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* n = n + 1 */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* br $next */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return n */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strcmp(struct ByteVec *o) {
+    /* (param $a i32) (param $b i32) (result i32), 2 extra locals: $ca(2), $cb(3) */
+    bv_u32(o, 1); bv_u32(o, 2); bv_push(o, 0x7F);
+    /* block $done { loop $next */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* ca = i32.load8_u [a] */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* cb = i32.load8_u [b] */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br_if $done (ca != cb) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x47);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* br_if $done (ca == 0) */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* a = a + 1 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 0);
+    /* b = b + 1 */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 1);
+    /* br $next */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return ca - cb */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_strncpy(struct ByteVec *o) {
+    /* (param $dst i32) (param $src i32) (param $n i32) (result i32), 1 extra local: $i(3) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* i = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* block $done { loop $next */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i >= n) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* i32.store8 [dst+i] = i32.load8_u [src+i] */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* br_if $done (i32.eqz (i32.load8_u [src+i])) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* i = i + 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br $next */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return dst */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_memcpy(struct ByteVec *o) {
+    /* (param $dst i32) (param $src i32) (param $n i32) (result i32), 1 extra local: $i(3) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* i = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* block $done { loop $next */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i >= n) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* i32.store8 [dst+i] = i32.load8_u [src+i] */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* i = i + 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br $next */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return dst */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_memset(struct ByteVec *o) {
+    /* (param $dst i32) (param $val i32) (param $n i32) (result i32), 1 extra local: $i(3) */
+    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
+    /* i = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* block $done { loop $next */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i >= n) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* i32.store8 [dst+i] = val */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0);
+    /* i = i + 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br $next */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return dst */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+void emit_helper_memcmp(struct ByteVec *o) {
+    /* (param $a i32) (param $b i32) (param $n i32) (result i32)
+       3 extra locals: $i(3), $ca(4), $cb(5) */
+    bv_u32(o, 1); bv_u32(o, 3); bv_push(o, 0x7F);
+    /* i = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* block $done { loop $next */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done (i >= n) */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x4F);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+    /* ca = i32.load8_u [a + i] */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 4);
+    /* cb = i32.load8_u [b + i] */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 5);
+    /* if (ca != cb) then return ca - cb */
+    bv_push(o, 0x20); bv_u32(o, 4);
+    bv_push(o, 0x20); bv_u32(o, 5);
+    bv_push(o, 0x47);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+    bv_push(o, 0x20); bv_u32(o, 4);
+    bv_push(o, 0x20); bv_u32(o, 5);
+    bv_push(o, 0x6B);
+    bv_push(o, 0x0F);
+    bv_push(o, 0x0B);
+    /* i = i + 1 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br $next */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B);
+    bv_push(o, 0x0B);
+    /* return 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x0B);
+}
+
+/* --- Binary module codegen --- */
+
+void gen_module_bin(struct Node *prog) {
+    struct ByteVec *out;
+    struct ByteVec *sec;
+    struct ByteVec *fb;
+    int i;
+    int j;
+    int nlocal_funcs;
+
+    out = bv_new(65536);
+    sec = bv_new(32768);
+    fb = bv_new(8192);
+
+    bin_types = (struct BinTypeEntry **)malloc(MAX_BIN_TYPES * sizeof(void *));
+    bin_ntypes = 0;
+    bin_funcs = (struct BinFuncEntry **)malloc(MAX_BIN_FUNCS * sizeof(void *));
+    bin_nfuncs = 0;
+
+    bin_brk_at = (int *)malloc(MAX_LOOP_DEPTH * sizeof(int));
+    bin_cont_at = (int *)malloc(MAX_LOOP_DEPTH * sizeof(int));
+    bin_loop_at = (int *)malloc(MAX_LOOP_DEPTH * sizeof(int));
+
+    /* Register all functions */
+    bin_add_func("__proc_exit", 1, 0);
+    bin_add_func("__fd_write", 4, 1);
+    bin_add_func("__fd_read", 4, 1);
+    bin_add_func("putchar", 1, 1);
+    bin_add_func("getchar", 0, 1);
+    bin_add_func("__print_int", 1, 0);
+    bin_add_func("__print_str", 1, 0);
+    bin_add_func("__print_hex", 1, 0);
+    bin_add_func("malloc", 1, 1);
+    bin_add_func("free", 1, 0);
+    bin_add_func("strlen", 1, 1);
+    bin_add_func("strcmp", 2, 1);
+    bin_add_func("strncpy", 3, 1);
+    bin_add_func("memcpy", 3, 1);
+    bin_add_func("memset", 3, 1);
+    bin_add_func("memcmp", 3, 1);
+    for (i = 0; i < prog->ival2; i++) {
+        bin_add_func(prog->list[i]->sval,
+                     prog->list[i]->ival2,
+                     (prog->list[i]->ival != 1) ? 1 : 0);
+    }
+    bin_add_func("_start", 0, 0);
+
+    /* Magic + version */
+    bv_push(out, 0x00); bv_push(out, 0x61);
+    bv_push(out, 0x73); bv_push(out, 0x6D);
+    bv_push(out, 0x01); bv_push(out, 0x00);
+    bv_push(out, 0x00); bv_push(out, 0x00);
+
+    /* Type section (id=1) */
+    bv_reset(sec);
+    bv_u32(sec, bin_ntypes);
+    for (i = 0; i < bin_ntypes; i++) {
+        bv_push(sec, 0x60);
+        bv_u32(sec, bin_types[i]->nparams);
+        for (j = 0; j < bin_types[i]->nparams; j++) {
+            bv_push(sec, 0x7F);
+        }
+        if (bin_types[i]->has_result) {
+            bv_u32(sec, 1);
+            bv_push(sec, 0x7F);
+        } else {
+            bv_u32(sec, 0);
+        }
+    }
+    bv_section(out, 1, sec);
+
+    /* Import section (id=2) */
+    bv_reset(sec);
+    bv_u32(sec, 3);
+    bv_name(sec, "wasi_snapshot_preview1", 22);
+    bv_name(sec, "proc_exit", 9);
+    bv_push(sec, 0x00);
+    bv_u32(sec, bin_funcs[0]->type_idx);
+    bv_name(sec, "wasi_snapshot_preview1", 22);
+    bv_name(sec, "fd_write", 8);
+    bv_push(sec, 0x00);
+    bv_u32(sec, bin_funcs[1]->type_idx);
+    bv_name(sec, "wasi_snapshot_preview1", 22);
+    bv_name(sec, "fd_read", 7);
+    bv_push(sec, 0x00);
+    bv_u32(sec, bin_funcs[2]->type_idx);
+    bv_section(out, 2, sec);
+
+    /* Function section (id=3) */
+    nlocal_funcs = bin_nfuncs - 3;
+    bv_reset(sec);
+    bv_u32(sec, nlocal_funcs);
+    for (i = 3; i < bin_nfuncs; i++) {
+        bv_u32(sec, bin_funcs[i]->type_idx);
+    }
+    bv_section(out, 3, sec);
+
+    /* Memory section (id=5) */
+    bv_reset(sec);
+    bv_u32(sec, 1);
+    bv_push(sec, 0x00);
+    bv_u32(sec, 256);
+    bv_section(out, 5, sec);
+
+    /* Global section (id=6) */
+    bv_reset(sec);
+    bv_u32(sec, 1 + nglobals);
+    bv_push(sec, 0x7F); bv_push(sec, 0x01);
+    bv_push(sec, 0x41); bv_i32(sec, data_ptr); bv_push(sec, 0x0B);
+    for (i = 0; i < nglobals; i++) {
+        bv_push(sec, 0x7F); bv_push(sec, 0x01);
+        bv_push(sec, 0x41); bv_i32(sec, globals_tbl[i]->init_val); bv_push(sec, 0x0B);
+    }
+    bv_section(out, 6, sec);
+
+    /* Export section (id=7) */
+    bv_reset(sec);
+    bv_u32(sec, 2);
+    bv_name(sec, "memory", 6);
+    bv_push(sec, 0x02);
+    bv_u32(sec, 0);
+    bv_name(sec, "_start", 6);
+    bv_push(sec, 0x00);
+    bv_u32(sec, bin_find_func("_start"));
+    bv_section(out, 7, sec);
+
+    /* Code section (id=10) */
+    bv_reset(sec);
+    bv_u32(sec, nlocal_funcs);
+    bv_reset(fb); emit_helper_putchar(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_getchar(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_print_int(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_print_str(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_print_hex(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_malloc(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_free(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strlen(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strcmp(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_strncpy(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_memcpy(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_memset(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_memcmp(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    for (i = 0; i < prog->ival2; i++) {
+        gen_func_bin(sec, prog->list[i]);
+    }
+    /* _start body */
+    bv_reset(fb);
+    bv_u32(fb, 0);
+    bv_push(fb, 0x10); bv_u32(fb, bin_find_func("main"));
+    bv_push(fb, 0x10); bv_u32(fb, 0);
+    bv_push(fb, 0x0B);
+    bv_u32(sec, fb->len);
+    bv_append(sec, fb);
+    bv_section(out, 10, sec);
+
+    /* Data section (id=11) */
+    if (nstrings > 0) {
+        bv_reset(sec);
+        bv_u32(sec, nstrings);
+        for (i = 0; i < nstrings; i++) {
+            bv_push(sec, 0x00);
+            bv_push(sec, 0x41); bv_i32(sec, str_table[i]->offset); bv_push(sec, 0x0B);
+            bv_u32(sec, str_table[i]->len + 1);
+            for (j = 0; j < str_table[i]->len; j++) {
+                bv_push(sec, str_table[i]->data[j] & 0xFF);
+            }
+            bv_push(sec, 0x00);
+        }
+        bv_section(out, 11, sec);
+    }
+
+    /* Write binary to stdout */
+    for (i = 0; i < out->len; i++) {
+        putchar(out->data[i] & 0xFF);
+    }
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -3775,8 +5470,12 @@ int main(void) {
     advance_tok();
 
     prog = parse_program();
-    indent_level = 0;
-    gen_module(prog);
+    if (binary_mode) {
+        gen_module_bin(prog);
+    } else {
+        indent_level = 0;
+        gen_module(prog);
+    }
 
     return 0;
 }

@@ -181,7 +181,7 @@ Projects are ordered by size and dependency (smaller/easier first, each builds o
 
 ---
 
-### B3 — WASM Binary Emitter (stretch / large)
+### B3 — WASM Binary Emitter ✅ DONE
 
 **What:** Instead of outputting WAT text, have the compiler emit a valid WASM binary directly.
 
@@ -190,14 +190,12 @@ Projects are ordered by size and dependency (smaller/easier first, each builds o
 - Eliminates `wabt.js` from the browser demo
 - Compiler becomes fully self-contained: C → WASM, no intermediate tools
 
-**Why it's large:** WASM binary format requires encoding types, functions, globals, memory, imports/exports, and code sections in LEB128 format. ~400–800 lines of new codegen code.
+**Implementation:** Added ~1,100 lines of binary emitter code in `c2wasm.c` — a parallel codegen path (`gen_module_bin`, `gen_expr_bin`, `gen_stmt_bin`) alongside the existing WAT codegen. Includes ByteVec buffer, LEB128 encoding, 13 hand-encoded runtime helpers, and all WASM sections (Type, Import, Function, Memory, Global, Export, Code, Data).
 
-**Approach:**
-- Add a `--binary` flag (or make it the default)
-- New file or section in `c2wasm.c`: `emit_wasm_binary()` mirrors `emit_wat()` but writes bytes
-- Tests: compare binary output against `wat2wasm` reference output on the first run, then use the binary directly
-
-**This is a long-term stretch goal.** Tackle after A-series features are stable.
+- `build/c2wasm-bin` (native binary-mode compiler, built via `make ../build/c2wasm-bin`)
+- `make test-binary` runs all 39 tests through the binary path (only needs `wasmtime`, not `wat2wasm`)
+- Browser demo auto-detects binary output, falling back to wabt.js for WAT-mode compilers
+- Self-hosting bootstrap still passes
 
 ---
 
@@ -216,7 +214,7 @@ Projects are ordered by size and dependency (smaller/easier first, each builds o
 | 9 | A9 — Array initializers | Medium | Medium |
 | 10 | B1 — Replace wat2wasm+wasmtime | Medium | High |
 | 11 | B2 — Replace emcc | Large | High |
-| 12 | B3 — Binary emitter | Large | Very High (stretch) |
+| 12 | ~~B3 — Binary emitter~~ | ~~Large~~ | ✅ Done |
 
 ---
 

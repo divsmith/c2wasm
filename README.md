@@ -20,10 +20,10 @@ c2wasm is a complete C compiler written in a curated subset of C — and that su
 The browser demo shows the full pipeline:
 
 ```
-C source  →  [c2wasm compiler]  →  WAT (WebAssembly Text)  →  [wabt.js]  →  WASM binary  →  runs in browser
+C source  →  [c2wasm compiler]  →  WASM binary  →  runs in browser
 ```
 
-Everything runs client-side. The compiler itself was compiled to a 229 KB WASM binary using [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) (standard WASI target).
+Everything runs client-side. The compiler itself was compiled to a 229 KB WASM binary using [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) (standard WASI target). The compiler can also output WAT (WebAssembly Text Format) for inspection.
 
 ---
 
@@ -85,18 +85,22 @@ Source text
      │ Typed AST
      ▼
 ┌──────────────┐
-│ Code Gen     │  Single-pass WAT emission; printf lowered to putchar calls
+│ Code Gen     │  WAT text mode or WASM binary mode
 └────┬─────────┘
-     │ WAT text
+     │
      ▼
-  stdout
+  stdout (WAT text or WASM binary)
 ```
+
+The compiler has two output modes:
+- **WAT mode** (`build/c2wasm`): Emits WebAssembly Text Format — human-readable, useful for debugging
+- **Binary mode** (`build/c2wasm-bin`): Emits WASM binary directly — no external assembler needed
 
 ### Browser Integration
 
 - **Compiler → WASM**: compiled with [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) to a standalone 229 KB `.wasm` file (no JavaScript runtime bundled)
-- **Stdin/stdout redirection**: a minimal WASI shim (`compiler-api.js`) feeds C source as stdin bytes and captures WAT from stdout
-- **WAT → WASM binary**: [wabt.js](https://github.com/WebAssembly/wabt) assembles WAT to a binary in the browser
+- **Stdin/stdout redirection**: a minimal WASI shim (`compiler-api.js`) feeds C source as stdin bytes and captures output from stdout
+- **Direct binary output**: the browser compiler emits WASM binary directly — no `wabt.js` assembler needed
 - **Execution**: `WebAssembly.instantiate` with a WASI shim; `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; programs using `getchar` read from the stdin input box in the demo UI
 
 ### Key Design Decisions
@@ -104,10 +108,10 @@ Source text
 | Decision | Rationale |
 |----------|-----------|
 | All types → `i32` | Maximum simplicity; supports all example programs |
-| Output WAT, not binary | WAT is readable; lets you see exactly what the compiler did |
+| Dual output: WAT + binary | WAT is readable; binary eliminates external assembler |
 | `printf` lowered at compile time | Format strings expanded to `putchar` calls; no variadic WASM needed |
 | Bump allocator, `free` is a no-op | Sufficient for the C subset; keeps codegen simple |
-| Single-file compiler | Maximizes self-hosting elegance; 2,800 lines of C |
+| Single-file compiler | Maximizes self-hosting elegance |
 
 ---
 
@@ -129,12 +133,13 @@ A clean diff proves that the compiler, when run inside WebAssembly, produces byt
 
 ## Local Development
 
-There are **two separate binaries** in this project:
+There are **three binaries** in this project:
 
 | Binary | What it is | How to build |
 |--------|-----------|-------------|
-| `build/c2wasm` | Native compiler (for running tests) | `cd compiler && make` |
-| `demo/compiler.wasm` | Browser compiler (for the demo) | `WASI_SDK=... make wasm` |
+| `build/c2wasm` | Native compiler — WAT output (for debugging) | `cd compiler && make` |
+| `build/c2wasm-bin` | Native compiler — binary output (for tests) | `cd compiler && make ../build/c2wasm-bin` |
+| `demo/compiler.wasm` | Browser compiler — binary output (for the demo) | `WASI_SDK=... make wasm` |
 
 `demo/compiler.wasm` is gitignored — a fresh clone won't have it. You only need to rebuild it if you're working on the demo or changed the compiler and want to update the deployed binary.
 
@@ -184,8 +189,9 @@ Requires `wat2wasm` and `wasmtime` on `PATH`:
 
 ```bash
 cd compiler
-make test      # runs all 39 test programs + bootstrap self-hosting check
-make bootstrap # run the 3-stage bootstrap check alone
+make test         # WAT path: all 39 tests + bootstrap self-hosting check
+make test-binary  # binary path: all 39 tests (only needs wasmtime, not wat2wasm)
+make bootstrap    # run the 3-stage bootstrap check alone
 ```
 
 ### Rebuild the browser compiler
@@ -221,10 +227,10 @@ cd compiler && make serve
 ```
 wasm-c/
 ├── compiler/
-│   ├── src/c2wasm.c          ← the compiler (~3,000 lines of C)
+│   ├── src/c2wasm.c          ← the compiler (~5,000 lines of C)
 │   ├── Makefile
 │   └── tests/
-│       ├── run_tests.sh      ← test runner (wat2wasm + wasmtime)
+│       ├── run_tests.sh      ← test runner (supports --binary flag)
 │       └── programs/         ← 39 test programs + expected output
 ├── demo/
 │   ├── index.html            ← browser UI

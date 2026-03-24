@@ -819,15 +819,23 @@
     monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
     activateTab('console');
 
-    // Step 1: C → WAT
     setButtonState('compiling');
-    setStatus('Compiling C → WAT…');
+    setStatus('Compiling…');
 
-    CompilerAPI.compile(source)
-      .then(function (watText) {
+    CompilerAPI.compileBinary(source)
+      .then(function (bytes) {
+        /* Check if output is WASM binary (starts with \0asm magic) */
+        if (bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x61
+            && bytes[2] === 0x73 && bytes[3] === 0x6D) {
+          /* Binary mode — skip wabt entirely */
+          watOutput.textContent = '(Binary output mode — WAT not available)';
+          return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        }
+
+        /* WAT mode — decode as text and assemble via wabt */
+        var watText = new TextDecoder().decode(bytes);
         watOutput.textContent = watText;
 
-        // Step 2: WAT → WASM
         setButtonState('assembling');
         setStatus('Assembling WAT → WASM…');
 
@@ -835,14 +843,11 @@
           var wabtModule = wabt.parseWat('output.wat', watText);
           var result = wabtModule.toBinary({ log: false, write_debug_names: false });
           wabtModule.destroy();
-          // wabt returns a Uint8Array; copy it into its own ArrayBuffer so it
-          // can be transferred to the Worker without a structured-clone error.
           var typed = result.buffer;
           return typed.buffer.slice(typed.byteOffset, typed.byteOffset + typed.byteLength);
         });
       })
       .then(function (wasmBytes) {
-        // Step 3: Run (interactive via Worker + SharedArrayBuffer)
         setButtonState('running');
         setStatus('Running…');
 

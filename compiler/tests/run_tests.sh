@@ -3,10 +3,20 @@
 # Each .c file can have:
 #   // EXPECT_EXIT: N   — check exit code (default: 0)
 #   A matching .expected file — check stdout
+# Usage: run_tests.sh [--binary]
 set -u
 
+BINARY_MODE=0
+if [ "${1:-}" = "--binary" ]; then
+    BINARY_MODE=1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-COMPILER="$SCRIPT_DIR/../../build/c2wasm"
+if [ "$BINARY_MODE" -eq 1 ]; then
+    COMPILER="$SCRIPT_DIR/../../build/c2wasm-bin"
+else
+    COMPILER="$SCRIPT_DIR/../../build/c2wasm"
+fi
 PROG_DIR="$SCRIPT_DIR/programs"
 TMP_DIR="${TMPDIR:-/tmp}/c2wasm-tests"
 mkdir -p "$TMP_DIR"
@@ -23,22 +33,33 @@ for src in "$PROG_DIR"/*.c; do
     expected_exit=$(head -1 "$src" | grep -o 'EXPECT_EXIT: [0-9]*' | grep -o '[0-9]*')
     if [ -z "$expected_exit" ]; then expected_exit=0; fi
 
-    # Compile C → WAT
-    "$COMPILER" < "$src" > "$TMP_DIR/${name}.wat" 2>"$TMP_DIR/${name}.compile_err"
-    if [ $? -ne 0 ]; then
-        echo "FAIL: $name (compile error)"
-        cat "$TMP_DIR/${name}.compile_err" | head -5
-        FAIL=$((FAIL + 1))
-        continue
-    fi
+    if [ "$BINARY_MODE" -eq 1 ]; then
+        # Compile C → WASM binary directly
+        "$COMPILER" < "$src" > "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.compile_err"
+        if [ $? -ne 0 ]; then
+            echo "FAIL: $name (compile error)"
+            cat "$TMP_DIR/${name}.compile_err" | head -5
+            FAIL=$((FAIL + 1))
+            continue
+        fi
+    else
+        # Compile C → WAT
+        "$COMPILER" < "$src" > "$TMP_DIR/${name}.wat" 2>"$TMP_DIR/${name}.compile_err"
+        if [ $? -ne 0 ]; then
+            echo "FAIL: $name (compile error)"
+            cat "$TMP_DIR/${name}.compile_err" | head -5
+            FAIL=$((FAIL + 1))
+            continue
+        fi
 
-    # Assemble WAT → WASM
-    wat2wasm "$TMP_DIR/${name}.wat" -o "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.asm_err"
-    if [ $? -ne 0 ]; then
-        echo "FAIL: $name (wat2wasm error)"
-        cat "$TMP_DIR/${name}.asm_err" | head -5
-        FAIL=$((FAIL + 1))
-        continue
+        # Assemble WAT → WASM
+        wat2wasm "$TMP_DIR/${name}.wat" -o "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.asm_err"
+        if [ $? -ne 0 ]; then
+            echo "FAIL: $name (wat2wasm error)"
+            cat "$TMP_DIR/${name}.asm_err" | head -5
+            FAIL=$((FAIL + 1))
+            continue
+        fi
     fi
 
     # Run with wasmtime, capture stdout
