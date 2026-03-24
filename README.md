@@ -147,23 +147,26 @@ There are **two separate binaries** in this project:
 | [wasi-sdk v25](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25) | Rebuilding `demo/compiler.wasm` |
 | Python 3 | `make serve` |
 
-Install wasi-sdk from the [releases page](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25):
+Install wasi-sdk v25 from the [releases page](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25). Extract it to `/opt/wasi-sdk` or `~/.local/wasi-sdk` — the Makefile checks both automatically.
+
 ```bash
 # macOS ARM64 (Apple Silicon)
 curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-arm64-macos.tar.gz
 tar xzf wasi-sdk-25.0-arm64-macos.tar.gz
-sudo mv wasi-sdk-25.0-arm64-macos /opt/wasi-sdk
+mv wasi-sdk-25.0-arm64-macos ~/.local/wasi-sdk      # no sudo needed
 
 # macOS x86_64 (Intel)
 curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-macos.tar.gz
 tar xzf wasi-sdk-25.0-x86_64-macos.tar.gz
-sudo mv wasi-sdk-25.0-x86_64-macos /opt/wasi-sdk
+mv wasi-sdk-25.0-x86_64-macos ~/.local/wasi-sdk
 
 # Linux x86_64
 curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
 tar xzf wasi-sdk-25.0-x86_64-linux.tar.gz
-sudo mv wasi-sdk-25.0-x86_64-linux /opt/wasi-sdk
+mv wasi-sdk-25.0-x86_64-linux ~/.local/wasi-sdk
 ```
+
+You can also use a different path — just pass it explicitly: `WASI_SDK=/your/path make wasm`.
 
 ### Build the native compiler
 
@@ -190,13 +193,11 @@ make bootstrap # run the 3-stage bootstrap check alone
 Only needed when you change `compiler/src/c2wasm.c` and want to update the demo:
 
 ```bash
-# With wasi-sdk at /opt/wasi-sdk (default):
 cd compiler && make wasm
-
-# With wasi-sdk elsewhere:
-cd compiler && WASI_SDK=/path/to/wasi-sdk make wasm
+# auto-detects wasi-sdk at /opt/wasi-sdk or ~/.local/wasi-sdk
 # produces demo/compiler.wasm (229 KB)
 ```
+
 
 ### Serve the demo locally
 

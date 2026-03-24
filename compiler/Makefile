@@ -3,7 +3,15 @@ CFLAGS    = -Wall -Wextra -std=c11 -pedantic -O2
 SRC       = src/c2wasm.c
 BIN       = ../build/c2wasm
 DEMO      = ../demo
-WASI_SDK ?= /opt/wasi-sdk
+
+# Locate wasi-sdk: prefer env override, then /opt, then ~/.local
+ifeq ($(WASI_SDK),)
+  ifneq ($(wildcard /opt/wasi-sdk/bin/clang),)
+    WASI_SDK := /opt/wasi-sdk
+  else ifneq ($(wildcard $(HOME)/.local/wasi-sdk/bin/clang),)
+    WASI_SDK := $(HOME)/.local/wasi-sdk
+  endif
+endif
 
 .PHONY: all clean test bootstrap wasm wasm-wasi wasm-emcc serve
 
@@ -30,6 +38,10 @@ bootstrap: $(BIN)
 # ── WASM build targets ──
 
 wasm-wasi: $(SRC)
+	@if [ -z "$(WASI_SDK)" ]; then \
+		echo "Error: wasi-sdk not found. Install it and set WASI_SDK=/path/to/wasi-sdk, or place it at /opt/wasi-sdk or ~/.local/wasi-sdk"; \
+		exit 1; \
+	fi
 	mkdir -p $(DEMO)
 	$(WASI_SDK)/bin/clang $(SRC) -O2 -o $(DEMO)/compiler.wasm \
 		--sysroot=$(WASI_SDK)/share/wasi-sysroot
