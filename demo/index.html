@@ -41,6 +41,7 @@
         <option value="collatz">Collatz Sequence</option>
         <option value="weekday">Day of Week</option>
         <option value="bit_flags">Bit Flags</option>
+        <option value="greet">Greet</option>
       </optgroup>
       <optgroup label="My Files" id="user-files-group"></optgroup>
     </select>
@@ -59,7 +60,13 @@
         <button class="tab active" data-tab="console">Console</button>
         <button class="tab" data-tab="wat">WAT</button>
       </div>
-      <pre class="tab-content" id="console-output"></pre>
+      <div class="console-tab-content" id="console-tab-content">
+        <pre class="tab-content" id="console-output"></pre>
+        <div class="terminal-input-row hidden" id="terminal-input-row">
+          <span class="terminal-prompt">❯</span>
+          <input type="text" id="terminal-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        </div>
+      </div>
       <pre class="tab-content hidden" id="wat-output"></pre>
     </div>
   </main>

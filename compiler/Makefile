@@ -37,7 +37,7 @@ wasm: $(SRC)
 		-s SINGLE_FILE=1
 
 serve:
-	cd $(DEMO) && python3 -m http.server 8080
+	cd $(DEMO) && python3 server.py
 
 clean:
 	rm -f $(BIN)

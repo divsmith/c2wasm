@@ -260,6 +260,54 @@ main {
   border-bottom-color: var(--accent);
 }
 
+/* Console tab wrapper (contains stdin + output) */
+.console-tab-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.console-tab-content.hidden {
+  display: none;
+}
+
+/* Terminal input row (shown when program reads from stdin) */
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px 7px;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.terminal-input-row.hidden {
+  display: none;
+}
+
+.terminal-prompt {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+#terminal-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  outline: none;
+  caret-color: var(--text-primary);
+}
+
 /* Output */
 .tab-content {
   flex: 1;

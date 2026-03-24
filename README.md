@@ -97,7 +97,7 @@ Source text
 - **Compiler → WASM**: compiled with Emscripten (`emcc -s SINGLE_FILE=1`), embedded in `compiler.js`
 - **Stdin/stdout redirection**: Emscripten callbacks feed C source character-by-character and capture WAT output
 - **WAT → WASM binary**: [wabt.js](https://github.com/WebAssembly/wabt) assembles WAT to a binary in the browser
-- **Execution**: `WebAssembly.instantiate` with a minimal WASI shim; `fd_write` captures `putchar` calls
+- **Execution**: `WebAssembly.instantiate` with a WASI shim; `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; programs using `getchar` read from the stdin input box in the demo UI
 
 ### Key Design Decisions
 
@@ -148,10 +148,15 @@ make test
 # Rebuild the WASM compiler (requires emcc)
 make wasm
 
-# Serve the demo locally
+# Serve the demo locally (sets required cross-origin isolation headers)
 make serve
 # then open http://localhost:8080
 ```
+
+> **Note:** `make serve` uses `demo/server.py` (not plain `python3 -m http.server`) because the
+> demo requires the `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` HTTP headers
+> to enable `SharedArrayBuffer`, which powers interactive stdin in the terminal.
+> On GitHub Pages these headers are injected by `demo/coi-serviceworker.js`.
 
 ### Test Programs
 

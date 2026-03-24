@@ -218,10 +218,30 @@
       '    printf("  group: "); show(group);\n' +
       '    printf("  other: "); show(other);\n' +
       '    return 0;\n' +
+      '}\n',
+
+    greet:
+      '// Reads a name from stdin and prints a greeting.\n' +
+      '// Type your name in the terminal below, then press Enter!\n' +
+      'int main() {\n' +
+      '    char name[64];\n' +
+      '    int i;\n' +
+      '    int c;\n' +
+      '    printf("What is your name? ");\n' +
+      '    i = 0;\n' +
+      '    while (i < 63) {\n' +
+      '        c = getchar();\n' +
+      '        if (c == -1 || c == 10) {\n' +
+      '            break;\n' +
+      '        }\n' +
+      '        name[i] = c;\n' +
+      '        i = i + 1;\n' +
+      '    }\n' +
+      '    name[i] = 0;\n' +
+      '    printf("Hello, %s!\\n", name);\n' +
+      '    return 0;\n' +
       '}\n'
   };
-
-  // ── Local storage (user files) ──
 
   var STORAGE_KEYS = {
     FILES: 'c2wasm:files',
@@ -283,7 +303,10 @@
   var runBtn = document.getElementById('run-btn');
   var statusEl = document.getElementById('status');
   var saveIndicator = document.getElementById('save-indicator');
+  var consoleTabContent = document.getElementById('console-tab-content');
   var consoleOutput = document.getElementById('console-output');
+  var terminalInputRow = document.getElementById('terminal-input-row');
+  var terminalInput = document.getElementById('terminal-input');
   var watOutput = document.getElementById('wat-output');
   var tabs = document.querySelectorAll('.tab');
   var resizeHandle = document.getElementById('resize-handle');
@@ -385,7 +408,7 @@
         t.classList.remove('active');
       }
     }
-    consoleOutput.classList.toggle('hidden', name !== 'console');
+    consoleTabContent.classList.toggle('hidden', name !== 'console');
     watOutput.classList.toggle('hidden', name !== 'wat');
   }
 
@@ -600,56 +623,98 @@
     });
   }
 
-  // ── WASI shim for running compiled programs ──
+  // ── Interactive WASM runner (Web Worker + SharedArrayBuffer) ──
 
-  function runWasm(wasmBytes) {
-    var output = '';
-    var memory = null;
+  // SAB layout: Int32[0]=signal, Int32[1]=byte count, bytes from offset 8.
+  var SAB_SIZE = 8 + 4096;
 
-    var importObject = {
-      wasi_snapshot_preview1: {
-        proc_exit: function (code) {
-          throw { type: 'proc_exit', code: code };
-        },
-        fd_write: function (fd, iovs, iovs_len, nwritten_ptr) {
-          var view = new DataView(memory.buffer);
-          var bytes = new Uint8Array(memory.buffer);
-          var totalWritten = 0;
-          for (var i = 0; i < iovs_len; i++) {
-            var ptr = view.getUint32(iovs + i * 8, true);
-            var len = view.getUint32(iovs + i * 8 + 4, true);
-            var chunk = bytes.slice(ptr, ptr + len);
-            output += new TextDecoder().decode(chunk);
-            totalWritten += len;
-          }
-          view.setUint32(nwritten_ptr, totalWritten, true);
-          return 0;
-        },
-        fd_read: function (fd, iovs, iovs_len, nread_ptr) {
-          var view = new DataView(memory.buffer);
-          view.setUint32(nread_ptr, 0, true); // EOF
-          return 0;
-        }
-      }
-    };
+  var activeWorker = null;
 
-    var module = new WebAssembly.Module(wasmBytes);
-    var instance = new WebAssembly.Instance(module, importObject);
-    memory = instance.exports.memory;
+  function showTerminalInput(sab, sabInt32) {
+    terminalInputRow.classList.remove('hidden');
+    terminalInput.value = '';
+    terminalInput.focus();
+    // Scroll so the input line is visible
+    consoleOutput.scrollTop = consoleOutput.scrollHeight;
 
-    try {
-      instance.exports._start();
-    } catch (e) {
-      if (e && e.type === 'proc_exit') {
-        if (e.code !== 0) {
-          output += '\n[Process exited with code ' + e.code + ']';
-        }
-      } else {
-        throw e;
-      }
+    function onEnter(e) {
+      if (e.key !== 'Enter') return;
+      terminalInput.removeEventListener('keydown', onEnter);
+
+      var text = terminalInput.value + '\n';
+      hideTerminalInput();
+
+      // Echo what the user typed into the terminal output
+      writeConsole(text);
+
+      // Write input to SAB and wake the worker
+      var encoded = new TextEncoder().encode(text);
+      var toWrite = Math.min(encoded.length, SAB_SIZE - 8);
+      new Uint8Array(sab, 8, toWrite).set(encoded.subarray(0, toWrite));
+      Atomics.store(sabInt32, 1, toWrite);
+      Atomics.store(sabInt32, 0, 1);
+      Atomics.notify(sabInt32, 0, 1);
     }
 
-    return output;
+    terminalInput.addEventListener('keydown', onEnter);
+  }
+
+  function hideTerminalInput() {
+    terminalInputRow.classList.add('hidden');
+    terminalInput.value = '';
+  }
+
+  function runWasmInteractive(wasmBytes) {
+    if (typeof SharedArrayBuffer === 'undefined') {
+      return Promise.reject(new Error(
+        'SharedArrayBuffer is not available in this context.\n' +
+        'Run locally with: cd compiler && make serve\n' +
+        '(The dev server sets the required cross-origin isolation headers.)'
+      ));
+    }
+
+    return new Promise(function (resolve, reject) {
+      var sab = new SharedArrayBuffer(SAB_SIZE);
+      var sabInt32 = new Int32Array(sab);
+      var hasOutput = false;
+
+      var worker = new Worker('./wasm-worker.js');
+      activeWorker = worker;
+
+      worker.onmessage = function (event) {
+        var msg = event.data;
+        if (msg.type === 'output') {
+          hasOutput = true;
+          writeConsole(msg.text);
+        } else if (msg.type === 'needInput') {
+          showTerminalInput(sab, sabInt32);
+        } else if (msg.type === 'exit') {
+          activeWorker = null;
+          worker.terminate();
+          hideTerminalInput();
+          if (!hasOutput) writeConsole('(no output)', 'output-info');
+          if (msg.code !== 0) {
+            writeConsole('\n[Process exited with code ' + msg.code + ']', 'output-info');
+          }
+          resolve(msg.code);
+        } else if (msg.type === 'error') {
+          activeWorker = null;
+          worker.terminate();
+          hideTerminalInput();
+          reject(new Error(msg.message));
+        }
+      };
+
+      worker.onerror = function (e) {
+        activeWorker = null;
+        worker.terminate();
+        hideTerminalInput();
+        reject(new Error(e.message || 'Worker error'));
+      };
+
+      // Transfer wasmBytes to the worker (zero-copy)
+      worker.postMessage({ type: 'run', wasmBytes: wasmBytes, sab: sab }, [wasmBytes]);
+    });
   }
 
   // ── Error parsing + Monaco markers ──
@@ -733,6 +798,9 @@
     if (className) span.className = className;
     span.textContent = text;
     consoleOutput.appendChild(span);
+    // Auto-scroll if already near the bottom
+    var nearBottom = consoleOutput.scrollHeight - consoleOutput.scrollTop - consoleOutput.clientHeight < 60;
+    if (nearBottom) consoleOutput.scrollTop = consoleOutput.scrollHeight;
   }
 
   function clearOutput() {
@@ -767,18 +835,21 @@
           var wabtModule = wabt.parseWat('output.wat', watText);
           var result = wabtModule.toBinary({ log: false, write_debug_names: false });
           wabtModule.destroy();
-          return result.buffer;
+          // wabt returns a Uint8Array; copy it into its own ArrayBuffer so it
+          // can be transferred to the Worker without a structured-clone error.
+          var typed = result.buffer;
+          return typed.buffer.slice(typed.byteOffset, typed.byteOffset + typed.byteLength);
         });
       })
       .then(function (wasmBytes) {
-        // Step 3: Run
+        // Step 3: Run (interactive via Worker + SharedArrayBuffer)
         setButtonState('running');
         setStatus('Running…');
 
-        var output = runWasm(wasmBytes);
-        writeConsole(output || '(no output)', output ? '' : 'output-info');
-        setButtonState('success');
-        setStatus('Done');
+        return runWasmInteractive(wasmBytes).then(function (exitCode) {
+          setButtonState(exitCode === 0 ? 'success' : 'error');
+          setStatus(exitCode === 0 ? 'Done' : 'Exited with code ' + exitCode);
+        });
       })
       .catch(function (err) {
         var msg = err.message || String(err);
@@ -799,6 +870,20 @@
   // ── Bind events ──
 
   runBtn.addEventListener('click', compileAndRun);
+
+  // ── Service worker (cross-origin isolation for SharedArrayBuffer) ──
+
+  if (!self.crossOriginIsolated && 'serviceWorker' in navigator) {
+    // Register the COI service worker and reload once so SharedArrayBuffer
+    // becomes available (needed for interactive stdin via Atomics.wait).
+    var reloadKey = 'coiReloaded';
+    if (!sessionStorage.getItem(reloadKey)) {
+      sessionStorage.setItem(reloadKey, '1');
+      navigator.serviceWorker.register('./coi-serviceworker.js').then(function () {
+        window.location.reload();
+      });
+    }
+  }
 
   // ── Boot ──
 
