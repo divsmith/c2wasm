@@ -13,107 +13,111 @@
 #include <string.h>
 
 /* ================================================================
- * Constants (replacing enums with #define)
+ * Constants
  * ================================================================ */
 
 /* Token kinds */
-#define TOK_EOF 0
-#define TOK_INT 1
-#define TOK_CHAR_KW 2
-#define TOK_VOID 3
-#define TOK_RETURN 4
-#define TOK_IF 5
-#define TOK_ELSE 6
-#define TOK_WHILE 7
-#define TOK_FOR 8
-#define TOK_BREAK 9
-#define TOK_CONTINUE 10
-#define TOK_STRUCT 11
-#define TOK_SIZEOF 12
-#define TOK_DEFINE 13
-#define TOK_IDENT 14
-#define TOK_INT_LIT 15
-#define TOK_CHAR_LIT 16
-#define TOK_STR_LIT 17
-#define TOK_LPAREN 18
-#define TOK_RPAREN 19
-#define TOK_LBRACE 20
-#define TOK_RBRACE 21
-#define TOK_LBRACKET 22
-#define TOK_RBRACKET 23
-#define TOK_SEMI 24
-#define TOK_COMMA 25
-#define TOK_DOT 26
-#define TOK_ARROW 27
-#define TOK_PLUS 28
-#define TOK_MINUS 29
-#define TOK_STAR 30
-#define TOK_SLASH 31
-#define TOK_PERCENT 32
-#define TOK_AMP 33
-#define TOK_BANG 34
-#define TOK_PIPE 35
-#define TOK_TILDE 36
-#define TOK_PIPE_PIPE 37
-#define TOK_AMP_AMP 38
-#define TOK_EQ 39
-#define TOK_PLUS_EQ 40
-#define TOK_MINUS_EQ 41
-#define TOK_EQ_EQ 42
-#define TOK_BANG_EQ 43
-#define TOK_LT 44
-#define TOK_GT 45
-#define TOK_LT_EQ 46
-#define TOK_GT_EQ 47
-#define TOK_LSHIFT 48
-#define TOK_RSHIFT 49
-#define TOK_PLUS_PLUS 50
-#define TOK_MINUS_MINUS 51
-#define TOK_CARET 52
-#define TOK_PIPE_EQ 53
-#define TOK_AMP_EQ 54
-#define TOK_CARET_EQ 55
-#define TOK_LSHIFT_EQ 56
-#define TOK_RSHIFT_EQ 57
-#define TOK_DO 58
-#define TOK_QUESTION 59
-#define TOK_COLON 60 /* used by ternary ?: and by switch case/default labels */
-#define TOK_SWITCH 61
-#define TOK_CASE 62
-#define TOK_DEFAULT 63
-#define TOK_CONST 64
-#define TOK_ENUM 65
-#define TOK_TYPEDEF 66
+enum {
+    TOK_EOF = 0,
+    TOK_INT = 1,
+    TOK_CHAR_KW = 2,
+    TOK_VOID = 3,
+    TOK_RETURN = 4,
+    TOK_IF = 5,
+    TOK_ELSE = 6,
+    TOK_WHILE = 7,
+    TOK_FOR = 8,
+    TOK_BREAK = 9,
+    TOK_CONTINUE = 10,
+    TOK_STRUCT = 11,
+    TOK_SIZEOF = 12,
+    TOK_DEFINE = 13,
+    TOK_IDENT = 14,
+    TOK_INT_LIT = 15,
+    TOK_CHAR_LIT = 16,
+    TOK_STR_LIT = 17,
+    TOK_LPAREN = 18,
+    TOK_RPAREN = 19,
+    TOK_LBRACE = 20,
+    TOK_RBRACE = 21,
+    TOK_LBRACKET = 22,
+    TOK_RBRACKET = 23,
+    TOK_SEMI = 24,
+    TOK_COMMA = 25,
+    TOK_DOT = 26,
+    TOK_ARROW = 27,
+    TOK_PLUS = 28,
+    TOK_MINUS = 29,
+    TOK_STAR = 30,
+    TOK_SLASH = 31,
+    TOK_PERCENT = 32,
+    TOK_AMP = 33,
+    TOK_BANG = 34,
+    TOK_PIPE = 35,
+    TOK_TILDE = 36,
+    TOK_PIPE_PIPE = 37,
+    TOK_AMP_AMP = 38,
+    TOK_EQ = 39,
+    TOK_PLUS_EQ = 40,
+    TOK_MINUS_EQ = 41,
+    TOK_EQ_EQ = 42,
+    TOK_BANG_EQ = 43,
+    TOK_LT = 44,
+    TOK_GT = 45,
+    TOK_LT_EQ = 46,
+    TOK_GT_EQ = 47,
+    TOK_LSHIFT = 48,
+    TOK_RSHIFT = 49,
+    TOK_PLUS_PLUS = 50,
+    TOK_MINUS_MINUS = 51,
+    TOK_CARET = 52,
+    TOK_PIPE_EQ = 53,
+    TOK_AMP_EQ = 54,
+    TOK_CARET_EQ = 55,
+    TOK_LSHIFT_EQ = 56,
+    TOK_RSHIFT_EQ = 57,
+    TOK_DO = 58,
+    TOK_QUESTION = 59,
+    TOK_COLON = 60, /* used by ternary ?: and by switch case/default labels */
+    TOK_SWITCH = 61,
+    TOK_CASE = 62,
+    TOK_DEFAULT = 63,
+    TOK_CONST = 64,
+    TOK_ENUM = 65,
+    TOK_TYPEDEF = 66
+};
 
 /* Node kinds */
-#define ND_PROGRAM 0
-#define ND_FUNC 1
-#define ND_BLOCK 2
-#define ND_RETURN 3
-#define ND_INT_LIT 4
-#define ND_BINARY 5
-#define ND_UNARY 6
-#define ND_VAR_DECL 7
-#define ND_IDENT 8
-#define ND_ASSIGN 9
-#define ND_IF 10
-#define ND_WHILE 11
-#define ND_FOR 12
-#define ND_BREAK 13
-#define ND_CONTINUE 14
-#define ND_EXPR_STMT 15
-#define ND_CALL 16
-#define ND_STR_LIT 17
-#define ND_MEMBER 18
-#define ND_SIZEOF 19
-#define ND_SUBSCRIPT 20
-#define ND_POST_INC 21
-#define ND_POST_DEC 22
-#define ND_DO_WHILE 23
-#define ND_TERNARY 24
-#define ND_SWITCH 25
-#define ND_CASE 26
-#define ND_DEFAULT 27
+enum {
+    ND_PROGRAM = 0,
+    ND_FUNC = 1,
+    ND_BLOCK = 2,
+    ND_RETURN = 3,
+    ND_INT_LIT = 4,
+    ND_BINARY = 5,
+    ND_UNARY = 6,
+    ND_VAR_DECL = 7,
+    ND_IDENT = 8,
+    ND_ASSIGN = 9,
+    ND_IF = 10,
+    ND_WHILE = 11,
+    ND_FOR = 12,
+    ND_BREAK = 13,
+    ND_CONTINUE = 14,
+    ND_EXPR_STMT = 15,
+    ND_CALL = 16,
+    ND_STR_LIT = 17,
+    ND_MEMBER = 18,
+    ND_SIZEOF = 19,
+    ND_SUBSCRIPT = 20,
+    ND_POST_INC = 21,
+    ND_POST_DEC = 22,
+    ND_DO_WHILE = 23,
+    ND_TERNARY = 24,
+    ND_SWITCH = 25,
+    ND_CASE = 26,
+    ND_DEFAULT = 27
+};
 
 /* Limits */
 #define MAX_SRC 2097152
@@ -166,7 +170,7 @@ void read_source(void) {
             break;
         }
         src[src_len] = (char)c;
-        src_len = src_len + 1;
+        src_len++;
         c = getchar();
     }
     src[src_len] = '\0';
@@ -215,12 +219,12 @@ char lp2(void) {
 char la(void) {
     char c;
     c = src[lex_pos];
-    lex_pos = lex_pos + 1;
+    lex_pos++;
     if (c == '\n') {
-        lex_line = lex_line + 1;
+        lex_line++;
         lex_col = 1;
     } else {
-        lex_col = lex_col + 1;
+        lex_col++;
     }
     return c;
 }
@@ -322,7 +326,7 @@ void init_macros(void) {
 
 int find_macro(char *name) {
     int i;
-    for (i = 0; i < nmacros; i = i + 1) {
+    for (i = 0; i < nmacros; i++) {
         if (strcmp(macros[i]->name, name) == 0) return i;
     }
     return -1;
@@ -355,7 +359,7 @@ int add_string(char *data, int len) {
         error(0, 0, "too many string literals");
     }
     id = nstrings;
-    nstrings = nstrings + 1;
+    nstrings++;
     if (len >= MAX_STR_DATA) {
         len = MAX_STR_DATA - 1;
     }
@@ -366,7 +370,7 @@ int add_string(char *data, int len) {
     __s[len] = '\0';
     str_table[id]->len = len;
     str_table[id]->offset = data_ptr;
-    data_ptr = data_ptr + len + 1;
+    data_ptr += len + 1;
     return id;
 }
 
@@ -417,7 +421,7 @@ struct Token *next_token(void) {
             while (is_alnum(lp()) || lp() == '_') {
                 if (ni < 127) {
                     name[ni] = la();
-                    ni = ni + 1;
+                    ni++;
                 } else {
                     la();
                 }
@@ -451,7 +455,7 @@ struct Token *next_token(void) {
             macros[nmacros] = (struct Macro *)malloc(sizeof(struct Macro));
             macros[nmacros]->name = name;
             macros[nmacros]->value = val;
-            nmacros = nmacros + 1;
+            nmacros++;
         }
         /* skip to end of line */
         while (lex_pos < src_len && lp() != '\n') la();
@@ -554,30 +558,30 @@ struct Token *next_token(void) {
                 ch = lp();
                 if (ch == 'n') {
                     __s[i] = '\n';
-                    i = i + 1;
+                    i++;
                 } else if (ch == 'r') {
                     __s[i] = '\r';
-                    i = i + 1;
+                    i++;
                 } else if (ch == 't') {
                     __s[i] = '\t';
-                    i = i + 1;
+                    i++;
                 } else if (ch == '0') {
                     __s[i] = '\0';
-                    i = i + 1;
+                    i++;
                 } else if (ch == '\\') {
                     __s[i] = '\\';
-                    i = i + 1;
+                    i++;
                 } else if (ch == '"') {
                     __s[i] = '"';
-                    i = i + 1;
+                    i++;
                 } else {
                     __s[i] = lp();
-                    i = i + 1;
+                    i++;
                 }
                 la();
             } else {
                 __s[i] = la();
-                i = i + 1;
+                i++;
             }
             if (i >= 511) break;
         }
@@ -746,7 +750,7 @@ void init_structs(void) {
 
 struct StructDef *find_struct(char *name) {
     int i;
-    for (i = 0; i < nstructs; i = i + 1) {
+    for (i = 0; i < nstructs; i++) {
         if (strcmp(structs_reg[i]->name, name) == 0) return structs_reg[i];
     }
     return (struct StructDef *)0;
@@ -755,8 +759,8 @@ struct StructDef *find_struct(char *name) {
 int resolve_field_offset(char *field_name) {
     int i;
     int j;
-    for (i = 0; i < nstructs; i = i + 1) {
-        for (j = 0; j < structs_reg[i]->nfields; j = j + 1) {
+    for (i = 0; i < nstructs; i++) {
+        for (j = 0; j < structs_reg[i]->nfields; j++) {
             if (strcmp(structs_reg[i]->fields[j]->name, field_name) == 0) {
                 return structs_reg[i]->fields[j]->fld_offset;
             }
@@ -785,7 +789,7 @@ void init_globals(void) {
 
 int find_global(char *name) {
     int i;
-    for (i = 0; i < nglobals; i = i + 1) {
+    for (i = 0; i < nglobals; i++) {
         if (strcmp(globals_tbl[i]->name, name) == 0) return i;
     }
     return -1;
@@ -810,7 +814,7 @@ void init_func_sigs(void) {
 
 int func_is_void(char *name) {
     int i;
-    for (i = 0; i < nfunc_sigs; i = i + 1) {
+    for (i = 0; i < nfunc_sigs; i++) {
         if (strcmp(func_sigs[i]->name, name) == 0) return func_sigs[i]->is_void;
     }
     return 0;
@@ -835,7 +839,7 @@ void init_enum_consts(void) {
 
 int find_enum_const(char *name) {
     int i;
-    for (i = 0; i < nenum_consts; i = i + 1) {
+    for (i = 0; i < nenum_consts; i++) {
         if (strcmp(enum_consts[i]->name, name) == 0) return i;
     }
     return -1;
@@ -859,7 +863,7 @@ void init_type_aliases(void) {
 
 int find_type_alias(char *name) {
     int i;
-    for (i = 0; i < ntype_aliases; i = i + 1) {
+    for (i = 0; i < ntype_aliases; i++) {
         if (strcmp(type_aliases[i]->alias, name) == 0) return i;
     }
     return -1;
@@ -911,7 +915,7 @@ void nlist_push(struct NList *l, struct Node *n) {
             new_cap = l->cap * 2;
         }
         new_items = (struct Node **)malloc(new_cap * sizeof(struct Node *));
-        for (i = 0; i < l->count; i = i + 1) {
+        for (i = 0; i < l->count; i++) {
             new_items[i] = l->items[i];
         }
         if (l->items != (struct Node **)0) {
@@ -921,7 +925,7 @@ void nlist_push(struct NList *l, struct Node *n) {
         l->cap = new_cap;
     }
     l->items[l->count] = n;
-    l->count = l->count + 1;
+    l->count++;
 }
 
 /* ================================================================
@@ -962,67 +966,79 @@ struct Node *parse_block(void);
 
 /* Precedence climbing helpers */
 int prefix_bp(int op) {
-    if (op == TOK_MINUS || op == TOK_BANG) return 25;
-    if (op == TOK_STAR || op == TOK_AMP) return 25;
-    if (op == TOK_TILDE) return 25;
-    if (op == TOK_PLUS_PLUS || op == TOK_MINUS_MINUS) return 25;
-    return -1;
+    switch (op) {
+    case TOK_MINUS:
+    case TOK_BANG:
+    case TOK_STAR:
+    case TOK_AMP:
+    case TOK_TILDE:
+    case TOK_PLUS_PLUS:
+    case TOK_MINUS_MINUS:
+        return 25;
+    default:
+        return -1;
+    }
 }
 
 int last_rbp;
 
 int infix_bp(int op) {
-    if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ ||
-        op == TOK_PIPE_EQ || op == TOK_AMP_EQ || op == TOK_CARET_EQ ||
-        op == TOK_LSHIFT_EQ || op == TOK_RSHIFT_EQ) {
+    switch (op) {
+    case TOK_EQ:
+    case TOK_PLUS_EQ:
+    case TOK_MINUS_EQ:
+    case TOK_PIPE_EQ:
+    case TOK_AMP_EQ:
+    case TOK_CARET_EQ:
+    case TOK_LSHIFT_EQ:
+    case TOK_RSHIFT_EQ:
         last_rbp = 1;
         return 2;
-    }
-    if (op == TOK_PIPE_PIPE) {
+    case TOK_PIPE_PIPE:
         last_rbp = 5;
         return 4;
-    }
-    if (op == TOK_AMP_AMP) {
+    case TOK_AMP_AMP:
         last_rbp = 7;
         return 6;
-    }
-    if (op == TOK_PIPE) {
+    case TOK_PIPE:
         last_rbp = 9;
         return 8;
-    }
-    if (op == TOK_CARET) {
+    case TOK_CARET:
         last_rbp = 10;
         return 9;
-    }
-    if (op == TOK_AMP) {
+    case TOK_AMP:
         last_rbp = 11;
         return 10;
-    }
-    if (op == TOK_EQ_EQ || op == TOK_BANG_EQ) {
+    case TOK_EQ_EQ:
+    case TOK_BANG_EQ:
         last_rbp = 13;
         return 12;
-    }
-    if (op == TOK_LT || op == TOK_GT || op == TOK_LT_EQ || op == TOK_GT_EQ) {
+    case TOK_LT:
+    case TOK_GT:
+    case TOK_LT_EQ:
+    case TOK_GT_EQ:
         last_rbp = 15;
         return 14;
-    }
-    if (op == TOK_LSHIFT || op == TOK_RSHIFT) {
+    case TOK_LSHIFT:
+    case TOK_RSHIFT:
         last_rbp = 17;
         return 16;
-    }
-    if (op == TOK_PLUS || op == TOK_MINUS) {
+    case TOK_PLUS:
+    case TOK_MINUS:
         last_rbp = 19;
         return 18;
-    }
-    if (op == TOK_STAR || op == TOK_SLASH || op == TOK_PERCENT) {
+    case TOK_STAR:
+    case TOK_SLASH:
+    case TOK_PERCENT:
         last_rbp = 21;
         return 20;
-    }
-    if (op == TOK_DOT || op == TOK_ARROW) {
+    case TOK_DOT:
+    case TOK_ARROW:
         last_rbp = 30;
         return 29;
+    default:
+        return -1;
     }
-    return -1;
 }
 
 struct Node *parse_atom(void) {
@@ -1392,7 +1408,7 @@ struct Node *parse_var_decl(void) {
         blk_stmts->count = 0;
         blk_stmts->cap = 0;
         nlist_push(blk_stmts, n);
-        for (ei = 0; ei < init_elems->count; ei = ei + 1) {
+        for (ei = 0; ei < init_elems->count; ei++) {
             idx_lit = node_new(ND_INT_LIT, line, col);
             idx_lit->ival = ei;
             id_node = node_new(ND_IDENT, line, col);
@@ -1730,7 +1746,7 @@ struct Node *parse_func(void) {
         } else {
             func_sigs[nfunc_sigs]->is_void = 0;
         }
-        nfunc_sigs = nfunc_sigs + 1;
+        nfunc_sigs++;
     }
     advance_tok();
     expect(TOK_LPAREN, "expected '('");
@@ -1789,7 +1805,7 @@ void parse_struct_def(void) {
     if (nstructs >= MAX_STRUCTS) error(cur->line, cur->col, "too many structs");
     structs_reg[nstructs] = (struct StructDef *)malloc(sizeof(struct StructDef));
     sd = structs_reg[nstructs];
-    nstructs = nstructs + 1;
+    nstructs++;
     sd->name = strdupn(cur->text, 127);
     sd->nfields = 0;
     sd->fields = (struct StructField **)malloc(MAX_FIELDS * sizeof(void *));
@@ -1808,8 +1824,8 @@ void parse_struct_def(void) {
         sd->fields[sd->nfields] = (struct StructField *)malloc(sizeof(struct StructField));
         sd->fields[sd->nfields]->name = strdupn(cur->text, 127);
         sd->fields[sd->nfields]->fld_offset = offset;
-        sd->nfields = sd->nfields + 1;
-        offset = offset + 4;
+        sd->nfields++;
+        offset += 4;
         advance_tok();
         expect(TOK_SEMI, "expected ';' after field");
     }
@@ -1882,7 +1898,7 @@ void parse_global_var(void) {
             advance_tok();
         }
     }
-    nglobals = nglobals + 1;
+    nglobals++;
     expect(TOK_SEMI, "expected ';' after global declaration");
 }
 
@@ -1916,9 +1932,9 @@ void parse_enum_def(void) {
             ec->name = ename;
             ec->val = val;
             enum_consts[nenum_consts] = ec;
-            nenum_consts = nenum_consts + 1;
+            nenum_consts++;
         }
-        val = val + 1;
+        val++;
         if (at(TOK_COMMA)) advance_tok();
     }
     expect(TOK_RBRACE, "expected '}'");
@@ -1979,7 +1995,7 @@ void parse_typedef(void) {
         ta->resolved_kind = rk;
         ta->is_ptr = is_ptr;
         type_aliases[ntype_aliases] = ta;
-        ntype_aliases = ntype_aliases + 1;
+        ntype_aliases++;
     }
 }
 
@@ -2085,7 +2101,7 @@ int indent_level;
 
 void emit_indent(void) {
     int i;
-    for (i = 0; i < indent_level; i = i + 1) {
+    for (i = 0; i < indent_level; i++) {
         printf("  ");
     }
 }
@@ -2107,7 +2123,7 @@ void init_local_tracking(void) {
 
 int find_local(char *name) {
     int i;
-    for (i = 0; i < nlocals; i = i + 1) {
+    for (i = 0; i < nlocals; i++) {
         if (strcmp(local_vars[i]->name, name) == 0) return i;
     }
     return -1;
@@ -2122,35 +2138,44 @@ void add_local(char *name, int is_char) {
     local_vars[nlocals] = (struct LocalVar *)malloc(sizeof(struct LocalVar));
     local_vars[nlocals]->name = strdupn(name, 127);
     local_vars[nlocals]->lv_is_char = is_char;
-    nlocals = nlocals + 1;
+    nlocals++;
 }
 
 void collect_locals(struct Node *n) {
     int i;
     if (n == (struct Node *)0) return;
-    if (n->kind == ND_VAR_DECL) {
+    switch (n->kind) {
+    case ND_VAR_DECL:
         add_local(n->sval, n->ival2);
-    } else if (n->kind == ND_BLOCK) {
-        for (i = 0; i < n->ival2; i = i + 1) {
+        break;
+    case ND_BLOCK:
+        for (i = 0; i < n->ival2; i++) {
             collect_locals(n->list[i]);
         }
-    } else if (n->kind == ND_IF) {
+        break;
+    case ND_IF:
         collect_locals(n->c1);
         collect_locals(n->c2);
-    } else if (n->kind == ND_WHILE) {
+        break;
+    case ND_WHILE:
         collect_locals(n->c1);
-    } else if (n->kind == ND_FOR) {
+        break;
+    case ND_FOR:
         collect_locals(n->c0);
         collect_locals(n->c3);
-    } else if (n->kind == ND_DO_WHILE) {
+        break;
+    case ND_DO_WHILE:
         collect_locals(n->c0); /* condition (c1) cannot contain declarations */
-    } else if (n->kind == ND_SWITCH) {
-        int i;
-        for (i = 0; i < n->ival2; i = i + 1) {
+        break;
+    case ND_SWITCH:
+        for (i = 0; i < n->ival2; i++) {
             collect_locals(n->list[i]);
         }
-    } else if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
+        break;
+    case ND_POST_INC:
+    case ND_POST_DEC:
         collect_locals(n->c0);
+        break;
     }
 }
 
@@ -2205,10 +2230,12 @@ void gen_expr(struct Node *n) {
     int sid;
     int i;
 
-    if (n->kind == ND_INT_LIT) {
+    switch (n->kind) {
+    case ND_INT_LIT:
         emit_indent();
         printf("i32.const %d\n", n->ival);
-    } else if (n->kind == ND_IDENT) {
+        break;
+    case ND_IDENT:
         if (find_global(n->sval) >= 0) {
             emit_indent();
             printf("global.get $%s\n", n->sval);
@@ -2216,7 +2243,8 @@ void gen_expr(struct Node *n) {
             emit_indent();
             printf("local.get $%s\n", n->sval);
         }
-    } else if (n->kind == ND_ASSIGN) {
+        break;
+    case ND_ASSIGN:
         tgt = n->c0;
         if (tgt->kind == ND_IDENT) {
             name = tgt->sval;
@@ -2490,7 +2518,8 @@ void gen_expr(struct Node *n) {
             emit_indent();
             printf("local.get $__atmp\n");
         }
-    } else if (n->kind == ND_UNARY) {
+        break;
+    case ND_UNARY:
         if (n->ival == TOK_MINUS) {
             emit_indent();
             printf("i32.const 0\n");
@@ -2519,7 +2548,8 @@ void gen_expr(struct Node *n) {
         } else if (n->ival == TOK_AMP) {
             error(n->nline, n->ncol, "cannot take address of this expression");
         }
-    } else if (n->kind == ND_BINARY) {
+        break;
+    case ND_BINARY:
         gen_expr(n->c0);
         gen_expr(n->c1);
         emit_indent();
@@ -2562,7 +2592,8 @@ void gen_expr(struct Node *n) {
         } else {
             error(n->nline, n->ncol, "unsupported binary operator");
         }
-    } else if (n->kind == ND_CALL) {
+        break;
+    case ND_CALL:
         if (strcmp(n->sval, "printf") == 0) {
             if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
                 error(n->nline, n->ncol, "printf requires string literal format");
@@ -2571,25 +2602,25 @@ void gen_expr(struct Node *n) {
             fmt = str_table[sid]->data;
             flen = str_table[sid]->len;
             ai = 1;
-            for (fi = 0; fi < flen; fi = fi + 1) {
+            for (fi = 0; fi < flen; fi++) {
                 if (fmt[fi] == '%' && fi + 1 < flen) {
-                    fi = fi + 1;
+                    fi++;
                     if (fmt[fi] == 'd') {
                         if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
                         gen_expr(n->list[ai]);
-                        ai = ai + 1;
+                        ai++;
                         emit_indent();
                         printf("call $__print_int\n");
                     } else if (fmt[fi] == 's') {
                         if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
                         gen_expr(n->list[ai]);
-                        ai = ai + 1;
+                        ai++;
                         emit_indent();
                         printf("call $__print_str\n");
                     } else if (fmt[fi] == 'c') {
                         if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
                         gen_expr(n->list[ai]);
-                        ai = ai + 1;
+                        ai++;
                         emit_indent();
                         printf("call $putchar\n");
                         emit_indent();
@@ -2597,7 +2628,7 @@ void gen_expr(struct Node *n) {
                     } else if (fmt[fi] == 'x') {
                         if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
                         gen_expr(n->list[ai]);
-                        ai = ai + 1;
+                        ai++;
                         emit_indent();
                         printf("call $__print_hex\n");
                     } else if (fmt[fi] == '%') {
@@ -2683,7 +2714,7 @@ void gen_expr(struct Node *n) {
             emit_indent();
             printf("call $memcmp\n");
         } else {
-            for (i = 0; i < n->ival2; i = i + 1) {
+            for (i = 0; i < n->ival2; i++) {
                 gen_expr(n->list[i]);
             }
             emit_indent();
@@ -2693,10 +2724,12 @@ void gen_expr(struct Node *n) {
                 printf("i32.const 0\n");
             }
         }
-    } else if (n->kind == ND_STR_LIT) {
+        break;
+    case ND_STR_LIT:
         emit_indent();
         printf("i32.const %d\n", str_table[n->ival]->offset);
-    } else if (n->kind == ND_MEMBER) {
+        break;
+    case ND_MEMBER:
         off = resolve_field_offset(n->sval);
         if (off < 0) error(n->nline, n->ncol, "unknown struct field");
         gen_expr(n->c0);
@@ -2708,7 +2741,8 @@ void gen_expr(struct Node *n) {
         }
         emit_indent();
         printf("i32.load\n");
-    } else if (n->kind == ND_SIZEOF) {
+        break;
+    case ND_SIZEOF: {
         struct StructDef *sd;
         int sz;
         if (n->ival == 1) {
@@ -2734,7 +2768,9 @@ void gen_expr(struct Node *n) {
         }
         emit_indent();
         printf("i32.const %d\n", sz);
-    } else if (n->kind == ND_SUBSCRIPT) {
+        break;
+    }
+    case ND_SUBSCRIPT:
         esz = expr_elem_size(n->c0);
         gen_expr(n->c0);
         gen_expr(n->c1);
@@ -2752,7 +2788,9 @@ void gen_expr(struct Node *n) {
         } else {
             printf("i32.load\n");
         }
-    } else if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
+        break;
+    case ND_POST_INC:
+    case ND_POST_DEC: {
         struct Node *tgt2;
         char *pname;
         int pis_global;
@@ -2841,30 +2879,33 @@ void gen_expr(struct Node *n) {
         } else {
             error(n->nline, n->ncol, "unsupported post-inc/dec target");
         }
-    } else if (n->kind == ND_TERNARY) {
+        break;
+    }
+    case ND_TERNARY:
         gen_expr(n->c0);
         /* both branches produce i32; compiler is uniformly i32 throughout */
         emit_indent();
         printf("(if (result i32)\n");
-        indent_level = indent_level + 1;
+        indent_level++;
         emit_indent();
         printf("(then\n");
-        indent_level = indent_level + 1;
+        indent_level++;
         gen_expr(n->c1);
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
         emit_indent();
         printf("(else\n");
-        indent_level = indent_level + 1;
+        indent_level++;
         gen_expr(n->c2);
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
-    } else {
+        break;
+    default:
         error(n->nline, n->ncol, "unsupported expression in codegen");
     }
 }
@@ -2876,7 +2917,7 @@ void gen_stmt(struct Node *n);
 void gen_body(struct Node *n) {
     int i;
     if (n->kind == ND_BLOCK) {
-        for (i = 0; i < n->ival2; i = i + 1) {
+        for (i = 0; i < n->ival2; i++) {
             gen_stmt(n->list[i]);
         }
     } else {
@@ -2889,13 +2930,15 @@ void gen_stmt(struct Node *n) {
     int i;
     int bsz;
 
-    if (n->kind == ND_RETURN) {
+    switch (n->kind) {
+    case ND_RETURN:
         if (n->c0 != (struct Node *)0) {
             gen_expr(n->c0);
         }
         emit_indent();
         printf("return\n");
-    } else if (n->kind == ND_VAR_DECL) {
+        break;
+    case ND_VAR_DECL:
         if (n->ival > 0) {
             /* Array: allocate n->ival elements of the given size */
             bsz = n->ival;
@@ -2911,60 +2954,63 @@ void gen_stmt(struct Node *n) {
             emit_indent();
             printf("local.set $%s\n", n->sval);
         }
-    } else if (n->kind == ND_EXPR_STMT) {
+        break;
+    case ND_EXPR_STMT:
         gen_expr(n->c0);
         emit_indent();
         printf("drop\n");
-    } else if (n->kind == ND_IF) {
+        break;
+    case ND_IF:
         gen_expr(n->c0);
         if (n->c2 != (struct Node *)0) {
             emit_indent();
             printf("(if\n");
-            indent_level = indent_level + 1;
+            indent_level++;
             emit_indent();
             printf("(then\n");
-            indent_level = indent_level + 1;
+            indent_level++;
             gen_body(n->c1);
-            indent_level = indent_level - 1;
+            indent_level--;
             emit_indent();
             printf(")\n");
             emit_indent();
             printf("(else\n");
-            indent_level = indent_level + 1;
+            indent_level++;
             gen_body(n->c2);
-            indent_level = indent_level - 1;
+            indent_level--;
             emit_indent();
             printf(")\n");
-            indent_level = indent_level - 1;
+            indent_level--;
             emit_indent();
             printf(")\n");
         } else {
             emit_indent();
             printf("(if\n");
-            indent_level = indent_level + 1;
+            indent_level++;
             emit_indent();
             printf("(then\n");
-            indent_level = indent_level + 1;
+            indent_level++;
             gen_body(n->c1);
-            indent_level = indent_level - 1;
+            indent_level--;
             emit_indent();
             printf(")\n");
-            indent_level = indent_level - 1;
+            indent_level--;
             emit_indent();
             printf(")\n");
         }
-    } else if (n->kind == ND_WHILE) {
+        break;
+    case ND_WHILE:
         lbl = label_cnt;
-        label_cnt = label_cnt + 1;
+        label_cnt++;
         brk_lbl[loop_sp] = lbl;
         cont_lbl[loop_sp] = lbl;
-        loop_sp = loop_sp + 1;
+        loop_sp++;
         emit_indent();
         printf("(block $brk_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         emit_indent();
         printf("(loop $lp_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         gen_expr(n->c0);
         emit_indent();
         printf("i32.eqz\n");
@@ -2972,35 +3018,36 @@ void gen_stmt(struct Node *n) {
         printf("br_if $brk_%d\n", lbl);
         emit_indent();
         printf("(block $cont_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         gen_body(n->c1);
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
         emit_indent();
         printf("br $lp_%d\n", lbl);
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
-        loop_sp = loop_sp - 1;
-    } else if (n->kind == ND_FOR) {
+        loop_sp--;
+        break;
+    case ND_FOR:
         if (n->c0 != (struct Node *)0) {
             gen_stmt(n->c0);
         }
         lbl = label_cnt;
-        label_cnt = label_cnt + 1;
+        label_cnt++;
         brk_lbl[loop_sp] = lbl;
         cont_lbl[loop_sp] = lbl;
-        loop_sp = loop_sp + 1;
+        loop_sp++;
         emit_indent();
         printf("(block $brk_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         emit_indent();
         printf("(loop $lp_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         if (n->c1 != (struct Node *)0) {
             gen_expr(n->c1);
             emit_indent();
@@ -3010,9 +3057,9 @@ void gen_stmt(struct Node *n) {
         }
         emit_indent();
         printf("(block $cont_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         gen_body(n->c3);
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
         if (n->c2 != (struct Node *)0) {
@@ -3022,56 +3069,61 @@ void gen_stmt(struct Node *n) {
         }
         emit_indent();
         printf("br $lp_%d\n", lbl);
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
-        loop_sp = loop_sp - 1;
-    } else if (n->kind == ND_DO_WHILE) {
+        loop_sp--;
+        break;
+    case ND_DO_WHILE:
         lbl = label_cnt;
-        label_cnt = label_cnt + 1;
+        label_cnt++;
         brk_lbl[loop_sp] = lbl;
         cont_lbl[loop_sp] = lbl;
-        loop_sp = loop_sp + 1;
+        loop_sp++;
         emit_indent();
         printf("(block $brk_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         emit_indent();
         printf("(loop $lp_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         emit_indent();
         printf("(block $cont_%d\n", lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
         gen_body(n->c0);
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
         gen_expr(n->c1);
         emit_indent();
         printf("br_if $lp_%d\n", lbl);
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent();
         printf(")\n");
-        loop_sp = loop_sp - 1;
-    } else if (n->kind == ND_BREAK) {
+        loop_sp--;
+        break;
+    case ND_BREAK:
         if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
         emit_indent();
         printf("br $brk_%d\n", brk_lbl[loop_sp - 1]);
-    } else if (n->kind == ND_CONTINUE) {
+        break;
+    case ND_CONTINUE:
         if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
         if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
         emit_indent();
         printf("br $cont_%d\n", cont_lbl[loop_sp - 1]);
-    } else if (n->kind == ND_BLOCK) {
-        for (i = 0; i < n->ival2; i = i + 1) {
+        break;
+    case ND_BLOCK:
+        for (i = 0; i < n->ival2; i++) {
             gen_stmt(n->list[i]);
         }
-    } else if (n->kind == ND_SWITCH) {
+        break;
+    case ND_SWITCH: {
         int case_vals[256];
         int case_start[256];
         int nc;
@@ -3087,14 +3139,14 @@ void gen_stmt(struct Node *n) {
         nc = 0;
         dflt_pos = -1;
         has_dflt = 0;
-        for (si = 0; si < n->ival2; si = si + 1) {
+        for (si = 0; si < n->ival2; si++) {
             if (n->list[si]->kind == ND_CASE) {
                 if (nc >= MAX_CASES) {
                     error(n->nline, n->ncol, "too many cases in switch");
                 }
                 case_vals[nc] = n->list[si]->ival;
                 case_start[nc] = si;
-                nc = nc + 1;
+                nc++;
             } else if (n->list[si]->kind == ND_DEFAULT) {
                 dflt_pos = si;
                 has_dflt = 1;
@@ -3111,14 +3163,14 @@ void gen_stmt(struct Node *n) {
         }
 
         sw_lbl = label_cnt;
-        label_cnt = label_cnt + 1;
+        label_cnt++;
         brk_lbl[loop_sp] = sw_lbl;
         if (loop_sp > 0) {
             cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
         } else {
             cont_lbl[loop_sp] = -1;
         }
-        loop_sp = loop_sp + 1;
+        loop_sp++;
 
         /* save switch value */
         gen_expr(n->c0);
@@ -3128,22 +3180,22 @@ void gen_stmt(struct Node *n) {
         /* outer break block */
         emit_indent();
         printf("(block $brk_%d\n", sw_lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
 
         /* default target block (outermost) */
         emit_indent();
         printf("(block $sw%d_dflt\n", sw_lbl);
-        indent_level = indent_level + 1;
+        indent_level++;
 
         /* open case blocks in reverse order: first case = innermost */
-        for (k = nc - 1; k >= 0; k = k - 1) {
+        for (k = nc - 1; k >= 0; k--) {
             emit_indent();
             printf("(block $sw%d_c%d\n", sw_lbl, k);
-            indent_level = indent_level + 1;
+            indent_level++;
         }
 
         /* dispatch: compare and branch for each case */
-        for (k = 0; k < nc; k = k + 1) {
+        for (k = 0; k < nc; k++) {
             emit_indent(); printf("local.get $__stmp\n");
             emit_indent(); printf("i32.const %d\n", case_vals[k]);
             emit_indent(); printf("i32.eq\n");
@@ -3157,8 +3209,8 @@ void gen_stmt(struct Node *n) {
         }
 
         /* close case blocks in forward order and emit case bodies */
-        for (k = 0; k < nc; k = k + 1) {
-            indent_level = indent_level - 1;
+        for (k = 0; k < nc; k++) {
+            indent_level--;
             emit_indent(); printf(")\n");
             if (k + 1 < nc) {
                 next_start = case_start[k + 1];
@@ -3167,7 +3219,7 @@ void gen_stmt(struct Node *n) {
             } else {
                 next_start = n->ival2;
             }
-            for (j = case_start[k] + 1; j < next_start; j = j + 1) {
+            for (j = case_start[k] + 1; j < next_start; j++) {
                 if (n->list[j]->kind == ND_CASE) continue;
                 if (n->list[j]->kind == ND_DEFAULT) continue;
                 gen_stmt(n->list[j]);
@@ -3175,12 +3227,12 @@ void gen_stmt(struct Node *n) {
         }
 
         /* close default target block */
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent(); printf(")\n");
 
         /* emit default body */
         if (has_dflt) {
-            for (j = dflt_pos + 1; j < n->ival2; j = j + 1) {
+            for (j = dflt_pos + 1; j < n->ival2; j++) {
                 if (n->list[j]->kind == ND_CASE) continue;
                 if (n->list[j]->kind == ND_DEFAULT) continue;
                 gen_stmt(n->list[j]);
@@ -3188,11 +3240,13 @@ void gen_stmt(struct Node *n) {
         }
 
         /* close break block */
-        indent_level = indent_level - 1;
+        indent_level--;
         emit_indent(); printf(")\n");
 
-        loop_sp = loop_sp - 1;
-    } else {
+        loop_sp--;
+        break;
+    }
+    default:
         error(n->nline, n->ncol, "unsupported statement in codegen");
     }
 }
@@ -3211,7 +3265,7 @@ void gen_func(struct Node *n) {
     label_cnt = 0;
     loop_sp = 0;
     /* register params as locals for is_char tracking */
-    for (i = 0; i < n->ival2; i = i + 1) {
+    for (i = 0; i < n->ival2; i++) {
         add_local(n->list[i]->sval, n->list[i]->ival2);
     }
     nparam_locals = nlocals;
@@ -3223,14 +3277,14 @@ void gen_func(struct Node *n) {
         ret_sig = " (result i32)";
     }
     printf("  (func $%s", n->sval);
-    for (i = 0; i < n->ival2; i = i + 1) {
+    for (i = 0; i < n->ival2; i++) {
         printf(" (param $%s i32)", n->list[i]->sval);
     }
     printf("%s\n", ret_sig);
 
     indent_level = 2;
     /* emit only non-param locals */
-    for (i = nparam_locals; i < nlocals; i = i + 1) {
+    for (i = nparam_locals; i < nlocals; i++) {
         emit_indent();
         printf("(local $%s i32)\n", local_vars[i]->name);
     }
@@ -3239,7 +3293,7 @@ void gen_func(struct Node *n) {
     emit_indent();
     printf("(local $__stmp i32)\n");
     body = n->c0;
-    for (i = 0; i < body->ival2; i = i + 1) {
+    for (i = 0; i < body->ival2; i++) {
         gen_stmt(body->list[i]);
     }
     if (n->ival != 1) {
@@ -3258,7 +3312,7 @@ void emit_wat_string(char *data, int len) {
     int c;
     int hi;
     int lo;
-    for (i = 0; i < len; i = i + 1) {
+    for (i = 0; i < len; i++) {
         c = data[i] & 255;
         if (c >= 32 && c < 127 && c != '"' && c != '\\') {
             putchar(c);
@@ -3288,7 +3342,7 @@ void gen_module(struct Node *prog) {
 
     emit_indent();
     printf("(module\n");
-    indent_level = indent_level + 1;
+    indent_level++;
 
     /* WASI imports */
     emit_indent();
@@ -3307,7 +3361,7 @@ void gen_module(struct Node *prog) {
     printf("\n");
 
     /* static data section */
-    for (i = 0; i < nstrings; i = i + 1) {
+    for (i = 0; i < nstrings; i++) {
         printf("  (data (i32.const %d) \"", str_table[i]->offset);
         emit_wat_string(str_table[i]->data, str_table[i]->len);
         printf("\\00\")\n");
@@ -3322,7 +3376,7 @@ void gen_module(struct Node *prog) {
     printf("(global $__heap_ptr (mut i32) (i32.const %d))\n", data_ptr);
 
     /* user global variables */
-    for (gi = 0; gi < nglobals; gi = gi + 1) {
+    for (gi = 0; gi < nglobals; gi++) {
         emit_indent();
         printf("(global $%s (mut i32) (i32.const %d))\n",
                globals_tbl[gi]->name, globals_tbl[gi]->init_val);
@@ -3683,7 +3737,7 @@ void gen_module(struct Node *prog) {
     printf("\n");
 
     /* user functions */
-    for (i = 0; i < prog->ival2; i = i + 1) {
+    for (i = 0; i < prog->ival2; i++) {
         gen_func(prog->list[i]);
     }
 
@@ -3693,16 +3747,16 @@ void gen_module(struct Node *prog) {
     /* _start */
     emit_indent();
     printf("(func $_start (export \"_start\")\n");
-    indent_level = indent_level + 1;
+    indent_level++;
     emit_indent();
     printf("call $main\n");
     emit_indent();
     printf("call $__proc_exit\n");
-    indent_level = indent_level - 1;
+    indent_level--;
     emit_indent();
     printf(")\n");
 
-    indent_level = indent_level - 1;
+    indent_level--;
     emit_indent();
     printf(")\n");
 }
