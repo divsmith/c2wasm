@@ -6001,6 +6001,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                 }
             }
             bv_push(o, 0x41); bv_i32(o, 0);
+            bin_last_float = 0;
         } else if (strcmp(n->sval, "putchar") == 0) {
             gen_expr_bin(o, n->list[0]);
             bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
@@ -8465,7 +8466,7 @@ void gen_module_bin(struct Node *prog) {
         bv_push(sec, 0x60);
         bv_u32(sec, bin_types[i]->nparams);
         for (j = 0; j < bin_types[i]->nparams; j++) {
-            if (bin_types[i]->param_is_float[j]) {
+            if (j < 16 && bin_types[i]->param_is_float[j]) {
                 bv_push(sec, 0x7C); /* f64 */
             } else {
                 bv_push(sec, 0x7F); /* i32 */
