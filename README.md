@@ -44,20 +44,22 @@ c2wasm supports a carefully chosen subset of C89/C90:
 
 | Feature | Supported |
 |---------|-----------|
-| Types | `int`, `char`, `void`, `T*`, `T[N]`, `struct { ... }` |
-| Literals | Integer (decimal/hex), character, string |
-| Arithmetic | `+`, `-`, `*`, `/`, `%` |
+| Types | `int`, `char`, `void`, `float`, `double`, `unsigned`, `short`, `long`, `T*`, `T[N]`, `struct { ... }` |
+| Literals | Integer (decimal/hex), character, string, float (`3.14`, `1e5`, `.5f`) |
+| Arithmetic | `+`, `-`, `*`, `/`, `%` (integer and floating-point) |
 | Comparison | `==`, `!=`, `<`, `<=`, `>`, `>=` |
 | Logical | `&&`, `\|\|`, `!` |
 | Assignment | `=`, `+=`, `-=` |
 | Pointer ops | `*` (deref), `&` (address-of), `[]` (subscript), `.`, `->` |
 | Prefix | `++`, `--`, cast `(T)` |
-| Statements | `if`/`else`, `while`, `for`, `return`, `break`, `continue` |
+| Statements | `if`/`else`, `while`, `for`, `do`/`while`, `switch`/`case`, `return`, `break`, `continue` |
 | Functions | Recursion, forward declarations |
-| Built-ins | `malloc`, `free` (no-op), `exit`, `putchar`, `getchar`, `printf` (`%d %s %c %x`) |
-| Preprocessor | `#define NAME integer-literal` only |
+| Memory | `malloc`, `free` (free-list allocator with coalescing), `calloc` |
+| Built-ins | `exit`, `putchar`, `getchar`, `printf` (`%d %s %c %x %f`), `puts` |
+| libc | `strlen`, `strcmp`, `strcpy`, `strcat`, `strchr`, `strstr`, `memcpy`, `memset`, `memmove`, `atoi`, `abs`, `rand`/`srand`, `isdigit`, `isalpha`, `toupper`, `tolower`, and more |
+| Preprocessor | `#define NAME integer-literal`, `enum`, `typedef` |
 
-All types map to `i32` internally. No `float`, no `double`.
+Integer types map to `i32`. Float types use `f64` in WASM (WAT mode). Unsigned types use appropriate unsigned WASM opcodes.
 
 ---
 
@@ -107,10 +109,11 @@ The compiler has two output modes:
 
 | Decision | Rationale |
 |----------|-----------|
-| All types → `i32` | Maximum simplicity; supports all example programs |
+| Integer types → `i32`, float types → `f64` | Simplicity; covers all common use cases |
 | Dual output: WAT + binary | WAT is readable; binary eliminates external assembler |
-| `printf` lowered at compile time | Format strings expanded to `putchar` calls; no variadic WASM needed |
-| Bump allocator, `free` is a no-op | Sufficient for the C subset; keeps codegen simple |
+| `printf` lowered at compile time | Format strings expanded to `putchar`/helper calls; no variadic WASM needed |
+| Free-list allocator with coalescing | Real `free()` enables long-running programs and libc functions |
+| 40+ inline libc functions | No external linking needed; every program is self-contained |
 | Single-file compiler | Maximizes self-hosting elegance |
 
 ---
