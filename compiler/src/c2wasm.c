@@ -258,30 +258,22 @@ void skip_ws(void) {
 
 /* Manual is_alpha check (replaces isalpha) */
 int is_alpha(char c) {
-    if (c >= 'a' && c <= 'z') return 1;
-    if (c >= 'A' && c <= 'Z') return 1;
-    return 0;
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
 /* Manual is_digit check (replaces isdigit) */
 int is_digit(char c) {
-    if (c >= '0' && c <= '9') return 1;
-    return 0;
+    return c >= '0' && c <= '9';
 }
 
 /* Manual is_alnum check (replaces isalnum) */
 int is_alnum(char c) {
-    if (is_alpha(c)) return 1;
-    if (is_digit(c)) return 1;
-    return 0;
+    return is_alpha(c) || is_digit(c);
 }
 
 /* Manual is_xdigit check (replaces isxdigit) */
 int is_xdigit(char c) {
-    if (is_digit(c)) return 1;
-    if (c >= 'a' && c <= 'f') return 1;
-    if (c >= 'A' && c <= 'F') return 1;
-    return 0;
+    return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
 int kw_lookup(char *s) {
