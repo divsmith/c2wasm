@@ -1,9 +1,9 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/compiler/src/c2wasm.c"
-BIN="$ROOT/compiler/c2wasm"
+BIN="$ROOT/build/c2wasm"
 TMP="$ROOT/.tmp"
 
 mkdir -p "$TMP"
@@ -37,7 +37,7 @@ fi
 
 # Run test suite
 echo "[5/5] Running test suite..."
-(cd "$ROOT/compiler" && make test) 2>&1 | tail -1
+(cd "$ROOT/compiler" && bash tests/run_tests.sh) 2>&1 | tail -1
 
 echo ""
 echo "=== Bootstrap successful! ==="

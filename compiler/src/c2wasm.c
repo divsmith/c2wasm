@@ -118,7 +118,7 @@
 /* Limits */
 #define MAX_SRC 2097152
 #define MAX_MACROS 256
-#define MAX_STRINGS 512
+#define MAX_STRINGS 2048
 #define MAX_STR_DATA 512
 #define MAX_STRUCTS 64
 #define MAX_FIELDS 32
@@ -351,6 +351,9 @@ void init_strings(void) {
 int add_string(char *data, int len) {
     int id;
     char *__s;
+    if (nstrings >= MAX_STRINGS) {
+        error(0, 0, "too many string literals");
+    }
     id = nstrings;
     nstrings = nstrings + 1;
     if (len >= MAX_STR_DATA) {
