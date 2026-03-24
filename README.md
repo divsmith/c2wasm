@@ -23,7 +23,7 @@ The browser demo shows the full pipeline:
 C source  →  [c2wasm compiler]  →  WAT (WebAssembly Text)  →  [wabt.js]  →  WASM binary  →  runs in browser
 ```
 
-Everything runs client-side. The compiler itself was compiled to WebAssembly with Emscripten and ships as a single JS file.
+Everything runs client-side. The compiler itself was compiled to a 229 KB WASM binary using [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) (standard WASI target).
 
 ---
 
@@ -94,8 +94,8 @@ Source text
 
 ### Browser Integration
 
-- **Compiler → WASM**: compiled with Emscripten (`emcc -s SINGLE_FILE=1`), embedded in `compiler.js`
-- **Stdin/stdout redirection**: Emscripten callbacks feed C source character-by-character and capture WAT output
+- **Compiler → WASM**: compiled with [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) to a standalone 229 KB `.wasm` file (no JavaScript runtime bundled)
+- **Stdin/stdout redirection**: a minimal WASI shim (`compiler-api.js`) feeds C source as stdin bytes and captures WAT from stdout
 - **WAT → WASM binary**: [wabt.js](https://github.com/WebAssembly/wabt) assembles WAT to a binary in the browser
 - **Execution**: `WebAssembly.instantiate` with a WASI shim; `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; programs using `getchar` read from the stdin input box in the demo UI
 
@@ -129,51 +129,90 @@ A clean diff proves that the compiler, when run inside WebAssembly, produces byt
 
 ## Local Development
 
+There are **two separate binaries** in this project:
+
+| Binary | What it is | How to build |
+|--------|-----------|-------------|
+| `build/c2wasm` | Native compiler (for running tests) | `cd compiler && make` |
+| `demo/compiler.wasm` | Browser compiler (for the demo) | `WASI_SDK=... make wasm` |
+
+`demo/compiler.wasm` is gitignored — a fresh clone won't have it. You only need to rebuild it if you're working on the demo or changed the compiler and want to update the deployed binary.
+
 ### Prerequisites
 
-- GCC (for native build and tests)
-- Python 3 (for `make serve`)
-- Emscripten (`emcc`) — only needed to rebuild `compiler.js`
+| Tool | Required for |
+|------|-------------|
+| GCC | Building the native compiler |
+| `wat2wasm` + `wasmtime` | Running tests and bootstrap |
+| [wasi-sdk v25](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25) | Rebuilding `demo/compiler.wasm` |
+| Python 3 | `make serve` |
 
-### Build & Test
+Install wasi-sdk v25 from the [releases page](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25). Extract it to `/opt/wasi-sdk` or `~/.local/wasi-sdk` — the Makefile checks both automatically.
 
 ```bash
-# Build the native compiler
-cd compiler
-make
+# macOS ARM64 (Apple Silicon)
+curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-arm64-macos.tar.gz
+tar xzf wasi-sdk-25.0-arm64-macos.tar.gz
+mv wasi-sdk-25.0-arm64-macos ~/.local/wasi-sdk      # no sudo needed
 
-# Run the test suite (30 programs, from return-0 to structs+strings)
-make test
+# macOS x86_64 (Intel)
+curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-macos.tar.gz
+tar xzf wasi-sdk-25.0-x86_64-macos.tar.gz
+mv wasi-sdk-25.0-x86_64-macos ~/.local/wasi-sdk
 
-# Rebuild the WASM compiler (requires emcc)
-make wasm
-
-# Serve the demo locally (sets required cross-origin isolation headers)
-make serve
-# then open http://localhost:8080
+# Linux x86_64
+curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+tar xzf wasi-sdk-25.0-x86_64-linux.tar.gz
+mv wasi-sdk-25.0-x86_64-linux ~/.local/wasi-sdk
 ```
 
-> **Note:** `make serve` uses `demo/server.py` (not plain `python3 -m http.server`) because the
-> demo requires the `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` HTTP headers
-> to enable `SharedArrayBuffer`, which powers interactive stdin in the terminal.
-> On GitHub Pages these headers are injected by `demo/coi-serviceworker.js`.
+You can also use a different path — just pass it explicitly: `WASI_SDK=/your/path make wasm`.
+
+### Build the native compiler
+
+```bash
+cd compiler
+make           # builds build/c2wasm from src/c2wasm.c
+make clean     # force a clean rebuild next time
+```
+
+> `make` prints `Nothing to be done for 'all'` when `build/c2wasm` is already up to date — that's correct. Run `make clean && make` to force a full rebuild.
+
+### Run the tests
+
+Requires `wat2wasm` and `wasmtime` on `PATH`:
+
+```bash
+cd compiler
+make test      # runs all 39 test programs + bootstrap self-hosting check
+make bootstrap # run the 3-stage bootstrap check alone
+```
+
+### Rebuild the browser compiler
+
+Only needed when you change `compiler/src/c2wasm.c` and want to update the demo:
+
+```bash
+cd compiler && make wasm
+# auto-detects wasi-sdk at /opt/wasi-sdk or ~/.local/wasi-sdk
+# produces demo/compiler.wasm (229 KB)
+```
+
+
+### Serve the demo locally
+
+```bash
+cd compiler && make serve
+# open http://localhost:8080
+```
+
+> `make serve` uses `demo/server.py` instead of `python3 -m http.server` because the demo requires
+> `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers to enable `SharedArrayBuffer`
+> (interactive stdin). On GitHub Pages these headers are injected by `demo/coi-serviceworker.js`.
 
 ### Test Programs
 
-`compiler/tests/programs/` contains 30 progressive test programs:
-
-```
-00_return0.c        → 10_while.c         → 20_struct_field.c
-01_return42.c       → 11_for.c           → 21_struct_ptr.c
-02_arithmetic.c     → 12_nested_loop.c   → 22_struct_malloc.c
-03_variables.c      → 13_array.c         → 23_linked_list.c
-04_if_else.c        → 14_pointer.c       → 24_recursive_sum.c
-05_comparison.c     → 15_address_of.c    → 25_bubble_sort.c
-06_function.c       → 16_global.c        → 26_string_ops.c
-07_recursion.c      → 17_printf_d.c      → 27_multiarg_printf.c
-08_fibonacci.c      → 18_putchar.c       → 28_break_continue.c
-09_multiple_funcs.c → 19_scanf_sim.c     → 29_char_string.c
-```
+`compiler/tests/programs/` contains 39 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, and array initializers.
 
 ---
 
@@ -182,22 +221,23 @@ make serve
 ```
 wasm-c/
 ├── compiler/
-│   ├── src/c2wasm.c          ← the compiler (2,800 lines of C)
+│   ├── src/c2wasm.c          ← the compiler (~3,000 lines of C)
 │   ├── Makefile
 │   └── tests/
-│       ├── run_tests.sh
-│       └── programs/         ← 30 test programs + expected output
+│       ├── run_tests.sh      ← test runner (wat2wasm + wasmtime)
+│       └── programs/         ← 39 test programs + expected output
 ├── demo/
 │   ├── index.html            ← browser UI
 │   ├── main.js               ← editor, pipeline, localStorage file management
-│   ├── compiler-api.js       ← Emscripten wrapper
-│   ├── compiler.js           ← compiled compiler (Emscripten, SINGLE_FILE=1)
+│   ├── compiler-api.js       ← WASI shim — loads and runs compiler.wasm
+│   ├── compiler.wasm         ← compiled compiler (wasi-sdk, 229 KB)
+│   ├── wasm-worker.js        ← Web Worker for running compiled programs
 │   └── style.css             ← VS Code-inspired dark theme
 ├── tools/
 │   └── bootstrap.sh          ← 3-stage self-hosting verification
 └── .github/
     └── workflows/
-        └── pages.yml         ← auto-deploy demo/ to GitHub Pages
+        └── pages.yml         ← auto-deploy demo/ to GitHub Pages (wasi-sdk)
 ```
 
 ---
