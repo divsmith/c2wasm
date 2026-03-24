@@ -1,5 +1,4 @@
 /* EXPECT_EXIT: 42 */
-/* SKIP_BINARY */
 int main() {
     double d;
     double d2;

@@ -5417,21 +5417,31 @@ void bv_section(struct ByteVec *out, int id, struct ByteVec *content) {
 /* --- Binary type deduplication --- */
 
 #define MAX_BIN_TYPES 64
+#define MAX_TYPE_PARAMS 16
 
 struct BinTypeEntry {
     int nparams;
     int has_result;
+    int result_is_float;
+    int param_is_float[16];
 };
 
 struct BinTypeEntry **bin_types;
 int bin_ntypes;
 
-int bin_find_or_add_type(int nparams, int has_result) {
+int bin_find_or_add_type_f(int nparams, int *pif, int has_result, int rif) {
     int i;
+    int j;
+    int match;
     for (i = 0; i < bin_ntypes; i++) {
-        if (bin_types[i]->nparams == nparams && bin_types[i]->has_result == has_result) {
-            return i;
+        if (bin_types[i]->nparams != nparams) continue;
+        if (bin_types[i]->has_result != has_result) continue;
+        if (bin_types[i]->result_is_float != rif) continue;
+        match = 1;
+        for (j = 0; j < nparams && j < 16; j++) {
+            if (bin_types[i]->param_is_float[j] != pif[j]) { match = 0; break; }
         }
+        if (match) return i;
     }
     if (bin_ntypes >= MAX_BIN_TYPES) {
         printf("too many binary types\n");
@@ -5440,8 +5450,19 @@ int bin_find_or_add_type(int nparams, int has_result) {
     bin_types[bin_ntypes] = (struct BinTypeEntry *)malloc(sizeof(struct BinTypeEntry));
     bin_types[bin_ntypes]->nparams = nparams;
     bin_types[bin_ntypes]->has_result = has_result;
+    bin_types[bin_ntypes]->result_is_float = rif;
+    for (j = 0; j < nparams && j < 16; j++) {
+        bin_types[bin_ntypes]->param_is_float[j] = pif[j];
+    }
     bin_ntypes++;
     return bin_ntypes - 1;
+}
+
+int bin_find_or_add_type(int nparams, int has_result) {
+    int zeros[16];
+    int j;
+    for (j = 0; j < 16; j++) zeros[j] = 0;
+    return bin_find_or_add_type_f(nparams, zeros, has_result, 0);
 }
 
 /* --- Binary function index table --- */
@@ -5466,6 +5487,23 @@ int bin_add_func(char *name, int nparams, int has_result) {
         exit(1);
     }
     ti = bin_find_or_add_type(nparams, has_result);
+    bin_funcs[bin_nfuncs] = (struct BinFuncEntry *)malloc(sizeof(struct BinFuncEntry));
+    bin_funcs[bin_nfuncs]->name = name;
+    bin_funcs[bin_nfuncs]->idx = bin_nfuncs;
+    bin_funcs[bin_nfuncs]->nparams = nparams;
+    bin_funcs[bin_nfuncs]->has_result = has_result;
+    bin_funcs[bin_nfuncs]->type_idx = ti;
+    bin_nfuncs++;
+    return bin_nfuncs - 1;
+}
+
+int bin_add_func_f(char *name, int nparams, int *pif, int has_result, int rif) {
+    int ti;
+    if (bin_nfuncs >= MAX_BIN_FUNCS) {
+        printf("too many binary functions\n");
+        exit(1);
+    }
+    ti = bin_find_or_add_type_f(nparams, pif, has_result, rif);
     bin_funcs[bin_nfuncs] = (struct BinFuncEntry *)malloc(sizeof(struct BinFuncEntry));
     bin_funcs[bin_nfuncs]->name = name;
     bin_funcs[bin_nfuncs]->idx = bin_nfuncs;
@@ -5504,6 +5542,76 @@ int *bin_brk_at;
 int *bin_cont_at;
 int *bin_loop_at;
 
+int bin_last_float; /* 0=i32, 2=f64 - set by gen_expr_bin */
+
+int find_funcsig(char *name) {
+    int i;
+    for (i = 0; i < nfunc_sigs; i++) {
+        if (strcmp(func_sigs[i]->name, name) == 0) return i;
+    }
+    return -1;
+}
+
+/* --- IEEE 754 float helpers --- */
+
+double parse_float_text(char *s) {
+    double result;
+    double frac_mult;
+    int sign;
+    int exp_val;
+    int exp_sign;
+    int i;
+    result = 0.0;
+    sign = 1;
+    exp_val = 0;
+    exp_sign = 1;
+    i = 0;
+    if (s[i] == '-') { sign = -1; i = i + 1; }
+    else if (s[i] == '+') { i = i + 1; }
+    while (s[i] >= '0' && s[i] <= '9') {
+        result = result * 10.0 + (double)(s[i] - '0');
+        i = i + 1;
+    }
+    if (s[i] == '.') {
+        i = i + 1;
+        frac_mult = 0.1;
+        while (s[i] >= '0' && s[i] <= '9') {
+            result = result + (double)(s[i] - '0') * frac_mult;
+            frac_mult = frac_mult * 0.1;
+            i = i + 1;
+        }
+    }
+    if (s[i] == 'e' || s[i] == 'E') {
+        i = i + 1;
+        if (s[i] == '-') { exp_sign = -1; i = i + 1; }
+        else if (s[i] == '+') { i = i + 1; }
+        while (s[i] >= '0' && s[i] <= '9') {
+            exp_val = exp_val * 10 + (s[i] - '0');
+            i = i + 1;
+        }
+    }
+    if (exp_sign > 0) {
+        while (exp_val > 0) { result = result * 10.0; exp_val = exp_val - 1; }
+    } else {
+        while (exp_val > 0) { result = result * 0.1; exp_val = exp_val - 1; }
+    }
+    if (sign < 0) { result = result * -1.0; }
+    return result;
+}
+
+void emit_f64_const_bin(struct ByteVec *o, char *s) {
+    double *p;
+    char *b;
+    int i;
+    p = (double *)malloc(8);
+    *p = parse_float_text(s);
+    b = (char *)p;
+    bv_push(o, 0x44);
+    for (i = 0; i < 8; i++) {
+        bv_push(o, b[i] & 255);
+    }
+}
+
 /* --- Binary expression codegen --- */
 
 void gen_expr_bin(struct ByteVec *o, struct Node *n) {
@@ -5523,13 +5631,21 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
     switch (n->kind) {
     case ND_INT_LIT:
         bv_push(o, 0x41); bv_i32(o, n->ival);
+        bin_last_float = 0;
         break;
     case ND_FLOAT_LIT:
-        error(n->nline, n->ncol, "float literals not supported in binary mode");
+        emit_f64_const_bin(o, n->sval);
+        bin_last_float = 2;
         break;
     case ND_CAST:
-        /* in binary mode, just generate the subexpression (no type tracking) */
         gen_expr_bin(o, n->c0);
+        if (n->ival >= 1 && !bin_last_float) {
+            bv_push(o, 0xB7); /* f64.convert_i32_s */
+            bin_last_float = 2;
+        } else if (n->ival == 0 && bin_last_float) {
+            bv_push(o, 0xAA); /* i32.trunc_f64_s */
+            bin_last_float = 0;
+        }
         break;
     case ND_IDENT:
         if (find_global(n->sval) >= 0) {
@@ -5537,14 +5653,27 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         } else {
             bv_push(o, 0x20); bv_u32(o, find_local(n->sval));
         }
+        bin_last_float = var_is_float(n->sval);
         break;
     case ND_ASSIGN:
         tgt = n->c0;
         if (tgt->kind == ND_IDENT) {
+            int tgt_float;
+            int ftmp_li;
+            int atmp_li;
             name = tgt->sval;
             is_global = (find_global(name) >= 0);
+            tgt_float = var_is_float(name);
             if (n->ival == TOK_EQ) {
                 gen_expr_bin(o, n->c1);
+                /* convert if needed */
+                if (tgt_float && !bin_last_float) {
+                    bv_push(o, 0xB7); /* f64.convert_i32_s */
+                    bin_last_float = 2;
+                } else if (!tgt_float && bin_last_float) {
+                    bv_push(o, 0xAA); /* i32.trunc_f64_s */
+                    bin_last_float = 0;
+                }
             } else if (n->ival == TOK_PLUS_EQ) {
                 if (is_global) {
                     bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
@@ -5552,7 +5681,8 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                     bv_push(o, 0x20); bv_u32(o, find_local(name));
                 }
                 gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6A);
+                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* f64.convert_i32_s */
+                if (tgt_float) { bv_push(o, 0xA0); } else { bv_push(o, 0x6A); }
             } else if (n->ival == TOK_MINUS_EQ) {
                 if (is_global) {
                     bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
@@ -5560,7 +5690,8 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                     bv_push(o, 0x20); bv_u32(o, find_local(name));
                 }
                 gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6B);
+                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* f64.convert_i32_s */
+                if (tgt_float) { bv_push(o, 0xA1); } else { bv_push(o, 0x6B); }
             } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                        n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                        n->ival == TOK_RSHIFT_EQ) {
@@ -5577,14 +5708,28 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                 else { bv_push(o, 0x75); }
             }
             if (is_global) {
-                li = find_local("__atmp");
-                bv_push(o, 0x21); bv_u32(o, li);
-                bv_push(o, 0x20); bv_u32(o, li);
-                bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
-                bv_push(o, 0x20); bv_u32(o, li);
+                if (tgt_float) {
+                    ftmp_li = find_local("__ftmp");
+                    bv_push(o, 0x21); bv_u32(o, ftmp_li);
+                    bv_push(o, 0x20); bv_u32(o, ftmp_li);
+                    bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
+                    bv_push(o, 0x20); bv_u32(o, ftmp_li);
+                } else {
+                    atmp_li = find_local("__atmp");
+                    bv_push(o, 0x21); bv_u32(o, atmp_li);
+                    bv_push(o, 0x20); bv_u32(o, atmp_li);
+                    bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
+                    bv_push(o, 0x20); bv_u32(o, atmp_li);
+                }
             } else {
-                bv_push(o, 0x22); bv_u32(o, find_local(name));
+                if (tgt_float) {
+                    bv_push(o, 0x21); bv_u32(o, find_local(name)); /* local.set */
+                    bv_push(o, 0x20); bv_u32(o, find_local(name)); /* local.get */
+                } else {
+                    bv_push(o, 0x22); bv_u32(o, find_local(name)); /* local.tee */
+                }
             }
+            bin_last_float = tgt_float;
         } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
             esz = expr_elem_size(tgt->c0);
             if (n->ival == TOK_EQ) {
@@ -5718,9 +5863,18 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         break;
     case ND_UNARY:
         if (n->ival == TOK_MINUS) {
-            bv_push(o, 0x41); bv_i32(o, 0);
+            int atmp_neg;
             gen_expr_bin(o, n->c0);
-            bv_push(o, 0x6B);
+            if (bin_last_float) {
+                bv_push(o, 0x9A); /* f64.neg */
+            } else {
+                atmp_neg = find_local("__atmp");
+                bv_push(o, 0x21); bv_u32(o, atmp_neg); /* local.set __atmp */
+                bv_push(o, 0x41); bv_i32(o, 0);        /* i32.const 0 */
+                bv_push(o, 0x20); bv_u32(o, atmp_neg); /* local.get __atmp */
+                bv_push(o, 0x6B);                      /* i32.sub */
+                bin_last_float = 0;
+            }
         } else if (n->ival == TOK_BANG) {
             gen_expr_bin(o, n->c0);
             bv_push(o, 0x45);
@@ -5738,29 +5892,60 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             error(n->nline, n->ncol, "cannot take address of this expression");
         }
         break;
-    case ND_BINARY:
+    case ND_BINARY: {
+        int left_float;
+        int right_float;
+        int ftmp_bin;
         gen_expr_bin(o, n->c0);
+        left_float = bin_last_float;
         gen_expr_bin(o, n->c1);
-        if (n->ival == TOK_PLUS) { bv_push(o, 0x6A); }
-        else if (n->ival == TOK_MINUS) { bv_push(o, 0x6B); }
-        else if (n->ival == TOK_STAR) { bv_push(o, 0x6C); }
-        else if (n->ival == TOK_SLASH) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x6E); } else { bv_push(o, 0x6D); } }
-        else if (n->ival == TOK_PERCENT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x70); } else { bv_push(o, 0x6F); } }
-        else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x46); }
-        else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x47); }
-        else if (n->ival == TOK_LT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x49); } else { bv_push(o, 0x48); } }
-        else if (n->ival == TOK_GT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4B); } else { bv_push(o, 0x4A); } }
-        else if (n->ival == TOK_LT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4D); } else { bv_push(o, 0x4C); } }
-        else if (n->ival == TOK_GT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4F); } else { bv_push(o, 0x4E); } }
-        else if (n->ival == TOK_AMP_AMP) { bv_push(o, 0x71); }
-        else if (n->ival == TOK_PIPE_PIPE) { bv_push(o, 0x72); }
-        else if (n->ival == TOK_AMP) { bv_push(o, 0x71); }
-        else if (n->ival == TOK_PIPE) { bv_push(o, 0x72); }
-        else if (n->ival == TOK_LSHIFT) { bv_push(o, 0x74); }
-        else if (n->ival == TOK_RSHIFT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x76); } else { bv_push(o, 0x75); } }
-        else if (n->ival == TOK_CARET) { bv_push(o, 0x73); }
-        else { error(n->nline, n->ncol, "unsupported binary operator"); }
+        right_float = bin_last_float;
+        if (left_float || right_float) {
+            if (left_float && !right_float) {
+                /* stack: [f64, i32] - convert right(i32) to f64 */
+                bv_push(o, 0xB7); /* f64.convert_i32_s */
+            } else if (!left_float && right_float) {
+                /* stack: [i32, f64] - save right, convert left, restore right */
+                ftmp_bin = find_local("__ftmp");
+                bv_push(o, 0x21); bv_u32(o, ftmp_bin); /* local.set __ftmp = right */
+                bv_push(o, 0xB7); /* f64.convert_i32_s converts left */
+                bv_push(o, 0x20); bv_u32(o, ftmp_bin); /* local.get __ftmp */
+            }
+            if (n->ival == TOK_PLUS) { bv_push(o, 0xA0); bin_last_float = 2; }
+            else if (n->ival == TOK_MINUS) { bv_push(o, 0xA1); bin_last_float = 2; }
+            else if (n->ival == TOK_STAR) { bv_push(o, 0xA2); bin_last_float = 2; }
+            else if (n->ival == TOK_SLASH) { bv_push(o, 0xA3); bin_last_float = 2; }
+            else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x61); bin_last_float = 0; }
+            else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x62); bin_last_float = 0; }
+            else if (n->ival == TOK_LT) { bv_push(o, 0x63); bin_last_float = 0; }
+            else if (n->ival == TOK_GT) { bv_push(o, 0x64); bin_last_float = 0; }
+            else if (n->ival == TOK_LT_EQ) { bv_push(o, 0x65); bin_last_float = 0; }
+            else if (n->ival == TOK_GT_EQ) { bv_push(o, 0x66); bin_last_float = 0; }
+            else { error(n->nline, n->ncol, "unsupported float binary op"); }
+        } else {
+            if (n->ival == TOK_PLUS) { bv_push(o, 0x6A); }
+            else if (n->ival == TOK_MINUS) { bv_push(o, 0x6B); }
+            else if (n->ival == TOK_STAR) { bv_push(o, 0x6C); }
+            else if (n->ival == TOK_SLASH) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x6E); } else { bv_push(o, 0x6D); } }
+            else if (n->ival == TOK_PERCENT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x70); } else { bv_push(o, 0x6F); } }
+            else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x46); }
+            else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x47); }
+            else if (n->ival == TOK_LT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x49); } else { bv_push(o, 0x48); } }
+            else if (n->ival == TOK_GT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4B); } else { bv_push(o, 0x4A); } }
+            else if (n->ival == TOK_LT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4D); } else { bv_push(o, 0x4C); } }
+            else if (n->ival == TOK_GT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4F); } else { bv_push(o, 0x4E); } }
+            else if (n->ival == TOK_AMP_AMP) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_PIPE_PIPE) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_PIPE) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_LSHIFT) { bv_push(o, 0x74); }
+            else if (n->ival == TOK_RSHIFT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x76); } else { bv_push(o, 0x75); } }
+            else if (n->ival == TOK_CARET) { bv_push(o, 0x73); }
+            else { error(n->nline, n->ncol, "unsupported binary operator"); }
+            bin_last_float = 0;
+        }
         break;
+    }
     case ND_CALL:
         if (strcmp(n->sval, "printf") == 0) {
             if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
@@ -5794,6 +5979,14 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                         gen_expr_bin(o, n->list[ai]);
                         ai++;
                         bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_hex"));
+                    } else if (fmt[fi] == 'f') {
+                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
+                        gen_expr_bin(o, n->list[ai]);
+                        ai++;
+                        if (!bin_last_float) {
+                            bv_push(o, 0xB7); /* f64.convert_i32_s */
+                        }
+                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_float"));
                     } else if (fmt[fi] == '%') {
                         bv_push(o, 0x41); bv_i32(o, 37);
                         bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
@@ -5960,11 +6153,15 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             bv_push(o, 0x10); bv_u32(o, bin_find_func(n->sval));
             if (func_is_void(n->sval)) {
                 bv_push(o, 0x41); bv_i32(o, 0);
+                bin_last_float = 0;
+            } else {
+                bin_last_float = func_ret_is_float(n->sval);
             }
         }
         break;
     case ND_STR_LIT:
         bv_push(o, 0x41); bv_i32(o, str_table[n->ival]->offset);
+        bin_last_float = 0;
         break;
     case ND_MEMBER:
         off = resolve_field_offset(n->sval);
@@ -5972,6 +6169,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         gen_expr_bin(o, n->c0);
         if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
         bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+        bin_last_float = 0;
         break;
     case ND_SIZEOF: {
         struct StructDef *sd;
@@ -5999,6 +6197,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             sz = 4;
         }
         bv_push(o, 0x41); bv_i32(o, sz);
+        bin_last_float = 0;
         break;
     }
     case ND_SUBSCRIPT:
@@ -6010,6 +6209,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
         else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
         else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        bin_last_float = 0;
         break;
     case ND_POST_INC:
     case ND_POST_DEC: {
@@ -6101,6 +6301,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         } else {
             error(n->nline, n->ncol, "unsupported post-inc/dec target");
         }
+        bin_last_float = 0;
         break;
     }
     case ND_TERNARY:
@@ -6110,6 +6311,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         bv_push(o, 0x05);
         gen_expr_bin(o, n->c2);
         bv_push(o, 0x0B); bin_lbl_sp--;
+        bin_last_float = 0;
         break;
     default:
         error(n->nline, n->ncol, "unsupported expression in codegen");
@@ -6396,14 +6598,21 @@ void gen_func_bin(struct ByteVec *cs, struct Node *n) {
     collect_locals(n->c0);
     add_local("__atmp", 4, 0, 0);
     add_local("__stmp", 4, 0, 0);
+    add_local("__ftmp", 4, 0, 2); /* f64 local for float stack manipulation */
 
     fb = bv_new(4096);
 
     nextra = nlocals - nparam_locals;
     if (nextra > 0) {
-        bv_u32(fb, 1);
         bv_u32(fb, nextra);
-        bv_push(fb, 0x7F);
+        for (i = nparam_locals; i < nlocals; i++) {
+            bv_u32(fb, 1);
+            if (local_vars[i]->lv_is_float) {
+                bv_push(fb, 0x7C); /* f64 */
+            } else {
+                bv_push(fb, 0x7F); /* i32 */
+            }
+        }
     } else {
         bv_u32(fb, 0);
     }
@@ -8054,6 +8263,101 @@ void emit_helper_strtol(struct ByteVec *o) {
     bv_push(o, 0x0B);
 }
 
+void emit_helper_print_float(struct ByteVec *o) {
+    int j;
+    /* (param $v f64) -> void
+       extra locals: 3 i32 (int_part=1, frac_part=2, i=3), 1 f64 (frac=4) */
+    bv_u32(o, 2); /* 2 local groups */
+    bv_u32(o, 3); bv_push(o, 0x7F); /* 3 i32 */
+    bv_u32(o, 1); bv_push(o, 0x7C); /* 1 f64 */
+
+    /* if (v < 0.0) { putchar('-'); v = -v; } */
+    bv_push(o, 0x20); bv_u32(o, 0); /* local.get $v */
+    bv_push(o, 0x44); /* f64.const 0.0 */
+    for (j = 0; j < 8; j++) bv_push(o, 0x00);
+    bv_push(o, 0x63); /* f64.lt */
+    bv_push(o, 0x04); bv_push(o, 0x40); /* if void */
+      bv_push(o, 0x41); bv_i32(o, 45); /* i32.const '-' */
+      bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+      bv_push(o, 0x1A); /* drop */
+      bv_push(o, 0x20); bv_u32(o, 0); /* local.get $v */
+      bv_push(o, 0x9A); /* f64.neg */
+      bv_push(o, 0x21); bv_u32(o, 0); /* local.set $v */
+    bv_push(o, 0x0B); /* end if */
+
+    /* int_part = i32.trunc_f64_s(v) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0xAA); /* i32.trunc_f64_s */
+    bv_push(o, 0x21); bv_u32(o, 1); /* local.set $int_part */
+
+    /* __print_int(int_part) */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_int"));
+
+    /* putchar('.') */
+    bv_push(o, 0x41); bv_i32(o, 46);
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+    bv_push(o, 0x1A);
+
+    /* frac = v - f64.convert_i32_s(int_part) */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0xB7); /* f64.convert_i32_s */
+    bv_push(o, 0xA1); /* f64.sub */
+    /* frac *= 1000000.0 - bytes: 00 00 00 00 80 84 2E 41 */
+    bv_push(o, 0x44);
+    bv_push(o, 0x00); bv_push(o, 0x00); bv_push(o, 0x00); bv_push(o, 0x00);
+    bv_push(o, 0x80); bv_push(o, 0x84); bv_push(o, 0x2E); bv_push(o, 0x41);
+    bv_push(o, 0xA2); /* f64.mul */
+    /* frac += 0.5 - bytes: 00 00 00 00 00 00 E0 3F */
+    bv_push(o, 0x44);
+    bv_push(o, 0x00); bv_push(o, 0x00); bv_push(o, 0x00); bv_push(o, 0x00);
+    bv_push(o, 0x00); bv_push(o, 0x00); bv_push(o, 0xE0); bv_push(o, 0x3F);
+    bv_push(o, 0xA0); /* f64.add */
+    bv_push(o, 0x21); bv_u32(o, 4); /* local.set $frac */
+
+    /* frac_part = i32.trunc_f64_s(frac) */
+    bv_push(o, 0x20); bv_u32(o, 4);
+    bv_push(o, 0xAA); /* i32.trunc_f64_s */
+    bv_push(o, 0x21); bv_u32(o, 2); /* local.set $frac_part */
+
+    /* i = 100000 */
+    bv_push(o, 0x41); bv_i32(o, 100000);
+    bv_push(o, 0x21); bv_u32(o, 3); /* local.set $i */
+
+    /* block $done { loop $lp { */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    bv_push(o, 0x03); bv_push(o, 0x40);
+    /* br_if $done if i == 0 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x45); /* i32.eqz */
+    bv_push(o, 0x0D); bv_u32(o, 1); /* br_if depth 1 = $done */
+    /* putchar('0' + frac_part / i) */
+    bv_push(o, 0x41); bv_i32(o, 48);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x6E); /* i32.div_u */
+    bv_push(o, 0x6A); /* i32.add */
+    bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+    bv_push(o, 0x1A); /* drop */
+    /* frac_part %= i */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x70); /* i32.rem_u */
+    bv_push(o, 0x21); bv_u32(o, 2);
+    /* i /= 10 */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x41); bv_i32(o, 10);
+    bv_push(o, 0x6E); /* i32.div_u */
+    bv_push(o, 0x21); bv_u32(o, 3);
+    /* br $lp */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+    bv_push(o, 0x0B); /* end loop */
+    bv_push(o, 0x0B); /* end block */
+
+    bv_push(o, 0x0B); /* end function */
+}
+
 /* --- Binary module codegen --- */
 
 void gen_module_bin(struct Node *prog) {
@@ -8122,10 +8426,29 @@ void gen_module_bin(struct Node *prog) {
     bin_add_func("memmove", 3, 1);
     bin_add_func("memchr", 3, 1);
     bin_add_func("strtol", 3, 1);
+    {
+        int pif1[16];
+        pif1[0] = 2; /* f64 param */
+        bin_add_func_f("__print_float", 1, pif1, 0, 0);
+    }
     for (i = 0; i < prog->ival2; i++) {
-        bin_add_func(prog->list[i]->sval,
-                     prog->list[i]->ival2,
-                     (prog->list[i]->ival != 1) ? 1 : 0);
+        int fi2;
+        int pif2[16];
+        int j2;
+        int ret_flt;
+        int nparams2;
+        fi2 = find_funcsig(prog->list[i]->sval);
+        nparams2 = prog->list[i]->ival2;
+        ret_flt = 0;
+        for (j2 = 0; j2 < 16; j2++) pif2[j2] = 0;
+        if (fi2 >= 0) {
+            ret_flt = func_sigs[fi2]->ret_is_float ? 1 : 0;
+            for (j2 = 0; j2 < nparams2 && j2 < 16; j2++) {
+                pif2[j2] = func_sigs[fi2]->param_is_float[j2] ? 1 : 0;
+            }
+        }
+        bin_add_func_f(prog->list[i]->sval, nparams2, pif2,
+                       (prog->list[i]->ival != 1) ? 1 : 0, ret_flt);
     }
     bin_add_func("_start", 0, 0);
 
@@ -8142,11 +8465,19 @@ void gen_module_bin(struct Node *prog) {
         bv_push(sec, 0x60);
         bv_u32(sec, bin_types[i]->nparams);
         for (j = 0; j < bin_types[i]->nparams; j++) {
-            bv_push(sec, 0x7F);
+            if (bin_types[i]->param_is_float[j]) {
+                bv_push(sec, 0x7C); /* f64 */
+            } else {
+                bv_push(sec, 0x7F); /* i32 */
+            }
         }
         if (bin_types[i]->has_result) {
             bv_u32(sec, 1);
-            bv_push(sec, 0x7F);
+            if (bin_types[i]->result_is_float) {
+                bv_push(sec, 0x7C); /* f64 */
+            } else {
+                bv_push(sec, 0x7F); /* i32 */
+            }
         } else {
             bv_u32(sec, 0);
         }
@@ -8198,8 +8529,16 @@ void gen_module_bin(struct Node *prog) {
     bv_push(sec, 0x7F); bv_push(sec, 0x01);
     bv_push(sec, 0x41); bv_i32(sec, 1); bv_push(sec, 0x0B);
     for (i = 0; i < nglobals; i++) {
-        bv_push(sec, 0x7F); bv_push(sec, 0x01);
-        bv_push(sec, 0x41); bv_i32(sec, globals_tbl[i]->init_val); bv_push(sec, 0x0B);
+        if (globals_tbl[i]->gv_is_float) {
+            int gk;
+            bv_push(sec, 0x7C); bv_push(sec, 0x01); /* f64, mutable */
+            bv_push(sec, 0x44); /* f64.const */
+            for (gk = 0; gk < 8; gk++) bv_push(sec, 0x00); /* 0.0 */
+            bv_push(sec, 0x0B);
+        } else {
+            bv_push(sec, 0x7F); bv_push(sec, 0x01);
+            bv_push(sec, 0x41); bv_i32(sec, globals_tbl[i]->init_val); bv_push(sec, 0x0B);
+        }
     }
     bv_section(out, 6, sec);
 
@@ -8257,6 +8596,7 @@ void gen_module_bin(struct Node *prog) {
     bv_reset(fb); emit_helper_memmove(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
     bv_reset(fb); emit_helper_memchr(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
     bv_reset(fb); emit_helper_strtol(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
+    bv_reset(fb); emit_helper_print_float(fb); bv_u32(sec, fb->len); bv_append(sec, fb);
     for (i = 0; i < prog->ival2; i++) {
         gen_func_bin(sec, prog->list[i]);
     }
