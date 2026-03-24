@@ -1,4 +1,7 @@
 c2wasm
+build/
 .tmp/
 *.wasm
 *.wat
+demo/compiler.js
+demo/compiler.wasm

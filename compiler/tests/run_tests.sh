@@ -6,7 +6,7 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-COMPILER="$SCRIPT_DIR/../c2wasm"
+COMPILER="$SCRIPT_DIR/../../build/c2wasm"
 PROG_DIR="$SCRIPT_DIR/programs"
 TMP_DIR="${TMPDIR:-/tmp}/c2wasm-tests"
 mkdir -p "$TMP_DIR"
