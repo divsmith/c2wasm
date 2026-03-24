@@ -33,6 +33,16 @@ for src in "$PROG_DIR"/*.c; do
     expected_exit=$(head -1 "$src" | grep -o 'EXPECT_EXIT: [0-9]*' | grep -o '[0-9]*')
     if [ -z "$expected_exit" ]; then expected_exit=0; fi
 
+    # Skip tests marked with SKIP_BINARY in binary mode
+    if [ "$BINARY_MODE" -eq 1 ]; then
+        skip_binary=$(head -5 "$src" | grep -c 'SKIP_BINARY')
+        if [ "$skip_binary" -gt 0 ]; then
+            echo "SKIP: $name (SKIP_BINARY)"
+            TOTAL=$((TOTAL - 1))
+            continue
+        fi
+    fi
+
     if [ "$BINARY_MODE" -eq 1 ]; then
         # Compile C → WASM binary directly
         "$COMPILER" < "$src" > "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.compile_err"

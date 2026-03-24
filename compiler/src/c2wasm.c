@@ -88,7 +88,10 @@ enum {
     TOK_UNSIGNED = 67,
     TOK_SIGNED = 68,
     TOK_SHORT = 69,
-    TOK_LONG = 70
+    TOK_LONG = 70,
+    TOK_FLOAT_LIT = 71,
+    TOK_FLOAT = 72,
+    TOK_DOUBLE = 73
 };
 
 /* Node kinds */
@@ -120,7 +123,9 @@ enum {
     ND_TERNARY = 24,
     ND_SWITCH = 25,
     ND_CASE = 26,
-    ND_DEFAULT = 27
+    ND_DEFAULT = 27,
+    ND_FLOAT_LIT = 28,
+    ND_CAST = 29
 };
 
 /* Limits */
@@ -304,6 +309,8 @@ int kw_lookup(char *s) {
     if (strcmp(s, "signed") == 0) return TOK_SIGNED;
     if (strcmp(s, "short") == 0) return TOK_SHORT;
     if (strcmp(s, "long") == 0) return TOK_LONG;
+    if (strcmp(s, "float") == 0) return TOK_FLOAT;
+    if (strcmp(s, "double") == 0) return TOK_DOUBLE;
     return 0;
 }
 
@@ -489,9 +496,14 @@ struct Token *next_token(void) {
         return t;
     }
 
-    /* integer literals */
+    /* integer and float literals */
     if (is_digit(c)) {
+        char fbuf[128];
+        int flen;
+        int is_flt;
         val = 0;
+        flen = 0;
+        is_flt = 0;
         if (c == '0' && (lp2() == 'x' || lp2() == 'X')) {
             la();
             la();
@@ -503,11 +515,44 @@ struct Token *next_token(void) {
                     val = val * 16 + ((d | 32) - 'a' + 10);
                 }
             }
-        } else {
-            while (is_digit(lp())) {
-                val = val * 10 + (la() - '0');
-            }
+            t->kind = TOK_INT_LIT;
+            t->int_val = val;
+            return t;
         }
+        /* decimal: accumulate digits into fbuf and val */
+        while (is_digit(lp())) {
+            fbuf[flen++] = lp();
+            val = val * 10 + (la() - '0');
+        }
+        /* check for float: dot or exponent */
+        if (lp() == '.' || lp() == 'e' || lp() == 'E') {
+            is_flt = 1;
+            if (lp() == '.') {
+                fbuf[flen++] = la();
+                while (is_digit(lp())) {
+                    fbuf[flen++] = la();
+                }
+            }
+            if (lp() == 'e' || lp() == 'E') {
+                fbuf[flen++] = la();
+                if (lp() == '+' || lp() == '-') {
+                    fbuf[flen++] = la();
+                }
+                while (is_digit(lp())) {
+                    fbuf[flen++] = la();
+                }
+            }
+            /* consume optional f/F suffix */
+            if (lp() == 'f' || lp() == 'F') la();
+        }
+        if (is_flt) {
+            fbuf[flen] = '\0';
+            t->text = strdupn(fbuf, flen);
+            t->kind = TOK_FLOAT_LIT;
+            return t;
+        }
+        /* consume optional L/l suffix for long */
+        if (lp() == 'l' || lp() == 'L') la();
         t->kind = TOK_INT_LIT;
         t->int_val = val;
         return t;
@@ -778,6 +823,8 @@ struct GlobalVar {
     int init_val;
     int gv_elem_size;     /* 1=char, 2=short, 4=int */
     int gv_is_unsigned;
+    int gv_is_float;      /* 0=int, 1=float(f32), 2=double(f64) */
+    char *gv_float_init;  /* float literal text for init, or NULL */
 };
 
 struct GlobalVar **globals_tbl;
@@ -803,6 +850,9 @@ int find_global(char *name) {
 struct FuncSig {
     char *name;
     int is_void;
+    int ret_is_float;     /* 0=i32, 1=float(f32), 2=double(f64) */
+    int nparam;
+    int *param_is_float;  /* array: 0=i32, 1=float, 2=double per param */
 };
 
 struct FuncSig **func_sigs;
@@ -817,6 +867,25 @@ int func_is_void(char *name) {
     int i;
     for (i = 0; i < nfunc_sigs; i++) {
         if (strcmp(func_sigs[i]->name, name) == 0) return func_sigs[i]->is_void;
+    }
+    return 0;
+}
+
+int func_ret_is_float(char *name) {
+    int i;
+    for (i = 0; i < nfunc_sigs; i++) {
+        if (strcmp(func_sigs[i]->name, name) == 0) return func_sigs[i]->ret_is_float;
+    }
+    return 0;
+}
+
+int func_param_is_float(char *name, int idx) {
+    int i;
+    for (i = 0; i < nfunc_sigs; i++) {
+        if (strcmp(func_sigs[i]->name, name) == 0) {
+            if (idx < func_sigs[i]->nparam) return func_sigs[i]->param_is_float[idx];
+            return 0;
+        }
     }
     return 0;
 }
@@ -857,11 +926,13 @@ int ntype_aliases;
 int last_type_is_ptr;
 int last_type_is_unsigned;
 int last_type_elem_size;  /* 1=char, 2=short, 4=int/long */
+int last_type_is_float;   /* 0=not float, 1=float(f32), 2=double(f64) */
 
 void init_type_aliases(void) {
     type_aliases = (struct TypeAlias **)malloc(MAX_TYPE_ALIASES * sizeof(void *));
     ntype_aliases = 0;
     last_type_is_ptr = 0;
+    last_type_is_float = 0;
 }
 
 int find_type_alias(char *name) {
@@ -962,6 +1033,8 @@ int is_type_token(void) {
     if (at(TOK_SIGNED)) return 1;
     if (at(TOK_SHORT)) return 1;
     if (at(TOK_LONG)) return 1;
+    if (at(TOK_FLOAT)) return 1;
+    if (at(TOK_DOUBLE)) return 1;
     if (at(TOK_IDENT) && find_type_alias(cur->text) >= 0) return 1;
     return 0;
 }
@@ -1069,6 +1142,12 @@ struct Node *parse_atom(void) {
         advance_tok();
         return n;
     }
+    if (at(TOK_FLOAT_LIT)) {
+        n = node_new(ND_FLOAT_LIT, cur->line, cur->col);
+        n->sval = strdupn(cur->text, 127);
+        advance_tok();
+        return n;
+    }
     if (at(TOK_SIZEOF)) {
         line = cur->line;
         col = cur->col;
@@ -1086,7 +1165,8 @@ struct Node *parse_atom(void) {
                 }
                 while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
             } else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG) ||
-                       at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID)) {
+                       at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID) ||
+                       at(TOK_FLOAT) || at(TOK_DOUBLE)) {
                 {
                     int sz_esz;
                     sz_esz = 4;
@@ -1114,6 +1194,14 @@ struct Node *parse_atom(void) {
                         advance_tok();
                     } else if (at(TOK_VOID)) {
                         n->sval = strdupn("void", 127);
+                        advance_tok();
+                    } else if (at(TOK_FLOAT)) {
+                        sz_esz = 4;
+                        n->sval = (char *)0;
+                        advance_tok();
+                    } else if (at(TOK_DOUBLE)) {
+                        sz_esz = 8;
+                        n->sval = (char *)0;
                         advance_tok();
                     } else {
                         /* bare modifiers: unsigned, short, long */
@@ -1181,15 +1269,45 @@ struct Node *parse_atom(void) {
         advance_tok();
         /* type cast */
         if (is_type_token()) {
+            int cast_to_float;
+            int cast_to_int;
+            cast_to_float = 0;
+            cast_to_int = 0;
             while (at(TOK_CONST)) advance_tok();
-            if (at(TOK_STRUCT)) {
+            if (at(TOK_FLOAT)) {
+                cast_to_float = 1;
+                advance_tok();
+            } else if (at(TOK_DOUBLE)) {
+                cast_to_float = 2;
+                advance_tok();
+            } else if (at(TOK_STRUCT)) {
                 advance_tok();
                 if (at(TOK_IDENT)) advance_tok();
             } else {
+                /* int, char, void, unsigned, etc — cast to int */
+                if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_VOID) ||
+                    at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {
+                    cast_to_int = 1;
+                }
                 advance_tok();
+                /* consume trailing int after short/long/unsigned/signed */
+                if (at(TOK_INT)) advance_tok();
             }
-            while (at(TOK_STAR)) advance_tok();
+            while (at(TOK_STAR)) { cast_to_float = 0; cast_to_int = 0; advance_tok(); }
             expect(TOK_RPAREN, "expected ')' after cast type");
+            if (cast_to_float) {
+                n = node_new(ND_CAST, cur->line, cur->col);
+                n->ival = cast_to_float; /* 1=float, 2=double */
+                n->c0 = parse_expr_bp(25);
+                return n;
+            }
+            if (cast_to_int) {
+                /* ND_CAST to int — only matters when expr is float */
+                n = node_new(ND_CAST, cur->line, cur->col);
+                n->ival = 0; /* 0=int */
+                n->c0 = parse_expr_bp(25);
+                return n;
+            }
             return parse_expr_bp(25);
         }
         n = parse_expr();
@@ -1376,6 +1494,7 @@ struct Node *parse_var_decl(void) {
     int col;
     int vd_elem_size;
     int vd_is_unsigned;
+    int vd_is_float;
     int is_ptr;
     int arr_size;
     int ei;
@@ -1386,6 +1505,7 @@ struct Node *parse_var_decl(void) {
     col = cur->col;
     vd_elem_size = 4;
     vd_is_unsigned = 0;
+    vd_is_float = 0;
     is_ptr = 0;
     arr_size = 0;
     tai_vd = -1;
@@ -1407,6 +1527,14 @@ struct Node *parse_var_decl(void) {
     } else if (at(TOK_ENUM)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
+    } else if (at(TOK_FLOAT)) {
+        vd_is_float = 1;
+        vd_elem_size = 4;
+        advance_tok();
+    } else if (at(TOK_DOUBLE)) {
+        vd_is_float = 2;
+        vd_elem_size = 8;
+        advance_tok();
     } else {
         /* consume sign/size modifiers */
         for (;;) {
@@ -1456,7 +1584,7 @@ struct Node *parse_var_decl(void) {
     n = node_new(ND_VAR_DECL, line, col);
     n->sval = strdupn(cur->text, 127);
     n->ival2 = vd_elem_size;
-    n->ival3 = vd_is_unsigned;
+    n->ival3 = vd_is_unsigned | (vd_is_float << 4);
     advance_tok();
     /* check for array size: int name[N] */
     if (at(TOK_LBRACKET)) {
@@ -1765,6 +1893,7 @@ int parse_type(void) {
     last_type_is_ptr = 0;
     last_type_is_unsigned = 0;
     last_type_elem_size = 4;
+    last_type_is_float = 0;
     while (at(TOK_CONST)) advance_tok();
     if (at(TOK_IDENT)) {
         taidx = find_type_alias(cur->text);
@@ -1774,6 +1903,18 @@ int parse_type(void) {
             advance_tok();
             return type_aliases[taidx]->resolved_kind;
         }
+    }
+    if (at(TOK_FLOAT)) {
+        last_type_is_float = 1;
+        last_type_elem_size = 4;
+        advance_tok();
+        return 0;
+    }
+    if (at(TOK_DOUBLE)) {
+        last_type_is_float = 2;
+        last_type_elem_size = 8;
+        advance_tok();
+        return 0;
     }
     /* consume sign/size modifiers */
     had_modifier = 0;
@@ -1838,18 +1979,25 @@ struct Node *parse_func(void) {
     int col;
     int ret;
     int pty;
+    int ret_float;
+    int sig_idx;
+    int pi;
 
     line = cur->line;
     col = cur->col;
     ret = parse_type();
-    while (at(TOK_STAR)) advance_tok();
+    ret_float = last_type_is_float;
+    while (at(TOK_STAR)) { ret_float = 0; advance_tok(); }
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected function name");
     n = node_new(ND_FUNC, line, col);
     n->sval = strdupn(cur->text, 127);
     n->ival = ret;
+    n->ival3 = ret_float; /* store return float type in ival3 */
 
     /* register in function signature table */
+    sig_idx = -1;
     if (nfunc_sigs < MAX_FUNC_SIGS) {
+        sig_idx = nfunc_sigs;
         func_sigs[nfunc_sigs] = (struct FuncSig *)malloc(sizeof(struct FuncSig));
         func_sigs[nfunc_sigs]->name = strdupn(cur->text, 127);
         if (ret == 1) {
@@ -1857,6 +2005,9 @@ struct Node *parse_func(void) {
         } else {
             func_sigs[nfunc_sigs]->is_void = 0;
         }
+        func_sigs[nfunc_sigs]->ret_is_float = ret_float;
+        func_sigs[nfunc_sigs]->nparam = 0;
+        func_sigs[nfunc_sigs]->param_is_float = (int *)malloc(MAX_LOCALS * sizeof(int));
         nfunc_sigs++;
     }
     advance_tok();
@@ -1872,24 +2023,32 @@ struct Node *parse_func(void) {
             advance_tok();
         } else {
             pty = parse_type();
-            while (at(TOK_STAR)) advance_tok();
+            while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
             if (at(TOK_IDENT)) {
                 pn = node_new(ND_IDENT, cur->line, cur->col);
                 pn->sval = strdupn(cur->text, 127);
                 pn->ival2 = last_type_elem_size;
-                pn->ival3 = last_type_is_unsigned;
+                pn->ival3 = last_type_is_unsigned | (last_type_is_float << 4);
+                if (sig_idx >= 0) {
+                    func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = last_type_is_float;
+                    func_sigs[sig_idx]->nparam++;
+                }
                 nlist_push(params, pn);
                 advance_tok();
             }
             while (at(TOK_COMMA)) {
                 advance_tok();
                 pty = parse_type();
-                while (at(TOK_STAR)) advance_tok();
+                while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
                 if (at(TOK_IDENT)) {
                     pn = node_new(ND_IDENT, cur->line, cur->col);
                     pn->sval = strdupn(cur->text, 127);
                     pn->ival2 = last_type_elem_size;
-                    pn->ival3 = last_type_is_unsigned;
+                    pn->ival3 = last_type_is_unsigned | (last_type_is_float << 4);
+                    if (sig_idx >= 0) {
+                        func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = last_type_is_float;
+                        func_sigs[sig_idx]->nparam++;
+                    }
                     nlist_push(params, pn);
                     advance_tok();
                 }
@@ -1950,6 +2109,7 @@ void parse_struct_def(void) {
 void parse_global_var(void) {
     int gv_es;
     int gv_uns;
+    int gv_flt;
     int is_ptr;
     int neg;
     int tai_gv;
@@ -1957,6 +2117,7 @@ void parse_global_var(void) {
 
     gv_es = 4;
     gv_uns = 0;
+    gv_flt = 0;
     is_ptr = 0;
     tai_gv = -1;
     had_mod_gv = 0;
@@ -1964,6 +2125,14 @@ void parse_global_var(void) {
     if (at(TOK_STRUCT) || at(TOK_ENUM)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
+    } else if (at(TOK_FLOAT)) {
+        gv_flt = 1;
+        gv_es = 4;
+        advance_tok();
+    } else if (at(TOK_DOUBLE)) {
+        gv_flt = 2;
+        gv_es = 8;
+        advance_tok();
     } else {
         for (;;) {
             if (at(TOK_UNSIGNED)) {
@@ -2006,7 +2175,7 @@ void parse_global_var(void) {
             }
         }
     }
-    while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+    while (at(TOK_STAR)) { is_ptr = 1; gv_flt = 0; advance_tok(); }
     if (last_type_is_ptr) is_ptr = 1;
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     if (nglobals >= MAX_GLOBALS) error(cur->line, cur->col, "too many globals");
@@ -2015,10 +2184,15 @@ void parse_global_var(void) {
     globals_tbl[nglobals]->init_val = 0;
     globals_tbl[nglobals]->gv_elem_size = gv_es;
     globals_tbl[nglobals]->gv_is_unsigned = gv_uns;
+    globals_tbl[nglobals]->gv_is_float = gv_flt;
+    globals_tbl[nglobals]->gv_float_init = (char *)0;
     advance_tok();
     if (at(TOK_EQ)) {
         advance_tok();
-        if (at(TOK_INT_LIT)) {
+        if (at(TOK_FLOAT_LIT)) {
+            globals_tbl[nglobals]->gv_float_init = strdupn(cur->text, 127);
+            advance_tok();
+        } else if (at(TOK_INT_LIT)) {
             globals_tbl[nglobals]->init_val = cur->int_val;
             advance_tok();
         } else if (at(TOK_MINUS) || at(TOK_CHAR_LIT)) {
@@ -2258,6 +2432,7 @@ struct LocalVar {
     char *name;
     int lv_elem_size;     /* 1=char, 2=short, 4=int */
     int lv_is_unsigned;
+    int lv_is_float;      /* 0=int, 1=float(f32), 2=double(f64) */
 };
 
 struct LocalVar **local_vars;
@@ -2276,7 +2451,7 @@ int find_local(char *name) {
     return -1;
 }
 
-void add_local(char *name, int elem_size, int is_unsigned) {
+void add_local(char *name, int elem_size, int is_unsigned, int is_float) {
     if (find_local(name) >= 0) return;
     if (nlocals >= MAX_LOCALS) {
         printf("too many locals\n");
@@ -2286,6 +2461,7 @@ void add_local(char *name, int elem_size, int is_unsigned) {
     local_vars[nlocals]->name = strdupn(name, 127);
     local_vars[nlocals]->lv_elem_size = elem_size;
     local_vars[nlocals]->lv_is_unsigned = is_unsigned;
+    local_vars[nlocals]->lv_is_float = is_float;
     nlocals++;
 }
 
@@ -2294,7 +2470,7 @@ void collect_locals(struct Node *n) {
     if (n == (struct Node *)0) return;
     switch (n->kind) {
     case ND_VAR_DECL:
-        add_local(n->sval, n->ival2, n->ival3);
+        add_local(n->sval, n->ival2, n->ival3 & 0xF, n->ival3 >> 4);
         break;
     case ND_BLOCK:
         for (i = 0; i < n->ival2; i++) {
@@ -2383,6 +2559,22 @@ int expr_is_unsigned(struct Node *n) {
     return 0;
 }
 
+int var_is_float(char *name) {
+    int li;
+    int gi;
+    li = find_local(name);
+    if (li >= 0) {
+        return local_vars[li]->lv_is_float;
+    }
+    gi = find_global(name);
+    if (gi >= 0) {
+        return globals_tbl[gi]->gv_is_float;
+    }
+    return 0;
+}
+
+int last_expr_is_float; /* 0=i32, 1=f32, 2=f64 — set by gen_expr */
+
 /* --- Expression codegen --- */
 
 void gen_expr(struct Node *n) {
@@ -2402,8 +2594,34 @@ void gen_expr(struct Node *n) {
     case ND_INT_LIT:
         emit_indent();
         printf("i32.const %d\n", n->ival);
+        last_expr_is_float = 0;
         break;
-    case ND_IDENT:
+    case ND_FLOAT_LIT:
+        emit_indent();
+        printf("f64.const %s\n", n->sval);
+        last_expr_is_float = 2;
+        break;
+    case ND_CAST:
+        gen_expr(n->c0);
+        if (n->ival >= 1 && !last_expr_is_float) {
+            /* cast to float/double, expr is int */
+            emit_indent();
+            printf("f64.convert_i32_s\n");
+            last_expr_is_float = 2;
+        } else if (n->ival >= 1 && last_expr_is_float) {
+            /* cast to float/double, already float — no-op */
+            last_expr_is_float = 2;
+        } else if (n->ival == 0 && last_expr_is_float) {
+            /* cast to int, expr is float */
+            emit_indent();
+            printf("i32.trunc_f64_s\n");
+            last_expr_is_float = 0;
+        }
+        /* cast to int when already int — no-op */
+        break;
+    case ND_IDENT: {
+        int vf;
+        vf = var_is_float(n->sval);
         if (find_global(n->sval) >= 0) {
             emit_indent();
             printf("global.get $%s\n", n->sval);
@@ -2411,14 +2629,28 @@ void gen_expr(struct Node *n) {
             emit_indent();
             printf("local.get $%s\n", n->sval);
         }
+        last_expr_is_float = vf;
         break;
+    }
     case ND_ASSIGN:
         tgt = n->c0;
         if (tgt->kind == ND_IDENT) {
+            int tgt_float;
             name = tgt->sval;
             is_global = (find_global(name) >= 0);
+            tgt_float = var_is_float(name);
             if (n->ival == TOK_EQ) {
                 gen_expr(n->c1);
+                /* insert float/int conversion if needed */
+                if (tgt_float && !last_expr_is_float) {
+                    emit_indent();
+                    printf("f64.convert_i32_s\n");
+                    last_expr_is_float = 2;
+                } else if (!tgt_float && last_expr_is_float) {
+                    emit_indent();
+                    printf("i32.trunc_f64_s\n");
+                    last_expr_is_float = 0;
+                }
             } else if (n->ival == TOK_PLUS_EQ) {
                 emit_indent();
                 if (is_global) {
@@ -2427,8 +2659,19 @@ void gen_expr(struct Node *n) {
                     printf("local.get $%s\n", name);
                 }
                 gen_expr(n->c1);
-                emit_indent();
-                printf("i32.add\n");
+                if (tgt_float) {
+                    if (!last_expr_is_float) {
+                        emit_indent();
+                        printf("f64.convert_i32_s\n");
+                    }
+                    emit_indent();
+                    printf("f64.add\n");
+                    last_expr_is_float = 2;
+                } else {
+                    emit_indent();
+                    printf("i32.add\n");
+                    last_expr_is_float = 0;
+                }
             } else if (n->ival == TOK_MINUS_EQ) {
                 emit_indent();
                 if (is_global) {
@@ -2437,8 +2680,19 @@ void gen_expr(struct Node *n) {
                     printf("local.get $%s\n", name);
                 }
                 gen_expr(n->c1);
-                emit_indent();
-                printf("i32.sub\n");
+                if (tgt_float) {
+                    if (!last_expr_is_float) {
+                        emit_indent();
+                        printf("f64.convert_i32_s\n");
+                    }
+                    emit_indent();
+                    printf("f64.sub\n");
+                    last_expr_is_float = 2;
+                } else {
+                    emit_indent();
+                    printf("i32.sub\n");
+                    last_expr_is_float = 0;
+                }
             } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                        n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                        n->ival == TOK_RSHIFT_EQ) {
@@ -2455,20 +2709,33 @@ void gen_expr(struct Node *n) {
                 else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
                 else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
                 else { printf("i32.shr_s\n"); }
+                last_expr_is_float = 0;
             }
             if (is_global) {
-                emit_indent();
-                printf("local.set $__atmp\n");
-                emit_indent();
-                printf("local.get $__atmp\n");
-                emit_indent();
-                printf("global.set $%s\n", name);
-                emit_indent();
-                printf("local.get $__atmp\n");
+                if (tgt_float) {
+                    emit_indent();
+                    printf("local.set $__ftmp\n");
+                    emit_indent();
+                    printf("local.get $__ftmp\n");
+                    emit_indent();
+                    printf("global.set $%s\n", name);
+                    emit_indent();
+                    printf("local.get $__ftmp\n");
+                } else {
+                    emit_indent();
+                    printf("local.set $__atmp\n");
+                    emit_indent();
+                    printf("local.get $__atmp\n");
+                    emit_indent();
+                    printf("global.set $%s\n", name);
+                    emit_indent();
+                    printf("local.get $__atmp\n");
+                }
             } else {
                 emit_indent();
                 printf("local.tee $%s\n", name);
             }
+            last_expr_is_float = tgt_float;
         } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
             esz = expr_elem_size(tgt->c0);
             if (n->ival == TOK_EQ) {
@@ -2705,24 +2972,44 @@ void gen_expr(struct Node *n) {
         break;
     case ND_UNARY:
         if (n->ival == TOK_MINUS) {
-            emit_indent();
-            printf("i32.const 0\n");
             gen_expr(n->c0);
-            emit_indent();
-            printf("i32.sub\n");
+            if (last_expr_is_float) {
+                emit_indent();
+                printf("f64.neg\n");
+            } else {
+                /* save value, push 0, push value, sub */
+                emit_indent();
+                printf("local.set $__atmp\n");
+                emit_indent();
+                printf("i32.const 0\n");
+                emit_indent();
+                printf("local.get $__atmp\n");
+                emit_indent();
+                printf("i32.sub\n");
+            }
         } else if (n->ival == TOK_BANG) {
             gen_expr(n->c0);
-            emit_indent();
-            printf("i32.eqz\n");
+            if (last_expr_is_float) {
+                emit_indent();
+                printf("f64.const 0\n");
+                emit_indent();
+                printf("f64.eq\n");
+                last_expr_is_float = 0;
+            } else {
+                emit_indent();
+                printf("i32.eqz\n");
+            }
         } else if (n->ival == TOK_TILDE) {
             emit_indent();
             printf("i32.const -1\n");
             gen_expr(n->c0);
             emit_indent();
             printf("i32.xor\n");
+            last_expr_is_float = 0;
         } else if (n->ival == TOK_STAR) {
             esz = expr_elem_size(n->c0);
             gen_expr(n->c0);
+            last_expr_is_float = 0;
             emit_indent();
             if (esz == 1) {
                 printf("i32.load8_u\n");
@@ -2735,50 +3022,112 @@ void gen_expr(struct Node *n) {
             error(n->nline, n->ncol, "cannot take address of this expression");
         }
         break;
-    case ND_BINARY:
+    case ND_BINARY: {
+        int left_float;
+        int right_float;
+        int op_float;
         gen_expr(n->c0);
+        left_float = last_expr_is_float;
         gen_expr(n->c1);
-        emit_indent();
-        if (n->ival == TOK_PLUS) {
-            printf("i32.add\n");
-        } else if (n->ival == TOK_MINUS) {
-            printf("i32.sub\n");
-        } else if (n->ival == TOK_STAR) {
-            printf("i32.mul\n");
-        } else if (n->ival == TOK_SLASH) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.div_u\n"); } else { printf("i32.div_s\n"); }
-        } else if (n->ival == TOK_PERCENT) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.rem_u\n"); } else { printf("i32.rem_s\n"); }
-        } else if (n->ival == TOK_EQ_EQ) {
-            printf("i32.eq\n");
-        } else if (n->ival == TOK_BANG_EQ) {
-            printf("i32.ne\n");
-        } else if (n->ival == TOK_LT) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.lt_u\n"); } else { printf("i32.lt_s\n"); }
-        } else if (n->ival == TOK_GT) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.gt_u\n"); } else { printf("i32.gt_s\n"); }
-        } else if (n->ival == TOK_LT_EQ) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.le_u\n"); } else { printf("i32.le_s\n"); }
-        } else if (n->ival == TOK_GT_EQ) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.ge_u\n"); } else { printf("i32.ge_s\n"); }
-        } else if (n->ival == TOK_AMP_AMP) {
-            printf("i32.and\n");
-        } else if (n->ival == TOK_PIPE_PIPE) {
-            printf("i32.or\n");
-        } else if (n->ival == TOK_AMP) {
-            printf("i32.and\n");
-        } else if (n->ival == TOK_PIPE) {
-            printf("i32.or\n");
-        } else if (n->ival == TOK_LSHIFT) {
-            printf("i32.shl\n");
-        } else if (n->ival == TOK_RSHIFT) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.shr_u\n"); } else { printf("i32.shr_s\n"); }
-        } else if (n->ival == TOK_CARET) {
-            printf("i32.xor\n");
+        right_float = last_expr_is_float;
+        op_float = 0;
+        if (left_float || right_float) {
+            op_float = 2;
+            /* promote: if either is float, both should be f64 */
+            if (left_float && !right_float) {
+                /* stack: [f64, i32] — convert top (right) from i32 to f64 */
+                emit_indent();
+                printf("f64.convert_i32_s\n");
+            } else if (!left_float && right_float) {
+                /* stack: [i32, f64] — need to swap and convert left */
+                emit_indent();
+                printf("local.set $__ftmp\n");
+                emit_indent();
+                printf("f64.convert_i32_s\n");
+                emit_indent();
+                printf("local.get $__ftmp\n");
+            }
+        }
+        if (op_float) {
+            emit_indent();
+            if (n->ival == TOK_PLUS) {
+                printf("f64.add\n");
+                last_expr_is_float = 2;
+            } else if (n->ival == TOK_MINUS) {
+                printf("f64.sub\n");
+                last_expr_is_float = 2;
+            } else if (n->ival == TOK_STAR) {
+                printf("f64.mul\n");
+                last_expr_is_float = 2;
+            } else if (n->ival == TOK_SLASH) {
+                printf("f64.div\n");
+                last_expr_is_float = 2;
+            } else if (n->ival == TOK_EQ_EQ) {
+                printf("f64.eq\n");
+                last_expr_is_float = 0;
+            } else if (n->ival == TOK_BANG_EQ) {
+                printf("f64.ne\n");
+                last_expr_is_float = 0;
+            } else if (n->ival == TOK_LT) {
+                printf("f64.lt\n");
+                last_expr_is_float = 0;
+            } else if (n->ival == TOK_GT) {
+                printf("f64.gt\n");
+                last_expr_is_float = 0;
+            } else if (n->ival == TOK_LT_EQ) {
+                printf("f64.le\n");
+                last_expr_is_float = 0;
+            } else if (n->ival == TOK_GT_EQ) {
+                printf("f64.ge\n");
+                last_expr_is_float = 0;
+            } else {
+                error(n->nline, n->ncol, "unsupported float binary operator");
+            }
         } else {
-            error(n->nline, n->ncol, "unsupported binary operator");
+            emit_indent();
+            if (n->ival == TOK_PLUS) {
+                printf("i32.add\n");
+            } else if (n->ival == TOK_MINUS) {
+                printf("i32.sub\n");
+            } else if (n->ival == TOK_STAR) {
+                printf("i32.mul\n");
+            } else if (n->ival == TOK_SLASH) {
+                if (expr_is_unsigned(n->c0)) { printf("i32.div_u\n"); } else { printf("i32.div_s\n"); }
+            } else if (n->ival == TOK_PERCENT) {
+                if (expr_is_unsigned(n->c0)) { printf("i32.rem_u\n"); } else { printf("i32.rem_s\n"); }
+            } else if (n->ival == TOK_EQ_EQ) {
+                printf("i32.eq\n");
+            } else if (n->ival == TOK_BANG_EQ) {
+                printf("i32.ne\n");
+            } else if (n->ival == TOK_LT) {
+                if (expr_is_unsigned(n->c0)) { printf("i32.lt_u\n"); } else { printf("i32.lt_s\n"); }
+            } else if (n->ival == TOK_GT) {
+                if (expr_is_unsigned(n->c0)) { printf("i32.gt_u\n"); } else { printf("i32.gt_s\n"); }
+            } else if (n->ival == TOK_LT_EQ) {
+                if (expr_is_unsigned(n->c0)) { printf("i32.le_u\n"); } else { printf("i32.le_s\n"); }
+            } else if (n->ival == TOK_GT_EQ) {
+                if (expr_is_unsigned(n->c0)) { printf("i32.ge_u\n"); } else { printf("i32.ge_s\n"); }
+            } else if (n->ival == TOK_AMP_AMP) {
+                printf("i32.and\n");
+            } else if (n->ival == TOK_PIPE_PIPE) {
+                printf("i32.or\n");
+            } else if (n->ival == TOK_AMP) {
+                printf("i32.and\n");
+            } else if (n->ival == TOK_PIPE) {
+                printf("i32.or\n");
+            } else if (n->ival == TOK_LSHIFT) {
+                printf("i32.shl\n");
+            } else if (n->ival == TOK_RSHIFT) {
+                if (expr_is_unsigned(n->c0)) { printf("i32.shr_u\n"); } else { printf("i32.shr_s\n"); }
+            } else if (n->ival == TOK_CARET) {
+                printf("i32.xor\n");
+            } else {
+                error(n->nline, n->ncol, "unsupported binary operator");
+            }
+            last_expr_is_float = 0;
         }
         break;
+    }
     case ND_CALL:
         if (strcmp(n->sval, "printf") == 0) {
             if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
@@ -2817,6 +3166,16 @@ void gen_expr(struct Node *n) {
                         ai++;
                         emit_indent();
                         printf("call $__print_hex\n");
+                    } else if (fmt[fi] == 'f') {
+                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
+                        gen_expr(n->list[ai]);
+                        if (!last_expr_is_float) {
+                            emit_indent();
+                            printf("f64.convert_i32_s\n");
+                        }
+                        ai++;
+                        emit_indent();
+                        printf("call $__print_float\n");
                     } else if (fmt[fi] == '%') {
                         emit_indent();
                         printf("i32.const 37\n");
@@ -2838,6 +3197,7 @@ void gen_expr(struct Node *n) {
             }
             emit_indent();
             printf("i32.const 0\n");
+            last_expr_is_float = 0;
         } else if (strcmp(n->sval, "putchar") == 0) {
             gen_expr(n->list[0]);
             emit_indent();
@@ -3028,18 +3388,30 @@ void gen_expr(struct Node *n) {
         } else {
             for (i = 0; i < n->ival2; i++) {
                 gen_expr(n->list[i]);
+                /* convert param if needed */
+                if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
+                    emit_indent();
+                    printf("f64.convert_i32_s\n");
+                } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
+                    emit_indent();
+                    printf("i32.trunc_f64_s\n");
+                }
             }
             emit_indent();
             printf("call $%s\n", n->sval);
             if (func_is_void(n->sval)) {
                 emit_indent();
                 printf("i32.const 0\n");
+                last_expr_is_float = 0;
+            } else {
+                last_expr_is_float = func_ret_is_float(n->sval);
             }
         }
         break;
     case ND_STR_LIT:
         emit_indent();
         printf("i32.const %d\n", str_table[n->ival]->offset);
+        last_expr_is_float = 0;
         break;
     case ND_MEMBER:
         off = resolve_field_offset(n->sval);
@@ -3254,7 +3626,9 @@ void gen_stmt(struct Node *n) {
         emit_indent();
         printf("return\n");
         break;
-    case ND_VAR_DECL:
+    case ND_VAR_DECL: {
+        int vd_is_flt;
+        vd_is_flt = n->ival3 >> 4;
         if (n->ival > 0) {
             /* Array: allocate n->ival elements of elem_size bytes */
             bsz = n->ival * n->ival2;
@@ -3266,10 +3640,19 @@ void gen_stmt(struct Node *n) {
             printf("local.set $%s\n", n->sval);
         } else if (n->c0 != (struct Node *)0) {
             gen_expr(n->c0);
+            /* type conversion if needed */
+            if (vd_is_flt && !last_expr_is_float) {
+                emit_indent();
+                printf("f64.convert_i32_s\n");
+            } else if (!vd_is_flt && last_expr_is_float) {
+                emit_indent();
+                printf("i32.trunc_f64_s\n");
+            }
             emit_indent();
             printf("local.set $%s\n", n->sval);
         }
         break;
+    }
     case ND_EXPR_STMT:
         gen_expr(n->c0);
         emit_indent();
@@ -3277,6 +3660,13 @@ void gen_stmt(struct Node *n) {
         break;
     case ND_IF:
         gen_expr(n->c0);
+        if (last_expr_is_float) {
+            /* convert float condition to boolean: f64 != 0.0 */
+            emit_indent();
+            printf("f64.const 0\n");
+            emit_indent();
+            printf("f64.ne\n");
+        }
         if (n->c2 != (struct Node *)0) {
             emit_indent();
             printf("(if\n");
@@ -3327,6 +3717,12 @@ void gen_stmt(struct Node *n) {
         printf("(loop $lp_%d\n", lbl);
         indent_level++;
         gen_expr(n->c0);
+        if (last_expr_is_float) {
+            emit_indent();
+            printf("f64.const 0\n");
+            emit_indent();
+            printf("f64.ne\n");
+        }
         emit_indent();
         printf("i32.eqz\n");
         emit_indent();
@@ -3365,6 +3761,12 @@ void gen_stmt(struct Node *n) {
         indent_level++;
         if (n->c1 != (struct Node *)0) {
             gen_expr(n->c1);
+            if (last_expr_is_float) {
+                emit_indent();
+                printf("f64.const 0\n");
+                emit_indent();
+                printf("f64.ne\n");
+            }
             emit_indent();
             printf("i32.eqz\n");
             emit_indent();
@@ -3412,6 +3814,12 @@ void gen_stmt(struct Node *n) {
         emit_indent();
         printf(")\n");
         gen_expr(n->c1);
+        if (last_expr_is_float) {
+            emit_indent();
+            printf("f64.const 0\n");
+            emit_indent();
+            printf("f64.ne\n");
+        }
         emit_indent();
         printf("br_if $lp_%d\n", lbl);
         indent_level--;
@@ -3572,48 +3980,73 @@ void gen_func(struct Node *n) {
     struct Node *body;
     int i;
     int nparam_locals;
-    char *ret_sig;
+    int ret_float;
+    int has_any_float;
 
     if (n->c0 == (struct Node *)0) return;
 
     nlocals = 0;
     label_cnt = 0;
     loop_sp = 0;
+    ret_float = n->ival3; /* 0=int, 1=float, 2=double */
     /* register params as locals for is_char tracking */
     for (i = 0; i < n->ival2; i++) {
-        add_local(n->list[i]->sval, n->list[i]->ival2, n->list[i]->ival3);
+        add_local(n->list[i]->sval, n->list[i]->ival2, n->list[i]->ival3 & 0xF, n->list[i]->ival3 >> 4);
     }
     nparam_locals = nlocals;
     collect_locals(n->c0);
 
-    if (n->ival == 1) {
-        ret_sig = "";
-    } else {
-        ret_sig = " (result i32)";
-    }
     printf("  (func $%s", n->sval);
     for (i = 0; i < n->ival2; i++) {
-        printf(" (param $%s i32)", n->list[i]->sval);
+        if (local_vars[i]->lv_is_float) {
+            printf(" (param $%s f64)", n->list[i]->sval);
+        } else {
+            printf(" (param $%s i32)", n->list[i]->sval);
+        }
     }
-    printf("%s\n", ret_sig);
+    if (n->ival == 1) {
+        /* void */
+    } else if (ret_float) {
+        printf(" (result f64)");
+    } else {
+        printf(" (result i32)");
+    }
+    printf("\n");
 
     indent_level = 2;
     /* emit only non-param locals */
+    has_any_float = 0;
     for (i = nparam_locals; i < nlocals; i++) {
         emit_indent();
-        printf("(local $%s i32)\n", local_vars[i]->name);
+        if (local_vars[i]->lv_is_float) {
+            printf("(local $%s f64)\n", local_vars[i]->name);
+            has_any_float = 1;
+        } else {
+            printf("(local $%s i32)\n", local_vars[i]->name);
+        }
+    }
+    /* check params for float too */
+    for (i = 0; i < nparam_locals; i++) {
+        if (local_vars[i]->lv_is_float) has_any_float = 1;
     }
     emit_indent();
     printf("(local $__atmp i32)\n");
     emit_indent();
     printf("(local $__stmp i32)\n");
+    emit_indent();
+    printf("(local $__ftmp f64)\n");
     body = n->c0;
     for (i = 0; i < body->ival2; i++) {
         gen_stmt(body->list[i]);
     }
     if (n->ival != 1) {
-        emit_indent();
-        printf("i32.const 0\n");
+        if (ret_float) {
+            emit_indent();
+            printf("f64.const 0\n");
+        } else {
+            emit_indent();
+            printf("i32.const 0\n");
+        }
     }
     indent_level = 1;
     emit_indent();
@@ -3697,8 +4130,18 @@ void gen_module(struct Node *prog) {
     /* user global variables */
     for (gi = 0; gi < nglobals; gi++) {
         emit_indent();
-        printf("(global $%s (mut i32) (i32.const %d))\n",
-               globals_tbl[gi]->name, globals_tbl[gi]->init_val);
+        if (globals_tbl[gi]->gv_is_float) {
+            if (globals_tbl[gi]->gv_float_init != (char *)0) {
+                printf("(global $%s (mut f64) (f64.const %s))\n",
+                       globals_tbl[gi]->name, globals_tbl[gi]->gv_float_init);
+            } else {
+                printf("(global $%s (mut f64) (f64.const %d))\n",
+                       globals_tbl[gi]->name, globals_tbl[gi]->init_val);
+            }
+        } else {
+            printf("(global $%s (mut i32) (i32.const %d))\n",
+                   globals_tbl[gi]->name, globals_tbl[gi]->init_val);
+        }
     }
     emit_indent();
     printf("\n");
@@ -3874,6 +4317,74 @@ void gen_module(struct Node *prog) {
     printf("    (local.set $len (i32.sub (local.get $len) (i32.const 1)))\n");
     emit_indent();
     printf("    (br $pl)\n");
+    emit_indent();
+    printf("  ))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* __print_float: prints f64 with 6 decimal places */
+    emit_indent();
+    printf("(func $__print_float (param $v f64)\n");
+    emit_indent();
+    printf("  (local $int_part i32)\n");
+    emit_indent();
+    printf("  (local $frac_part i32)\n");
+    emit_indent();
+    printf("  (local $frac f64)\n");
+    emit_indent();
+    printf("  (local $i i32)\n");
+    emit_indent();
+    printf("  ;; handle negative\n");
+    emit_indent();
+    printf("  (if (f64.lt (local.get $v) (f64.const 0))\n");
+    emit_indent();
+    printf("    (then\n");
+    emit_indent();
+    printf("      (drop (call $putchar (i32.const 45)))\n");
+    emit_indent();
+    printf("      (local.set $v (f64.neg (local.get $v)))\n");
+    emit_indent();
+    printf("    )\n");
+    emit_indent();
+    printf("  )\n");
+    emit_indent();
+    printf("  ;; integer part\n");
+    emit_indent();
+    printf("  (local.set $int_part (i32.trunc_f64_s (local.get $v)))\n");
+    emit_indent();
+    printf("  (call $__print_int (local.get $int_part))\n");
+    emit_indent();
+    printf("  ;; dot\n");
+    emit_indent();
+    printf("  (drop (call $putchar (i32.const 46)))\n");
+    emit_indent();
+    printf("  ;; fractional part: 6 digits\n");
+    emit_indent();
+    printf("  (local.set $frac (f64.sub (local.get $v) (f64.convert_i32_s (local.get $int_part))))\n");
+    emit_indent();
+    printf("  (local.set $frac (f64.mul (local.get $frac) (f64.const 1000000)))\n");
+    emit_indent();
+    printf("  (local.set $frac (f64.add (local.get $frac) (f64.const 0.5)))\n");
+    emit_indent();
+    printf("  (local.set $frac_part (i32.trunc_f64_s (local.get $frac)))\n");
+    emit_indent();
+    printf("  ;; print with leading zeros (6 digits)\n");
+    emit_indent();
+    printf("  (local.set $i (i32.const 100000))\n");
+    emit_indent();
+    printf("  (block $done (loop $lp\n");
+    emit_indent();
+    printf("    (br_if $done (i32.eqz (local.get $i)))\n");
+    emit_indent();
+    printf("    (drop (call $putchar (i32.add (i32.const 48) (i32.div_u (local.get $frac_part) (local.get $i)))))\n");
+    emit_indent();
+    printf("    (local.set $frac_part (i32.rem_u (local.get $frac_part) (local.get $i)))\n");
+    emit_indent();
+    printf("    (local.set $i (i32.div_u (local.get $i) (i32.const 10)))\n");
+    emit_indent();
+    printf("    (br $lp)\n");
     emit_indent();
     printf("  ))\n");
     emit_indent();
@@ -5013,6 +5524,13 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
     case ND_INT_LIT:
         bv_push(o, 0x41); bv_i32(o, n->ival);
         break;
+    case ND_FLOAT_LIT:
+        error(n->nline, n->ncol, "float literals not supported in binary mode");
+        break;
+    case ND_CAST:
+        /* in binary mode, just generate the subexpression (no type tracking) */
+        gen_expr_bin(o, n->c0);
+        break;
     case ND_IDENT:
         if (find_global(n->sval) >= 0) {
             bv_push(o, 0x23); bv_u32(o, bin_global_idx(n->sval));
@@ -5872,12 +6390,12 @@ void gen_func_bin(struct ByteVec *cs, struct Node *n) {
     bin_lbl_sp = 0;
 
     for (i = 0; i < n->ival2; i++) {
-        add_local(n->list[i]->sval, n->list[i]->ival2, n->list[i]->ival3);
+        add_local(n->list[i]->sval, n->list[i]->ival2, n->list[i]->ival3 & 0xF, n->list[i]->ival3 >> 4);
     }
     nparam_locals = nlocals;
     collect_locals(n->c0);
-    add_local("__atmp", 4, 0);
-    add_local("__stmp", 4, 0);
+    add_local("__atmp", 4, 0, 0);
+    add_local("__stmp", 4, 0, 0);
 
     fb = bv_new(4096);
 
