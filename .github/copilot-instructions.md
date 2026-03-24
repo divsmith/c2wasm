@@ -63,6 +63,7 @@ Supported C subset at a glance: `int`, `char`, `void`, pointers, 1D arrays, stru
 
 - **No new files** for compiler features — everything lives in `compiler/src/c2wasm.c`.
 - **Add a test program** for every new language feature. Number it sequentially (e.g. `35_enum.c`). Add a `.expected` file if the program produces stdout.
+- **Update `README.md`** for relevant changes in features, usage, or behavior so docs stay in sync with code.
 - **`#define` only** — no enums, no `typedef` until those features are implemented and self-hosting verified.
 - Token kinds, AST node kinds, and other constants are `#define` integer literals (not enums).
 - `free()` is a no-op; use bump allocation only.
