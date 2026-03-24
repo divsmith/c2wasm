@@ -101,6 +101,123 @@
       '    }\n' +
       '    printf("\\n");\n' +
       '    return 0;\n' +
+      '}\n',
+
+    collatz:
+      '// Collatz sequence (3n+1 problem)\n' +
+      '// Features: do-while, ternary (?:), post-increment (count++)\n' +
+      '\n' +
+      'int steps(int n) {\n' +
+      '    int count = 0;\n' +
+      '    do {\n' +
+      '        n = (n % 2 == 0) ? n / 2 : n * 3 + 1;\n' +
+      '        count++;\n' +
+      '    } while (n != 1);\n' +
+      '    return count;\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    int n;\n' +
+      '    int s;\n' +
+      '    int max_steps = 0;\n' +
+      '    int max_n = 0;\n' +
+      '    for (n = 1; n <= 20; n++) {\n' +
+      '        s = steps(n);\n' +
+      '        printf("collatz(%d) = %d steps\\n", n, s);\n' +
+      '        if (s > max_steps) {\n' +
+      '            max_steps = s;\n' +
+      '            max_n = n;\n' +
+      '        }\n' +
+      '    }\n' +
+      '    printf("Longest: %d with %d steps\\n", max_n, max_steps);\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    weekday:
+      '// Day of Week\n' +
+      '// Features: enum, typedef, const, switch/case, ternary\n' +
+      '\n' +
+      'enum Weekday { MON = 1, TUE, WED, THU, FRI, SAT, SUN };\n' +
+      'typedef int Day;\n' +
+      '\n' +
+      'const int WORK_DAYS = 5;\n' +
+      '\n' +
+      'int is_weekend(Day d) {\n' +
+      '    return (d == SAT || d == SUN) ? 1 : 0;\n' +
+      '}\n' +
+      '\n' +
+      'void print_day(Day d) {\n' +
+      '    switch (d) {\n' +
+      '        case MON: printf("Monday   "); break;\n' +
+      '        case TUE: printf("Tuesday  "); break;\n' +
+      '        case WED: printf("Wednesday"); break;\n' +
+      '        case THU: printf("Thursday "); break;\n' +
+      '        case FRI: printf("Friday   "); break;\n' +
+      '        case SAT: printf("Saturday "); break;\n' +
+      '        case SUN: printf("Sunday   "); break;\n' +
+      '        default:  printf("Unknown  "); break;\n' +
+      '    }\n' +
+      '    if (is_weekend(d)) {\n' +
+      '        printf(" (weekend)\\n");\n' +
+      '    } else {\n' +
+      '        printf(" (weekday)\\n");\n' +
+      '    }\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    Day d;\n' +
+      '    int weekends = 0;\n' +
+      '    for (d = MON; d <= SUN; d++) {\n' +
+      '        weekends += is_weekend(d);\n' +
+      '        print_day(d);\n' +
+      '    }\n' +
+      '    printf("%d work days, %d weekend days\\n", WORK_DAYS, weekends);\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    bit_flags:
+      '// File permissions with bit flags\n' +
+      '// Features: typedef, const, compound bitwise ops (|=, &=, ^=), ~, ternary\n' +
+      '\n' +
+      'typedef int Perms;\n' +
+      '\n' +
+      'const int READ  = 4;\n' +
+      'const int WRITE = 2;\n' +
+      'const int EXEC  = 1;\n' +
+      '\n' +
+      'void show(Perms p) {\n' +
+      '    int r;\n' +
+      '    int w;\n' +
+      '    int x;\n' +
+      '    r = (p & READ)  ? 1 : 0;\n' +
+      '    w = (p & WRITE) ? 1 : 0;\n' +
+      '    x = (p & EXEC)  ? 1 : 0;\n' +
+      '    printf("r=%d w=%d x=%d\\n", r, w, x);\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    Perms owner;\n' +
+      '    Perms group;\n' +
+      '    Perms other;\n' +
+      '\n' +
+      '    owner = READ | WRITE | EXEC;   /* rwx = 7 */\n' +
+      '    group = READ | EXEC;           /* r-x = 5 */\n' +
+      '    other = READ;                  /* r-- = 4 */\n' +
+      '\n' +
+      '    printf("Initial:\\n");\n' +
+      '    printf("  owner: "); show(owner);\n' +
+      '    printf("  group: "); show(group);\n' +
+      '    printf("  other: "); show(other);\n' +
+      '\n' +
+      '    owner ^= WRITE;       /* revoke write from owner */\n' +
+      '    group |= WRITE;       /* grant write to group */\n' +
+      '    other &= ~EXEC;       /* ensure no exec for other */\n' +
+      '\n' +
+      '    printf("After chmod:\\n");\n' +
+      '    printf("  owner: "); show(owner);\n' +
+      '    printf("  group: "); show(group);\n' +
+      '    printf("  other: "); show(other);\n' +
+      '    return 0;\n' +
       '}\n'
   };
 
