@@ -5,4 +5,3 @@ build/
 *.wat
 demo/compiler.js
 demo/compiler.wasm
-node_modules/

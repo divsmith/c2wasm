@@ -5,7 +5,7 @@ BIN       = ../build/c2wasm
 DEMO      = ../demo
 WASI_SDK ?= /opt/wasi-sdk
 
-.PHONY: all clean test test-node test-sh bootstrap wasm wasm-wasi serve
+.PHONY: all clean test bootstrap wasm wasm-wasi wasm-emcc serve
 
 all: $(BIN)
 
@@ -13,37 +13,19 @@ $(BIN): $(SRC)
 	mkdir -p $(dir $(BIN))
 	$(CC) $(CFLAGS) -o $@ $<
 
-# ── Test targets ──
-# Prefer Node.js runner (only needs npm install); fall back to shell + native tools.
-
 test: $(BIN)
-	@if command -v node >/dev/null 2>&1 && [ -d ../node_modules/wabt ]; then \
-		node tests/run_tests.js; \
-		echo ""; \
-		echo "=== Running bootstrap validation ==="; \
-		node ../tools/bootstrap.js; \
-	elif command -v wat2wasm >/dev/null 2>&1 && command -v wasmtime >/dev/null 2>&1; then \
-		bash tests/run_tests.sh; \
+	bash tests/run_tests.sh
+	@if command -v wat2wasm >/dev/null 2>&1 && command -v wasmtime >/dev/null 2>&1; then \
 		echo ""; \
 		echo "=== Running bootstrap validation ==="; \
 		bash ../tools/bootstrap.sh; \
 	else \
-		echo "Error: need either (node + npm install) or (wat2wasm + wasmtime)"; \
-		exit 1; \
+		echo ""; \
+		echo "Skipping bootstrap (wat2wasm/wasmtime not found)"; \
 	fi
-
-test-node: $(BIN)
-	node tests/run_tests.js
-
-test-sh: $(BIN)
-	bash tests/run_tests.sh
 
 bootstrap: $(BIN)
-	@if command -v node >/dev/null 2>&1 && [ -d ../node_modules/wabt ]; then \
-		node ../tools/bootstrap.js; \
-	else \
-		bash ../tools/bootstrap.sh; \
-	fi
+	bash ../tools/bootstrap.sh
 
 # ── WASM build targets ──
 

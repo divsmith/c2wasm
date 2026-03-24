@@ -34,7 +34,7 @@ Everything runs client-side. The compiler itself was compiled to a 229 KB WASM b
 - **WAT inspector** — view the generated WebAssembly Text Format to see exactly what the compiler emitted
 - **Your own files** — create new C files, edit them freely, and they persist in your browser's local storage across sessions
 - **Built-in examples** — Hello World, Fibonacci, Linked List traversal, and Bubble Sort to get started
-- **Self-hosting** — the compiler is written in the same C subset it compiles; see `tools/bootstrap.js` for the 3-stage verification
+- **Self-hosting** — the compiler is written in the same C subset it compiles; see `tools/bootstrap.sh` for the 3-stage verification
 
 ---
 
@@ -113,7 +113,7 @@ Source text
 
 ## Self-Hosting Verification
 
-The compiler can compile itself. `tools/bootstrap.js` performs a 3-stage bootstrap:
+The compiler can compile itself. `tools/bootstrap.sh` performs a 3-stage bootstrap:
 
 ```
 Stage 1: GCC compiles c2wasm.c → native binary (s1)
@@ -125,8 +125,6 @@ diff s1.wat s3.wat  ← must be empty
 
 A clean diff proves that the compiler, when run inside WebAssembly, produces byte-for-byte identical output to the GCC-compiled version.
 
-> Both shell-based (`bootstrap.sh`) and Node.js-based (`bootstrap.js`) bootstrap scripts are provided. `make test` automatically picks whichever toolchain is available.
-
 ---
 
 ## Local Development
@@ -134,18 +132,13 @@ A clean diff proves that the compiler, when run inside WebAssembly, produces byt
 ### Prerequisites
 
 - GCC (for native build)
-- **Node.js ≥ 18** + `npm install` — for test runner and bootstrap (uses [wabt](https://www.npmjs.com/package/wabt) npm package)
+- `wat2wasm` + `wasmtime` (for tests and bootstrap)
 - Python 3 (for `make serve`)
 - [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) — only needed to rebuild `compiler.wasm`
-
-> **Legacy toolchain:** `wat2wasm` + `wasmtime` still work — `make test` falls back to them automatically when Node.js/wabt aren't available.
 
 ### Build & Test
 
 ```bash
-# Install test dependencies (one time)
-npm install
-
 # Build the native compiler
 cd compiler
 make
@@ -183,8 +176,7 @@ wasm-c/
 │   ├── src/c2wasm.c          ← the compiler (~3,000 lines of C)
 │   ├── Makefile
 │   └── tests/
-│       ├── run_tests.js      ← Node.js test runner (wabt + WASI shim)
-│       ├── run_tests.sh      ← shell test runner (legacy: wat2wasm + wasmtime)
+│       ├── run_tests.sh      ← test runner (wat2wasm + wasmtime)
 │       └── programs/         ← 39 test programs + expected output
 ├── demo/
 │   ├── index.html            ← browser UI
@@ -194,10 +186,7 @@ wasm-c/
 │   ├── wasm-worker.js        ← Web Worker for running compiled programs
 │   └── style.css             ← VS Code-inspired dark theme
 ├── tools/
-│   ├── bootstrap.js          ← 3-stage self-hosting verification (Node.js)
-│   ├── bootstrap.sh          ← 3-stage self-hosting verification (legacy)
-│   └── wasi-shim.js          ← shared WASI shim for Node.js tooling
-├── package.json              ← dev dependency: wabt
+│   └── bootstrap.sh          ← 3-stage self-hosting verification
 └── .github/
     └── workflows/
         └── pages.yml         ← auto-deploy demo/ to GitHub Pages (wasi-sdk)
