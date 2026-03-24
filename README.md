@@ -129,38 +129,85 @@ A clean diff proves that the compiler, when run inside WebAssembly, produces byt
 
 ## Local Development
 
+There are **two separate binaries** in this project:
+
+| Binary | What it is | How to build |
+|--------|-----------|-------------|
+| `build/c2wasm` | Native compiler (for running tests) | `cd compiler && make` |
+| `demo/compiler.wasm` | Browser compiler (for the demo) | `WASI_SDK=... make wasm` |
+
+`demo/compiler.wasm` is gitignored — a fresh clone won't have it. You only need to rebuild it if you're working on the demo or changed the compiler and want to update the deployed binary.
+
 ### Prerequisites
 
-- GCC (for native build)
-- `wat2wasm` + `wasmtime` (for tests and bootstrap)
-- Python 3 (for `make serve`)
-- [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) — only needed to rebuild `compiler.wasm`
+| Tool | Required for |
+|------|-------------|
+| GCC | Building the native compiler |
+| `wat2wasm` + `wasmtime` | Running tests and bootstrap |
+| [wasi-sdk v25](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25) | Rebuilding `demo/compiler.wasm` |
+| Python 3 | `make serve` |
 
-### Build & Test
-
+Install wasi-sdk from the [releases page](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25):
 ```bash
-# Build the native compiler
-cd compiler
-make
+# macOS ARM64 (Apple Silicon)
+curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-arm64-macos.tar.gz
+tar xzf wasi-sdk-25.0-arm64-macos.tar.gz
+sudo mv wasi-sdk-25.0-arm64-macos /opt/wasi-sdk
 
-# Run the test suite (39 programs + bootstrap validation)
-make test
+# macOS x86_64 (Intel)
+curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-macos.tar.gz
+tar xzf wasi-sdk-25.0-x86_64-macos.tar.gz
+sudo mv wasi-sdk-25.0-x86_64-macos /opt/wasi-sdk
 
-# Rebuild the WASM compiler for the demo (requires wasi-sdk)
-WASI_SDK=/path/to/wasi-sdk make wasm
-
-# Legacy: rebuild with Emscripten instead
-make wasm-emcc
-
-# Serve the demo locally (sets required cross-origin isolation headers)
-make serve
-# then open http://localhost:8080
+# Linux x86_64
+curl -LO https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+tar xzf wasi-sdk-25.0-x86_64-linux.tar.gz
+sudo mv wasi-sdk-25.0-x86_64-linux /opt/wasi-sdk
 ```
 
-> **Note:** `make serve` uses `demo/server.py` (not plain `python3 -m http.server`) because the
-> demo requires the `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` HTTP headers
-> to enable `SharedArrayBuffer`, which powers interactive stdin in the terminal.
-> On GitHub Pages these headers are injected by `demo/coi-serviceworker.js`.
+### Build the native compiler
+
+```bash
+cd compiler
+make           # builds build/c2wasm from src/c2wasm.c
+make clean     # force a clean rebuild next time
+```
+
+> `make` prints `Nothing to be done for 'all'` when `build/c2wasm` is already up to date — that's correct. Run `make clean && make` to force a full rebuild.
+
+### Run the tests
+
+Requires `wat2wasm` and `wasmtime` on `PATH`:
+
+```bash
+cd compiler
+make test      # runs all 39 test programs + bootstrap self-hosting check
+make bootstrap # run the 3-stage bootstrap check alone
+```
+
+### Rebuild the browser compiler
+
+Only needed when you change `compiler/src/c2wasm.c` and want to update the demo:
+
+```bash
+# With wasi-sdk at /opt/wasi-sdk (default):
+cd compiler && make wasm
+
+# With wasi-sdk elsewhere:
+cd compiler && WASI_SDK=/path/to/wasi-sdk make wasm
+# produces demo/compiler.wasm (229 KB)
+```
+
+### Serve the demo locally
+
+```bash
+cd compiler && make serve
+# open http://localhost:8080
+```
+
+> `make serve` uses `demo/server.py` instead of `python3 -m http.server` because the demo requires
+> `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers to enable `SharedArrayBuffer`
+> (interactive stdin). On GitHub Pages these headers are injected by `demo/coi-serviceworker.js`.
 
 ### Test Programs
 
