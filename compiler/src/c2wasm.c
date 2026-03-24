@@ -3366,6 +3366,8 @@ void gen_module(struct Node *prog) {
     /* heap pointer */
     emit_indent();
     printf("(global $__heap_ptr (mut i32) (i32.const %d))\n", data_ptr);
+    emit_indent();
+    printf("(global $__free_list (mut i32) (i32.const 0))\n");
 
     /* user global variables */
     for (gi = 0; gi < nglobals; gi++) {
@@ -3557,20 +3559,198 @@ void gen_module(struct Node *prog) {
     emit_indent();
     printf("(func $malloc (param $size i32) (result i32)\n");
     emit_indent();
+    printf("  (local $total i32)\n");
+    emit_indent();
+    printf("  (local $cur i32)\n");
+    emit_indent();
+    printf("  (local $prev i32)\n");
+    emit_indent();
+    printf("  (local $rest i32)\n");
+    emit_indent();
     printf("  (local $ptr i32)\n");
+    emit_indent();
+    printf("  (local.set $total\n");
+    emit_indent();
+    printf("    (i32.and (i32.add (local.get $size) (i32.const 15)) (i32.const -8)))\n");
+    emit_indent();
+    printf("  (local.set $prev (i32.const 0))\n");
+    emit_indent();
+    printf("  (local.set $cur (global.get $__free_list))\n");
+    emit_indent();
+    printf("  (block $done\n");
+    emit_indent();
+    printf("    (loop $search\n");
+    emit_indent();
+    printf("      (br_if $done (i32.eqz (local.get $cur)))\n");
+    emit_indent();
+    printf("      (if (i32.ge_u (i32.load (local.get $cur)) (local.get $total))\n");
+    emit_indent();
+    printf("        (then\n");
+    emit_indent();
+    printf("          (if (i32.ge_u (i32.load (local.get $cur)) (i32.add (local.get $total) (i32.const 16)))\n");
+    emit_indent();
+    printf("            (then\n");
+    emit_indent();
+    printf("              (local.set $rest (i32.add (local.get $cur) (local.get $total)))\n");
+    emit_indent();
+    printf("              (i32.store (local.get $rest)\n");
+    emit_indent();
+    printf("                (i32.sub (i32.load (local.get $cur)) (local.get $total)))\n");
+    emit_indent();
+    printf("              (i32.store offset=4 (local.get $rest)\n");
+    emit_indent();
+    printf("                (i32.load offset=4 (local.get $cur)))\n");
+    emit_indent();
+    printf("              (i32.store (local.get $cur) (local.get $total))\n");
+    emit_indent();
+    printf("              (if (local.get $prev)\n");
+    emit_indent();
+    printf("                (then\n");
+    emit_indent();
+    printf("                  (i32.store offset=4 (local.get $prev) (local.get $rest)))\n");
+    emit_indent();
+    printf("                (else\n");
+    emit_indent();
+    printf("                  (global.set $__free_list (local.get $rest))))\n");
+    emit_indent();
+    printf("            )\n");
+    emit_indent();
+    printf("            (else\n");
+    emit_indent();
+    printf("              (if (local.get $prev)\n");
+    emit_indent();
+    printf("                (then\n");
+    emit_indent();
+    printf("                  (i32.store offset=4 (local.get $prev)\n");
+    emit_indent();
+    printf("                    (i32.load offset=4 (local.get $cur))))\n");
+    emit_indent();
+    printf("                (else\n");
+    emit_indent();
+    printf("                  (global.set $__free_list\n");
+    emit_indent();
+    printf("                    (i32.load offset=4 (local.get $cur)))))\n");
+    emit_indent();
+    printf("          ))\n");
+    emit_indent();
+    printf("          (return (i32.add (local.get $cur) (i32.const 8)))\n");
+    emit_indent();
+    printf("        )\n");
+    emit_indent();
+    printf("      )\n");
+    emit_indent();
+    printf("      (local.set $prev (local.get $cur))\n");
+    emit_indent();
+    printf("      (local.set $cur (i32.load offset=4 (local.get $cur)))\n");
+    emit_indent();
+    printf("      (br $search)\n");
+    emit_indent();
+    printf("    )\n");
+    emit_indent();
+    printf("  )\n");
     emit_indent();
     printf("  (local.set $ptr (global.get $__heap_ptr))\n");
     emit_indent();
-    printf("  (global.set $__heap_ptr (i32.add (global.get $__heap_ptr)\n");
+    printf("  (i32.store (local.get $ptr) (local.get $total))\n");
     emit_indent();
-    printf("    (i32.and (i32.add (local.get $size) (i32.const 7)) (i32.const -8))))\n");
+    printf("  (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $total)))\n");
     emit_indent();
-    printf("  (local.get $ptr)\n");
+    printf("  (i32.add (local.get $ptr) (i32.const 8))\n");
     emit_indent();
     printf(")\n");
 
     emit_indent();
-    printf("(func $free (param $ptr i32))\n");
+    printf("(func $free (param $ptr i32)\n");
+    emit_indent();
+    printf("  (local $block i32)\n");
+    emit_indent();
+    printf("  (local $cur i32)\n");
+    emit_indent();
+    printf("  (local $prev i32)\n");
+    emit_indent();
+    printf("  (local $next_blk i32)\n");
+    emit_indent();
+    printf("  (if (i32.eqz (local.get $ptr)) (then (return)))\n");
+    emit_indent();
+    printf("  (local.set $block (i32.sub (local.get $ptr) (i32.const 8)))\n");
+    emit_indent();
+    printf("  (local.set $prev (i32.const 0))\n");
+    emit_indent();
+    printf("  (local.set $cur (global.get $__free_list))\n");
+    emit_indent();
+    printf("  (block $found\n");
+    emit_indent();
+    printf("    (loop $scan\n");
+    emit_indent();
+    printf("      (br_if $found (i32.eqz (local.get $cur)))\n");
+    emit_indent();
+    printf("      (br_if $found (i32.gt_u (local.get $cur) (local.get $block)))\n");
+    emit_indent();
+    printf("      (local.set $prev (local.get $cur))\n");
+    emit_indent();
+    printf("      (local.set $cur (i32.load offset=4 (local.get $cur)))\n");
+    emit_indent();
+    printf("      (br $scan)\n");
+    emit_indent();
+    printf("    )\n");
+    emit_indent();
+    printf("  )\n");
+    emit_indent();
+    printf("  (i32.store offset=4 (local.get $block) (local.get $cur))\n");
+    emit_indent();
+    printf("  (if (local.get $prev)\n");
+    emit_indent();
+    printf("    (then (i32.store offset=4 (local.get $prev) (local.get $block)))\n");
+    emit_indent();
+    printf("    (else (global.set $__free_list (local.get $block)))\n");
+    emit_indent();
+    printf("  )\n");
+    emit_indent();
+    printf("  (if (i32.and\n");
+    emit_indent();
+    printf("        (i32.ne (local.get $cur) (i32.const 0))\n");
+    emit_indent();
+    printf("        (i32.eq (i32.add (local.get $block) (i32.load (local.get $block)))\n");
+    emit_indent();
+    printf("                (local.get $cur)))\n");
+    emit_indent();
+    printf("    (then\n");
+    emit_indent();
+    printf("      (i32.store (local.get $block)\n");
+    emit_indent();
+    printf("        (i32.add (i32.load (local.get $block)) (i32.load (local.get $cur))))\n");
+    emit_indent();
+    printf("      (i32.store offset=4 (local.get $block)\n");
+    emit_indent();
+    printf("        (i32.load offset=4 (local.get $cur)))\n");
+    emit_indent();
+    printf("    )\n");
+    emit_indent();
+    printf("  )\n");
+    emit_indent();
+    printf("  (if (i32.and\n");
+    emit_indent();
+    printf("        (i32.ne (local.get $prev) (i32.const 0))\n");
+    emit_indent();
+    printf("        (i32.eq (i32.add (local.get $prev) (i32.load (local.get $prev)))\n");
+    emit_indent();
+    printf("                (local.get $block)))\n");
+    emit_indent();
+    printf("    (then\n");
+    emit_indent();
+    printf("      (i32.store (local.get $prev)\n");
+    emit_indent();
+    printf("        (i32.add (i32.load (local.get $prev)) (i32.load (local.get $block))))\n");
+    emit_indent();
+    printf("      (i32.store offset=4 (local.get $prev)\n");
+    emit_indent();
+    printf("        (i32.load offset=4 (local.get $block)))\n");
+    emit_indent();
+    printf("    )\n");
+    emit_indent();
+    printf("  )\n");
+    emit_indent();
+    printf(")\n");
 
     emit_indent();
     printf("(func $strlen (param $s i32) (result i32)\n");
@@ -3919,8 +4099,9 @@ int bin_find_func(char *name) {
 int bin_global_idx(char *name) {
     int i;
     if (strcmp(name, "__heap_ptr") == 0) return 0;
+    if (strcmp(name, "__free_list") == 0) return 1;
     for (i = 0; i < nglobals; i++) {
-        if (strcmp(globals_tbl[i]->name, name) == 0) return i + 1;
+        if (strcmp(globals_tbl[i]->name, name) == 0) return i + 2;
     }
     return 0;
 }
@@ -5006,29 +5187,278 @@ void emit_helper_print_hex(struct ByteVec *o) {
 }
 
 void emit_helper_malloc(struct ByteVec *o) {
-    /* (param $size i32) (result i32), 1 extra local: $ptr(1) */
-    bv_u32(o, 1); bv_u32(o, 1); bv_push(o, 0x7F);
-    /* ptr = global.get __heap_ptr */
+    /* (param $size i32) (result i32)
+       locals: $total=1, $cur=2, $prev=3, $rest=4, $ptr=5 */
+    bv_u32(o, 1); bv_u32(o, 5); bv_push(o, 0x7F);
+
+    /* total = (size + 15) & -8 */
+    bv_push(o, 0x20); bv_u32(o, 0);   /* local.get $size */
+    bv_push(o, 0x41); bv_i32(o, 15);  /* i32.const 15 */
+    bv_push(o, 0x6A);                 /* i32.add */
+    bv_push(o, 0x41); bv_i32(o, -8);  /* i32.const -8 */
+    bv_push(o, 0x71);                 /* i32.and */
+    bv_push(o, 0x21); bv_u32(o, 1);   /* local.set $total */
+
+    /* prev = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);   /* local.set $prev */
+
+    /* cur = global.get __free_list */
+    bv_push(o, 0x23); bv_u32(o, 1);   /* global.get $__free_list */
+    bv_push(o, 0x21); bv_u32(o, 2);   /* local.set $cur */
+
+    /* block $done */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    /* loop $search */
+    bv_push(o, 0x03); bv_push(o, 0x40);
+
+    /* br_if $done (i32.eqz cur) — depth 1 from inside loop */
+    bv_push(o, 0x20); bv_u32(o, 2);   /* local.get $cur */
+    bv_push(o, 0x45);                 /* i32.eqz */
+    bv_push(o, 0x0D); bv_u32(o, 1);   /* br_if 1 ($done) */
+
+    /* if (i32.ge_u cur.size total) */
+    bv_push(o, 0x20); bv_u32(o, 2);   /* local.get $cur */
+    bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);  /* i32.load offset=0 */
+    bv_push(o, 0x20); bv_u32(o, 1);   /* local.get $total */
+    bv_push(o, 0x4F);                 /* i32.ge_u */
+    bv_push(o, 0x04); bv_push(o, 0x40); /* if void */
+
+      /* if (cur.size >= total + 16) — can split */
+      bv_push(o, 0x20); bv_u32(o, 2);
+      bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+      bv_push(o, 0x20); bv_u32(o, 1);
+      bv_push(o, 0x41); bv_i32(o, 16);
+      bv_push(o, 0x6A);
+      bv_push(o, 0x4F);               /* i32.ge_u */
+      bv_push(o, 0x04); bv_push(o, 0x40); /* if void (split) */
+
+        /* rest = cur + total */
+        bv_push(o, 0x20); bv_u32(o, 2);
+        bv_push(o, 0x20); bv_u32(o, 1);
+        bv_push(o, 0x6A);
+        bv_push(o, 0x21); bv_u32(o, 4); /* local.set $rest */
+
+        /* rest.size = cur.size - total */
+        bv_push(o, 0x20); bv_u32(o, 4); /* addr: rest */
+        bv_push(o, 0x20); bv_u32(o, 2);
+        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); /* cur.size */
+        bv_push(o, 0x20); bv_u32(o, 1);
+        bv_push(o, 0x6B);               /* i32.sub */
+        bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); /* i32.store offset=0 */
+
+        /* rest.next = cur.next */
+        bv_push(o, 0x20); bv_u32(o, 4); /* addr: rest */
+        bv_push(o, 0x20); bv_u32(o, 2);
+        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 4); /* cur.next */
+        bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 4); /* i32.store offset=4 */
+
+        /* cur.size = total */
+        bv_push(o, 0x20); bv_u32(o, 2);
+        bv_push(o, 0x20); bv_u32(o, 1);
+        bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+
+        /* if prev → prev.next=rest else free_list=rest */
+        bv_push(o, 0x20); bv_u32(o, 3);
+        bv_push(o, 0x04); bv_push(o, 0x40); /* if void */
+          bv_push(o, 0x20); bv_u32(o, 3);
+          bv_push(o, 0x20); bv_u32(o, 4);
+          bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 4);
+        bv_push(o, 0x05);               /* else */
+          bv_push(o, 0x20); bv_u32(o, 4);
+          bv_push(o, 0x24); bv_u32(o, 1); /* global.set __free_list */
+        bv_push(o, 0x0B);               /* end if (prev) */
+
+      bv_push(o, 0x05);                 /* else — no split */
+
+        /* if prev → prev.next=cur.next else free_list=cur.next */
+        bv_push(o, 0x20); bv_u32(o, 3);
+        bv_push(o, 0x04); bv_push(o, 0x40);
+          bv_push(o, 0x20); bv_u32(o, 3);
+          bv_push(o, 0x20); bv_u32(o, 2);
+          bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 4);
+          bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 4);
+        bv_push(o, 0x05);               /* else */
+          bv_push(o, 0x20); bv_u32(o, 2);
+          bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 4);
+          bv_push(o, 0x24); bv_u32(o, 1); /* global.set __free_list */
+        bv_push(o, 0x0B);               /* end if (prev) */
+
+      bv_push(o, 0x0B);                 /* end if (split/no-split) */
+
+      /* return cur + 8 */
+      bv_push(o, 0x20); bv_u32(o, 2);
+      bv_push(o, 0x41); bv_i32(o, 8);
+      bv_push(o, 0x6A);
+      bv_push(o, 0x0F);                 /* return */
+
+    bv_push(o, 0x0B);                   /* end if (cur.size >= total) */
+
+    /* prev = cur */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x21); bv_u32(o, 3);
+
+    /* cur = cur.next */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 4);
+    bv_push(o, 0x21); bv_u32(o, 2);
+
+    /* br $search (br 0) */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+
+    bv_push(o, 0x0B);                   /* end loop */
+    bv_push(o, 0x0B);                   /* end block */
+
+    /* Bump-allocate fallback: ptr = heap_ptr */
     bv_push(o, 0x23); bv_u32(o, 0);
-    bv_push(o, 0x21); bv_u32(o, 1);
-    /* global.set __heap_ptr = __heap_ptr + ((size + 7) & -8) */
-    bv_push(o, 0x23); bv_u32(o, 0);
-    bv_push(o, 0x20); bv_u32(o, 0);
-    bv_push(o, 0x41); bv_i32(o, 7);
-    bv_push(o, 0x6A);
-    bv_push(o, 0x41); bv_i32(o, -8);
-    bv_push(o, 0x71);
-    bv_push(o, 0x6A);
-    bv_push(o, 0x24); bv_u32(o, 0);
-    /* return ptr */
+    bv_push(o, 0x21); bv_u32(o, 5);     /* local.set $ptr */
+
+    /* ptr.size = total */
+    bv_push(o, 0x20); bv_u32(o, 5);
     bv_push(o, 0x20); bv_u32(o, 1);
-    bv_push(o, 0x0B);
+    bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+
+    /* heap_ptr += total */
+    bv_push(o, 0x20); bv_u32(o, 5);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x24); bv_u32(o, 0);     /* global.set __heap_ptr */
+
+    /* return ptr + 8 */
+    bv_push(o, 0x20); bv_u32(o, 5);
+    bv_push(o, 0x41); bv_i32(o, 8);
+    bv_push(o, 0x6A);
+    bv_push(o, 0x0B);                   /* end func */
 }
 
 void emit_helper_free(struct ByteVec *o) {
-    /* (param $ptr i32), 0 extra locals — empty body */
-    bv_u32(o, 0);
-    bv_push(o, 0x0B);
+    /* (param $ptr i32)
+       locals: $block=1, $cur=2, $prev=3, $next_blk=4 */
+    bv_u32(o, 1); bv_u32(o, 4); bv_push(o, 0x7F);
+
+    /* if ptr == 0, return */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x45);                 /* i32.eqz */
+    bv_push(o, 0x04); bv_push(o, 0x40);
+      bv_push(o, 0x0F);               /* return */
+    bv_push(o, 0x0B);                 /* end if */
+
+    /* block = ptr - 8 */
+    bv_push(o, 0x20); bv_u32(o, 0);
+    bv_push(o, 0x41); bv_i32(o, 8);
+    bv_push(o, 0x6B);                 /* i32.sub */
+    bv_push(o, 0x21); bv_u32(o, 1);   /* local.set $block */
+
+    /* prev = 0 */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x21); bv_u32(o, 3);
+
+    /* cur = free_list */
+    bv_push(o, 0x23); bv_u32(o, 1);
+    bv_push(o, 0x21); bv_u32(o, 2);
+
+    /* block $found */
+    bv_push(o, 0x02); bv_push(o, 0x40);
+    /* loop $scan */
+    bv_push(o, 0x03); bv_push(o, 0x40);
+
+    /* br_if $found (i32.eqz cur) — depth 1 */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, 1);
+
+    /* br_if $found (i32.gt_u cur block) — depth 1 */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x4D);                 /* i32.gt_u */
+    bv_push(o, 0x0D); bv_u32(o, 1);
+
+    /* prev = cur */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x21); bv_u32(o, 3);
+
+    /* cur = cur.next */
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 4);
+    bv_push(o, 0x21); bv_u32(o, 2);
+
+    /* br $scan (br 0) */
+    bv_push(o, 0x0C); bv_u32(o, 0);
+
+    bv_push(o, 0x0B);                 /* end loop */
+    bv_push(o, 0x0B);                 /* end block */
+
+    /* block.next = cur */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x20); bv_u32(o, 2);
+    bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 4);
+
+    /* if prev → prev.next=block else free_list=block */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x04); bv_push(o, 0x40);
+      bv_push(o, 0x20); bv_u32(o, 3);
+      bv_push(o, 0x20); bv_u32(o, 1);
+      bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 4);
+    bv_push(o, 0x05);                 /* else */
+      bv_push(o, 0x20); bv_u32(o, 1);
+      bv_push(o, 0x24); bv_u32(o, 1); /* global.set __free_list */
+    bv_push(o, 0x0B);                 /* end if */
+
+    /* Coalesce with next: if cur!=0 && block+block.size==cur */
+    bv_push(o, 0x20); bv_u32(o, 2);   /* cur */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x47);                 /* i32.ne */
+    bv_push(o, 0x20); bv_u32(o, 1);   /* block */
+    bv_push(o, 0x20); bv_u32(o, 1);
+    bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); /* block.size */
+    bv_push(o, 0x6A);                 /* add */
+    bv_push(o, 0x20); bv_u32(o, 2);   /* cur */
+    bv_push(o, 0x46);                 /* i32.eq */
+    bv_push(o, 0x71);                 /* i32.and */
+    bv_push(o, 0x04); bv_push(o, 0x40);
+      /* block.size += cur.size */
+      bv_push(o, 0x20); bv_u32(o, 1);
+      bv_push(o, 0x20); bv_u32(o, 1);
+      bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+      bv_push(o, 0x20); bv_u32(o, 2);
+      bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+      bv_push(o, 0x6A);
+      bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+      /* block.next = cur.next */
+      bv_push(o, 0x20); bv_u32(o, 1);
+      bv_push(o, 0x20); bv_u32(o, 2);
+      bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 4);
+      bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 4);
+    bv_push(o, 0x0B);                 /* end if */
+
+    /* Coalesce with prev: if prev!=0 && prev+prev.size==block */
+    bv_push(o, 0x20); bv_u32(o, 3);   /* prev */
+    bv_push(o, 0x41); bv_i32(o, 0);
+    bv_push(o, 0x47);                 /* i32.ne */
+    bv_push(o, 0x20); bv_u32(o, 3);   /* prev */
+    bv_push(o, 0x20); bv_u32(o, 3);
+    bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); /* prev.size */
+    bv_push(o, 0x6A);                 /* add */
+    bv_push(o, 0x20); bv_u32(o, 1);   /* block */
+    bv_push(o, 0x46);                 /* i32.eq */
+    bv_push(o, 0x71);                 /* i32.and */
+    bv_push(o, 0x04); bv_push(o, 0x40);
+      /* prev.size += block.size */
+      bv_push(o, 0x20); bv_u32(o, 3);
+      bv_push(o, 0x20); bv_u32(o, 3);
+      bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+      bv_push(o, 0x20); bv_u32(o, 1);
+      bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+      bv_push(o, 0x6A);
+      bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+      /* prev.next = block.next */
+      bv_push(o, 0x20); bv_u32(o, 3);
+      bv_push(o, 0x20); bv_u32(o, 1);
+      bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 4);
+      bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 4);
+    bv_push(o, 0x0B);                 /* end if */
+
+    bv_push(o, 0x0B);                 /* end func */
 }
 
 void emit_helper_strlen(struct ByteVec *o) {
@@ -5377,9 +5807,12 @@ void gen_module_bin(struct Node *prog) {
 
     /* Global section (id=6) */
     bv_reset(sec);
-    bv_u32(sec, 1 + nglobals);
+    bv_u32(sec, 2 + nglobals);
     bv_push(sec, 0x7F); bv_push(sec, 0x01);
     bv_push(sec, 0x41); bv_i32(sec, data_ptr); bv_push(sec, 0x0B);
+    /* __free_list = 0 */
+    bv_push(sec, 0x7F); bv_push(sec, 0x01);
+    bv_push(sec, 0x41); bv_i32(sec, 0); bv_push(sec, 0x0B);
     for (i = 0; i < nglobals; i++) {
         bv_push(sec, 0x7F); bv_push(sec, 0x01);
         bv_push(sec, 0x41); bv_i32(sec, globals_tbl[i]->init_val); bv_push(sec, 0x0B);

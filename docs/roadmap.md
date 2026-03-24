@@ -1,7 +1,7 @@
 ## Roadmap
 
 1. [x] Simplify compiler code with newly implemented features
-2. [ ] Remove external dependencies (emcc, etc). Directly emit WASM binary.
+2. [x] Remove external dependencies (emcc, etc). Directly emit WASM binary.
 3. [x] Demo console inputs
 4. [ ] Live compiler updates - hack on the compiler that's actually running in the demo
     * Need a way to "revert" back when the compiler is broken.
@@ -11,3 +11,7 @@
 6. [ ] More data types
 7. [ ] Full C89 compatibility
 8. [ ] libc available in browser demo
+9. [ ] Remove WAT output from demo
+10. [ ] pull src and test directories out of compilers to project root
+    * The demo should be an accessory to the main compiler, not an equivalent level
+11. [ ] debugger / 
