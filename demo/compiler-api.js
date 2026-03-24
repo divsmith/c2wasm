@@ -1,89 +1,172 @@
 'use strict';
 
 /**
- * Wraps the Emscripten-compiled c2wasm compiler.
- * compiler.js is built with -s SINGLE_FILE=1, so the WASM binary is embedded
- * directly inside it — no separate compiler.wasm fetch needed. The demo works
- * as a fully static page, including when opened from the filesystem.
+ * Wraps the WASI-compiled c2wasm compiler (compiler.wasm).
+ *
+ * The compiler is built with wasi-sdk and runs via a minimal WASI shim.
+ * It reads C source from stdin and writes WAT to stdout — the shim
+ * wires those to in-memory buffers so no filesystem is needed.
  */
 var CompilerAPI = (function () {
-  var moduleFactory = null;
+  var compiledModule = null;
   var loading = null;
 
   function init() {
-    if (moduleFactory) return Promise.resolve();
+    if (compiledModule) return Promise.resolve();
     if (loading) return loading;
 
-    loading = new Promise(function (resolve, reject) {
-      if (typeof C2WasmModule === 'function') {
-        moduleFactory = C2WasmModule;
-        resolve();
-        return;
-      }
-
-      var script = document.createElement('script');
-      script.src = 'compiler.js';
-      script.onload = function () {
-        if (typeof C2WasmModule === 'function') {
-          moduleFactory = C2WasmModule;
-          resolve();
-        } else {
-          reject(new Error('compiler.js loaded but C2WasmModule not found'));
-        }
-      };
-      script.onerror = function () {
-        reject(new Error(
-          'compiler.js not found.\n' +
-          'Build it with Emscripten:\n' +
-          '  cd compiler && make wasm'
-        ));
-      };
-      document.head.appendChild(script);
-    });
+    loading = fetch('compiler.wasm')
+      .then(function (response) {
+        if (!response.ok) throw new Error('compiler.wasm not found (HTTP ' + response.status + ').\nBuild it with: cd compiler && make wasm');
+        return response.arrayBuffer();
+      })
+      .then(function (bytes) {
+        return WebAssembly.compile(bytes);
+      })
+      .then(function (mod) {
+        compiledModule = mod;
+      });
 
     loading.catch(function () { loading = null; });
     return loading;
   }
 
+  /**
+   * Create a WASI import object that reads from `inputBytes` and captures
+   * stdout/stderr into string arrays.
+   */
+  function createWasiImports(inputBytes) {
+    // State is stored on an object (not bare closure variables) to avoid
+    // a V8 optimization issue where WASM-to-JS calls can miscompile
+    // direct closure variable access.
+    var state = {
+      memory: null,
+      inputPos: 0,
+      stdoutChunks: [],
+      stderrChunks: [],
+      exitCode: 0
+    };
+    var EXIT_TAG = { __wasi_exit: true };
+
+    var imports = {
+      wasi_snapshot_preview1: {
+        proc_exit: function (code) {
+          state.exitCode = code;
+          throw EXIT_TAG;
+        },
+
+        fd_write: function (fd, iovs, iovs_len, nwritten_ptr) {
+          var buf = state.memory.buffer;
+          var view = new DataView(buf);
+          var bytes = new Uint8Array(buf);
+          var total = 0;
+          var chunks = fd === 2 ? state.stderrChunks : state.stdoutChunks;
+          var decoder = new TextDecoder('utf-8', { fatal: false });
+
+          for (var i = 0; i < iovs_len; i++) {
+            var ptr = view.getUint32(iovs + i * 8, true);
+            var len = view.getUint32(iovs + i * 8 + 4, true);
+            var isLast = i === iovs_len - 1;
+            chunks.push(decoder.decode(bytes.slice(ptr, ptr + len), { stream: !isLast }));
+            total += len;
+          }
+
+          view.setUint32(nwritten_ptr, total, true);
+          return 0;
+        },
+
+        fd_read: function (fd, iovs, iovs_len, nread_ptr) {
+          var buf = state.memory.buffer;
+          var view = new DataView(buf);
+          var bytes = new Uint8Array(buf);
+          var totalRead = 0;
+
+          for (var i = 0; i < iovs_len; i++) {
+            var iovPtr = view.getUint32(iovs + i * 8, true);
+            var iovLen = view.getUint32(iovs + i * 8 + 4, true);
+            var written = 0;
+
+            while (written < iovLen && state.inputPos < inputBytes.length) {
+              bytes[iovPtr + written] = inputBytes[state.inputPos++];
+              written++;
+              totalRead++;
+            }
+          }
+
+          view.setUint32(nread_ptr, totalRead, true);
+          return 0;
+        },
+
+        fd_close: function () { return 0; },
+        fd_seek: function () { return 8; },
+        fd_prestat_get: function () { return 8; },
+        fd_prestat_dir_name: function () { return 8; },
+        fd_fdstat_get: function (fd, fdstat_ptr) {
+          var view = new DataView(state.memory.buffer);
+          view.setUint8(fdstat_ptr, fd <= 2 ? 2 : 4);
+          view.setUint16(fdstat_ptr + 2, 0, true);
+          view.setBigUint64(fdstat_ptr + 8, BigInt('0x1FFFFFFF'), true);
+          view.setBigUint64(fdstat_ptr + 16, BigInt('0x1FFFFFFF'), true);
+          return 0;
+        },
+        environ_sizes_get: function (count_ptr, size_ptr) {
+          var view = new DataView(state.memory.buffer);
+          view.setUint32(count_ptr, 0, true);
+          view.setUint32(size_ptr, 0, true);
+          return 0;
+        },
+        environ_get: function () { return 0; },
+        args_sizes_get: function (argc_ptr, argv_buf_size_ptr) {
+          var view = new DataView(state.memory.buffer);
+          view.setUint32(argc_ptr, 0, true);
+          view.setUint32(argv_buf_size_ptr, 0, true);
+          return 0;
+        },
+        args_get: function () { return 0; },
+        clock_time_get: function (id, precision, time_ptr) {
+          var view = new DataView(state.memory.buffer);
+          view.setBigUint64(time_ptr, BigInt(Date.now()) * BigInt(1000000), true);
+          return 0;
+        },
+        random_get: function (buf_ptr, len) {
+          var bytes = new Uint8Array(state.memory.buffer, buf_ptr, len);
+          for (var i = 0; i < len; i++) bytes[i] = (Math.random() * 256) | 0;
+          return 0;
+        }
+      }
+    };
+
+    return {
+      imports: imports,
+      setMemory: function (m) { state.memory = m; },
+      get exitCode() { return state.exitCode; },
+      get stdout() { return state.stdoutChunks.join(''); },
+      get stderr() { return state.stderrChunks.join(''); },
+      isExit: function (e) { return e === EXIT_TAG; }
+    };
+  }
+
   function compile(cSource) {
     return init().then(function () {
-      var inputPos = 0;
-      var watOutput = '';
-      var errorOutput = '';
+      var inputBytes = new TextEncoder().encode(cSource);
+      var ctx = createWasiImports(inputBytes);
+      var instance = new WebAssembly.Instance(compiledModule, ctx.imports);
+      ctx.setMemory(instance.exports.memory);
 
-      return moduleFactory({
-        noInitialRun: true,
-        stdin: function () {
-          if (inputPos < cSource.length) {
-            return cSource.charCodeAt(inputPos++);
-          }
-          return null;
-        },
-        print: function (text) {
-          watOutput += text + '\n';
-        },
-        printErr: function (text) {
-          errorOutput += text + '\n';
+      try {
+        instance.exports._start();
+      } catch (e) {
+        if (!ctx.isExit(e)) throw e;
+        if (ctx.exitCode !== 0) {
+          throw new Error(ctx.stderr || 'Compiler exited with code ' + ctx.exitCode);
         }
-      }).then(function (module) {
-        try {
-          module.callMain([]);
-        } catch (e) {
-          if (e && e.name === 'ExitStatus' && e.status === 0) {
-            // Normal exit
-          } else if (e && (e.name === 'ExitStatus' || e.status !== undefined)) {
-            throw new Error(errorOutput || 'Compiler exited with code ' + (e.status || 1));
-          } else {
-            throw e;
-          }
-        }
+      }
 
-        if (errorOutput && !watOutput) {
-          throw new Error(errorOutput);
-        }
+      if (ctx.stderr && !ctx.stdout) {
+        throw new Error(ctx.stderr);
+      }
 
-        return watOutput;
-      });
+      return ctx.stdout;
     });
   }
 

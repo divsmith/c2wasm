@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Dev tooling for c2wasm — only used for test runner (wabt)",
+  "devDependencies": {
+    "wabt": "^1.0.36"
+  }
+}

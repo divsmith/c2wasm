@@ -23,7 +23,7 @@ The browser demo shows the full pipeline:
 C source  →  [c2wasm compiler]  →  WAT (WebAssembly Text)  →  [wabt.js]  →  WASM binary  →  runs in browser
 ```
 
-Everything runs client-side. The compiler itself was compiled to WebAssembly with Emscripten and ships as a single JS file.
+Everything runs client-side. The compiler itself was compiled to a 229 KB WASM binary using [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) (standard WASI target).
 
 ---
 
@@ -34,7 +34,7 @@ Everything runs client-side. The compiler itself was compiled to WebAssembly wit
 - **WAT inspector** — view the generated WebAssembly Text Format to see exactly what the compiler emitted
 - **Your own files** — create new C files, edit them freely, and they persist in your browser's local storage across sessions
 - **Built-in examples** — Hello World, Fibonacci, Linked List traversal, and Bubble Sort to get started
-- **Self-hosting** — the compiler is written in the same C subset it compiles; see `tools/bootstrap.sh` for the 3-stage verification
+- **Self-hosting** — the compiler is written in the same C subset it compiles; see `tools/bootstrap.js` for the 3-stage verification
 
 ---
 
@@ -94,8 +94,8 @@ Source text
 
 ### Browser Integration
 
-- **Compiler → WASM**: compiled with Emscripten (`emcc -s SINGLE_FILE=1`), embedded in `compiler.js`
-- **Stdin/stdout redirection**: Emscripten callbacks feed C source character-by-character and capture WAT output
+- **Compiler → WASM**: compiled with [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) to a standalone 229 KB `.wasm` file (no JavaScript runtime bundled)
+- **Stdin/stdout redirection**: a minimal WASI shim (`compiler-api.js`) feeds C source as stdin bytes and captures WAT from stdout
 - **WAT → WASM binary**: [wabt.js](https://github.com/WebAssembly/wabt) assembles WAT to a binary in the browser
 - **Execution**: `WebAssembly.instantiate` with a WASI shim; `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; programs using `getchar` read from the stdin input box in the demo UI
 
@@ -113,7 +113,7 @@ Source text
 
 ## Self-Hosting Verification
 
-The compiler can compile itself. `tools/bootstrap.sh` performs a 3-stage bootstrap:
+The compiler can compile itself. `tools/bootstrap.js` performs a 3-stage bootstrap:
 
 ```
 Stage 1: GCC compiles c2wasm.c → native binary (s1)
@@ -125,28 +125,39 @@ diff s1.wat s3.wat  ← must be empty
 
 A clean diff proves that the compiler, when run inside WebAssembly, produces byte-for-byte identical output to the GCC-compiled version.
 
+> Both shell-based (`bootstrap.sh`) and Node.js-based (`bootstrap.js`) bootstrap scripts are provided. `make test` automatically picks whichever toolchain is available.
+
 ---
 
 ## Local Development
 
 ### Prerequisites
 
-- GCC (for native build and tests)
+- GCC (for native build)
+- **Node.js ≥ 18** + `npm install` — for test runner and bootstrap (uses [wabt](https://www.npmjs.com/package/wabt) npm package)
 - Python 3 (for `make serve`)
-- Emscripten (`emcc`) — only needed to rebuild `compiler.js`
+- [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) — only needed to rebuild `compiler.wasm`
+
+> **Legacy toolchain:** `wat2wasm` + `wasmtime` still work — `make test` falls back to them automatically when Node.js/wabt aren't available.
 
 ### Build & Test
 
 ```bash
+# Install test dependencies (one time)
+npm install
+
 # Build the native compiler
 cd compiler
 make
 
-# Run the test suite (30 programs, from return-0 to structs+strings)
+# Run the test suite (39 programs + bootstrap validation)
 make test
 
-# Rebuild the WASM compiler (requires emcc)
-make wasm
+# Rebuild the WASM compiler for the demo (requires wasi-sdk)
+WASI_SDK=/path/to/wasi-sdk make wasm
+
+# Legacy: rebuild with Emscripten instead
+make wasm-emcc
 
 # Serve the demo locally (sets required cross-origin isolation headers)
 make serve
@@ -160,20 +171,7 @@ make serve
 
 ### Test Programs
 
-`compiler/tests/programs/` contains 30 progressive test programs:
-
-```
-00_return0.c        → 10_while.c         → 20_struct_field.c
-01_return42.c       → 11_for.c           → 21_struct_ptr.c
-02_arithmetic.c     → 12_nested_loop.c   → 22_struct_malloc.c
-03_variables.c      → 13_array.c         → 23_linked_list.c
-04_if_else.c        → 14_pointer.c       → 24_recursive_sum.c
-05_comparison.c     → 15_address_of.c    → 25_bubble_sort.c
-06_function.c       → 16_global.c        → 26_string_ops.c
-07_recursion.c      → 17_printf_d.c      → 27_multiarg_printf.c
-08_fibonacci.c      → 18_putchar.c       → 28_break_continue.c
-09_multiple_funcs.c → 19_scanf_sim.c     → 29_char_string.c
-```
+`compiler/tests/programs/` contains 39 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, and array initializers.
 
 ---
 
@@ -182,22 +180,27 @@ make serve
 ```
 wasm-c/
 ├── compiler/
-│   ├── src/c2wasm.c          ← the compiler (2,800 lines of C)
+│   ├── src/c2wasm.c          ← the compiler (~3,000 lines of C)
 │   ├── Makefile
 │   └── tests/
-│       ├── run_tests.sh
-│       └── programs/         ← 30 test programs + expected output
+│       ├── run_tests.js      ← Node.js test runner (wabt + WASI shim)
+│       ├── run_tests.sh      ← shell test runner (legacy: wat2wasm + wasmtime)
+│       └── programs/         ← 39 test programs + expected output
 ├── demo/
 │   ├── index.html            ← browser UI
 │   ├── main.js               ← editor, pipeline, localStorage file management
-│   ├── compiler-api.js       ← Emscripten wrapper
-│   ├── compiler.js           ← compiled compiler (Emscripten, SINGLE_FILE=1)
+│   ├── compiler-api.js       ← WASI shim — loads and runs compiler.wasm
+│   ├── compiler.wasm         ← compiled compiler (wasi-sdk, 229 KB)
+│   ├── wasm-worker.js        ← Web Worker for running compiled programs
 │   └── style.css             ← VS Code-inspired dark theme
 ├── tools/
-│   └── bootstrap.sh          ← 3-stage self-hosting verification
+│   ├── bootstrap.js          ← 3-stage self-hosting verification (Node.js)
+│   ├── bootstrap.sh          ← 3-stage self-hosting verification (legacy)
+│   └── wasi-shim.js          ← shared WASI shim for Node.js tooling
+├── package.json              ← dev dependency: wabt
 └── .github/
     └── workflows/
-        └── pages.yml         ← auto-deploy demo/ to GitHub Pages
+        └── pages.yml         ← auto-deploy demo/ to GitHub Pages (wasi-sdk)
 ```
 
 ---
