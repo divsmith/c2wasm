@@ -564,6 +564,114 @@
       '    name[i] = 0;\n' +
       '    printf("Hello, %s!\\n", name);\n' +
       '    return 0;\n' +
+      '}\n',
+
+    func_ptrs:
+      '// Function Pointers\n' +
+      '// Features: function pointer variables, callbacks\n' +
+      '\n' +
+      'int add(int a, int b) { return a + b; }\n' +
+      'int sub(int a, int b) { return a - b; }\n' +
+      'int mul(int a, int b) { return a * b; }\n' +
+      '\n' +
+      'int apply(int (*fn)(int, int), int x, int y) {\n' +
+      '    return fn(x, y);\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    int (*op)(int, int);\n' +
+      '\n' +
+      '    printf("Assign and call via pointer:\\n");\n' +
+      '    op = add; printf("  op=add: op(10, 5) = %d\\n", op(10, 5));\n' +
+      '    op = sub; printf("  op=sub: op(10, 5) = %d\\n", op(10, 5));\n' +
+      '    op = mul; printf("  op=mul: op(6, 7)  = %d\\n", op(6, 7));\n' +
+      '\n' +
+      '    printf("\\nPass function as argument:\\n");\n' +
+      '    printf("  apply(add, 20, 22) = %d\\n", apply(add, 20, 22));\n' +
+      '    printf("  apply(mul, 6, 7)   = %d\\n", apply(mul, 6, 7));\n' +
+      '    printf("  apply(sub, 100, 58) = %d\\n", apply(sub, 100, 58));\n' +
+      '\n' +
+      '    printf("\\nSwap operations:\\n");\n' +
+      '    op = add; printf("  add(3, 4) = %d\\n", op(3, 4));\n' +
+      '    op = mul; printf("  mul(3, 4) = %d\\n", op(3, 4));\n' +
+      '\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    string_arrays:
+      '// String Arrays\n' +
+      '// Features: global char* array literals, string functions\n' +
+      '\n' +
+      'char *colors[] = {"red", "green", "blue", "yellow", "purple"};\n' +
+      'char *sizes[]  = {"small", "medium", "large"};\n' +
+      '\n' +
+      'int main() {\n' +
+      '    int i;\n' +
+      '    int j;\n' +
+      '    printf("Colors:\\n");\n' +
+      '    for (i = 0; i < 5; i = i + 1) {\n' +
+      '        printf("  [%d] %s (len=%d)\\n", i, colors[i], strlen(colors[i]));\n' +
+      '    }\n' +
+      '    printf("\\nSizes:\\n");\n' +
+      '    for (i = 0; i < 3; i = i + 1) {\n' +
+      '        printf("  [%d] %s\\n", i, sizes[i]);\n' +
+      '    }\n' +
+      '    printf("\\nSome combinations:\\n");\n' +
+      '    for (i = 0; i < 3; i = i + 1) {\n' +
+      '        for (j = 0; j < 3; j = j + 1) {\n' +
+      '            printf("  %s %s\\n", sizes[i], colors[j]);\n' +
+      '        }\n' +
+      '    }\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    typedef_fnptr:
+      '// Typedef Function Pointers\n' +
+      '// Features: typedef for function pointer types\n' +
+      '\n' +
+      'typedef int (*BinOp)(int, int);\n' +
+      '\n' +
+      'int add(int a, int b) { return a + b; }\n' +
+      'int sub(int a, int b) { return a - b; }\n' +
+      'int mul(int a, int b) { return a * b; }\n' +
+      '\n' +
+      'int apply(BinOp fn, int x, int y) {\n' +
+      '    return fn(x, y);\n' +
+      '}\n' +
+      '\n' +
+      'int fold(BinOp fn, int *data, int n) {\n' +
+      '    int result;\n' +
+      '    int i;\n' +
+      '    result = data[0];\n' +
+      '    for (i = 1; i < n; i = i + 1) {\n' +
+      '        result = fn(result, data[i]);\n' +
+      '    }\n' +
+      '    return result;\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    BinOp op;\n' +
+      '    int *nums;\n' +
+      '    int i;\n' +
+      '\n' +
+      '    printf("Typedef\'d function pointer:\\n");\n' +
+      '    op = add; printf("  op=add: op(10, 5) = %d\\n", op(10, 5));\n' +
+      '    op = sub; printf("  op=sub: op(10, 5) = %d\\n", op(10, 5));\n' +
+      '    op = mul; printf("  op=mul: op(6, 7)  = %d\\n", op(6, 7));\n' +
+      '\n' +
+      '    printf("\\nPass BinOp as argument:\\n");\n' +
+      '    printf("  apply(add, 20, 22) = %d\\n", apply(add, 20, 22));\n' +
+      '    printf("  apply(mul, 6, 7)   = %d\\n", apply(mul, 6, 7));\n' +
+      '\n' +
+      '    printf("\\nFold over [1, 2, 3, 4, 5]:\\n");\n' +
+      '    nums = malloc(20);\n' +
+      '    for (i = 0; i < 5; i = i + 1) {\n' +
+      '        nums[i] = i + 1;\n' +
+      '    }\n' +
+      '    printf("  sum:     %d\\n", fold(add, nums, 5));\n' +
+      '    printf("  product: %d\\n", fold(mul, nums, 5));\n' +
+      '\n' +
+      '    return 0;\n' +
       '}\n'
   };
 
