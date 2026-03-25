@@ -5782,14 +5782,26 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                 else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
                 else { bv_push(o, 0x75); }
             }
-            li = find_local("__atmp");
-            bv_push(o, 0x21); bv_u32(o, li);
-            gen_expr_bin(o, tgt->c0);
-            bv_push(o, 0x20); bv_u32(o, li);
-            if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, li);
+            if (n->ival == TOK_EQ && bin_last_float) {
+                /* f64 value: use __ftmp and f64.store */
+                li = find_local("__ftmp");
+                bv_push(o, 0x21); bv_u32(o, li);              /* local.set __ftmp */
+                gen_expr_bin(o, tgt->c0);                      /* address */
+                bv_push(o, 0x20); bv_u32(o, li);              /* local.get __ftmp */
+                bv_push(o, 0x39); bv_u32(o, 3); bv_u32(o, 0); /* f64.store align=3 */
+                bv_push(o, 0x20); bv_u32(o, li);              /* return f64 value */
+                bin_last_float = 2;
+            } else {
+                li = find_local("__atmp");
+                bv_push(o, 0x21); bv_u32(o, li);
+                gen_expr_bin(o, tgt->c0);
+                bv_push(o, 0x20); bv_u32(o, li);
+                if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+                else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+                else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+                bv_push(o, 0x20); bv_u32(o, li);
+                bin_last_float = 0;
+            }
         } else if (tgt->kind == ND_MEMBER) {
             off = resolve_field_offset(tgt->sval);
             if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
@@ -8475,6 +8487,7 @@ void gen_module_bin(struct Node *prog) {
     pif1[0] = 1; /* f64 param */
     bin_add_func_f("__print_float", 1, pif1, 0, 0);
     for (i = 0; i < prog->ival2; i++) {
+        if (prog->list[i]->c0 == (struct Node *)0) continue; /* skip forward declarations */
         fi2 = find_funcsig(prog->list[i]->sval);
         nparams2 = prog->list[i]->ival2;
         ret_flt = 0;
