@@ -920,8 +920,8 @@ int func_param_is_float(char *name, int idx) {
 
 struct FnPtrVar {
     char *name;
-    int nparams;
-    int is_void;  /* 0=returns i32, 1=returns void */
+    int fp_nparams;
+    int fp_is_void;  /* 0=returns i32, 1=returns void */
 };
 
 #define MAX_FNPTR_VARS 512
@@ -944,14 +944,14 @@ void register_fnptr_var(char *name, int nparams, int is_void) {
     if (nfnptr_vars >= MAX_FNPTR_VARS) return;
     fnptr_vars[nfnptr_vars] = (struct FnPtrVar *)malloc(sizeof(struct FnPtrVar));
     fnptr_vars[nfnptr_vars]->name = strdupn(name, 127);
-    fnptr_vars[nfnptr_vars]->nparams = nparams;
-    fnptr_vars[nfnptr_vars]->is_void = is_void;
+    fnptr_vars[nfnptr_vars]->fp_nparams = nparams;
+    fnptr_vars[nfnptr_vars]->fp_is_void = is_void;
     nfnptr_vars++;
 }
 
 struct FnPtrVar *find_fnptr_var(char *name) {
     int i;
-    for (i = 0; i < nfnptr_vars; i++) {
+    for (i = nfnptr_vars - 1; i >= 0; i--) {
         if (strcmp(fnptr_vars[i]->name, name) == 0) return fnptr_vars[i];
     }
     return (struct FnPtrVar *)0;
@@ -1351,8 +1351,8 @@ struct Node *parse_atom(void) {
                 /* indirect call through function pointer variable */
                 c = node_new(ND_CALL_INDIRECT, n->nline, n->ncol);
                 c->c0 = n; /* callee expression (ND_IDENT for the fnptr var) */
-                c->ival = fpv->nparams;
-                c->ival3 = fpv->is_void;
+                c->ival = fpv->fp_nparams;
+                c->ival3 = fpv->fp_is_void;
             } else {
                 c = node_new(ND_CALL, n->nline, n->ncol);
                 c->sval = n->sval;
@@ -4706,8 +4706,8 @@ void gen_module(struct Node *prog) {
         for (fti = 0; fti < nfnptr_vars; fti++) {
             int np;
             int vd;
-            np = fnptr_vars[fti]->nparams;
-            vd = fnptr_vars[fti]->is_void;
+            np = fnptr_vars[fti]->fp_nparams;
+            vd = fnptr_vars[fti]->fp_is_void;
             if (np <= 16) {
                 need_types[np] = need_types[np] | (1 << vd);
             }
@@ -6107,10 +6107,10 @@ void bv_section(struct ByteVec *out, int id, struct ByteVec *content) {
 #define MAX_TYPE_PARAMS 16
 
 struct BinTypeEntry {
-    int nparams;
-    int has_result;
+    int bt_nparams;
+    int bt_has_result;
     int result_is_float;
-    int *param_is_float;  /* malloc'd array of per-param float flags */
+    int *bt_pif;  /* malloc'd array of per-param float flags */
 };
 
 struct BinTypeEntry **bin_types;
@@ -6121,12 +6121,12 @@ int bin_find_or_add_type_f(int nparams, int *pif, int has_result, int rif) {
     int j;
     int match;
     for (i = 0; i < bin_ntypes; i++) {
-        if (bin_types[i]->nparams != nparams) continue;
-        if (bin_types[i]->has_result != has_result) continue;
+        if (bin_types[i]->bt_nparams != nparams) continue;
+        if (bin_types[i]->bt_has_result != has_result) continue;
         if (bin_types[i]->result_is_float != rif) continue;
         match = 1;
         for (j = 0; j < nparams && j < 16; j++) {
-            if (bin_types[i]->param_is_float[j] != pif[j]) { match = 0; break; }
+            if (bin_types[i]->bt_pif[j] != pif[j]) { match = 0; break; }
         }
         if (match) return i;
     }
@@ -6135,12 +6135,12 @@ int bin_find_or_add_type_f(int nparams, int *pif, int has_result, int rif) {
         exit(1);
     }
     bin_types[bin_ntypes] = (struct BinTypeEntry *)malloc(sizeof(struct BinTypeEntry));
-    bin_types[bin_ntypes]->nparams = nparams;
-    bin_types[bin_ntypes]->has_result = has_result;
+    bin_types[bin_ntypes]->bt_nparams = nparams;
+    bin_types[bin_ntypes]->bt_has_result = has_result;
     bin_types[bin_ntypes]->result_is_float = rif;
-    bin_types[bin_ntypes]->param_is_float = (int *)malloc(16 * sizeof(int));
+    bin_types[bin_ntypes]->bt_pif = (int *)malloc(16 * sizeof(int));
     for (j = 0; j < nparams && j < 16; j++) {
-        bin_types[bin_ntypes]->param_is_float[j] = pif[j];
+        bin_types[bin_ntypes]->bt_pif[j] = pif[j];
     }
     bin_ntypes++;
     return bin_ntypes - 1;
@@ -6160,8 +6160,8 @@ int bin_find_or_add_type(int nparams, int has_result) {
 struct BinFuncEntry {
     char *name;
     int idx;
-    int nparams;
-    int has_result;
+    int bf_nparams;
+    int bf_has_result;
     int type_idx;
 };
 
@@ -6178,8 +6178,8 @@ int bin_add_func(char *name, int nparams, int has_result) {
     bin_funcs[bin_nfuncs] = (struct BinFuncEntry *)malloc(sizeof(struct BinFuncEntry));
     bin_funcs[bin_nfuncs]->name = name;
     bin_funcs[bin_nfuncs]->idx = bin_nfuncs;
-    bin_funcs[bin_nfuncs]->nparams = nparams;
-    bin_funcs[bin_nfuncs]->has_result = has_result;
+    bin_funcs[bin_nfuncs]->bf_nparams = nparams;
+    bin_funcs[bin_nfuncs]->bf_has_result = has_result;
     bin_funcs[bin_nfuncs]->type_idx = ti;
     bin_nfuncs++;
     return bin_nfuncs - 1;
@@ -6195,8 +6195,8 @@ int bin_add_func_f(char *name, int nparams, int *pif, int has_result, int rif) {
     bin_funcs[bin_nfuncs] = (struct BinFuncEntry *)malloc(sizeof(struct BinFuncEntry));
     bin_funcs[bin_nfuncs]->name = name;
     bin_funcs[bin_nfuncs]->idx = bin_nfuncs;
-    bin_funcs[bin_nfuncs]->nparams = nparams;
-    bin_funcs[bin_nfuncs]->has_result = has_result;
+    bin_funcs[bin_nfuncs]->bf_nparams = nparams;
+    bin_funcs[bin_nfuncs]->bf_has_result = has_result;
     bin_funcs[bin_nfuncs]->type_idx = ti;
     bin_nfuncs++;
     return bin_nfuncs - 1;
@@ -6302,739 +6302,812 @@ void emit_f64_const_bin(struct ByteVec *o, char *s) {
 
 /* --- Binary expression codegen --- */
 
-void gen_expr_bin(struct ByteVec *o, struct Node *n) {
+/* --- Binary expression codegen --- */
+
+typedef void (*GenExprBinFn)(struct ByteVec *, struct Node *);
+GenExprBinFn *gen_expr_bin_tbl;
+
+void gen_expr_bin(struct ByteVec *o, struct Node *n);
+
+void gen_expr_bin_int_lit(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_float_lit(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_cast(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_ident(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_assign(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_unary(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_binary(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_call(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_str_lit(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_call_indirect(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_member(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_sizeof(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_subscript(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_post_inc_dec(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_ternary(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_error(struct ByteVec *o, struct Node *n);
+
+void gen_expr_bin_int_lit(struct ByteVec *o, struct Node *n) {
+    bv_push(o, 0x41); bv_i32(o, n->ival);
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_float_lit(struct ByteVec *o, struct Node *n) {
+    emit_f64_const_bin(o, n->sval);
+    bin_last_float = 2;
+}
+
+void gen_expr_bin_cast(struct ByteVec *o, struct Node *n) {
+    gen_expr_bin(o, n->c0);
+    if (n->ival >= 1 && !bin_last_float) {
+        bv_push(o, 0xB7); /* f64.convert_i32_s */
+        bin_last_float = 2;
+    } else if (n->ival == 0 && bin_last_float) {
+        bv_push(o, 0xAA); /* i32.trunc_f64_s */
+        bin_last_float = 0;
+    }
+}
+
+void gen_expr_bin_ident(struct ByteVec *o, struct Node *n) {
+    if (find_global(n->sval) >= 0) {
+        bv_push(o, 0x23); bv_u32(o, bin_global_idx(n->sval));
+    } else {
+        bv_push(o, 0x20); bv_u32(o, find_local(n->sval));
+    }
+    bin_last_float = var_is_float(n->sval);
+}
+
+void gen_expr_bin_assign(struct ByteVec *o, struct Node *n) {
     struct Node *tgt;
     char *name;
     int is_global;
     int off;
     int esz;
+    int li;
+
+    tgt = n->c0;
+    if (tgt->kind == ND_IDENT) {
+        int tgt_float;
+        int ftmp_li;
+        int atmp_li;
+        name = tgt->sval;
+        is_global = (find_global(name) >= 0);
+        tgt_float = var_is_float(name);
+        if (n->ival == TOK_EQ) {
+            gen_expr_bin(o, n->c1);
+            /* convert if needed */
+            if (tgt_float && !bin_last_float) {
+                bv_push(o, 0xB7); /* f64.convert_i32_s */
+                bin_last_float = 2;
+            } else if (!tgt_float && bin_last_float) {
+                bv_push(o, 0xAA); /* i32.trunc_f64_s */
+                bin_last_float = 0;
+            }
+        } else if (n->ival == TOK_PLUS_EQ) {
+            if (is_global) {
+                bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+            } else {
+                bv_push(o, 0x20); bv_u32(o, find_local(name));
+            }
+            gen_expr_bin(o, n->c1);
+            if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
+            else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
+            if (tgt_float) { bv_push(o, 0xA0); } else { bv_push(o, 0x6A); }
+        } else if (n->ival == TOK_MINUS_EQ) {
+            if (is_global) {
+                bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+            } else {
+                bv_push(o, 0x20); bv_u32(o, find_local(name));
+            }
+            gen_expr_bin(o, n->c1);
+            if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
+            else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
+            if (tgt_float) { bv_push(o, 0xA1); } else { bv_push(o, 0x6B); }
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            if (is_global) {
+                bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+            } else {
+                bv_push(o, 0x20); bv_u32(o, find_local(name));
+            }
+            gen_expr_bin(o, n->c1);
+            if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+            else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+            else { bv_push(o, 0x75); }
+        }
+        if (is_global) {
+            if (tgt_float) {
+                ftmp_li = find_local("__ftmp");
+                bv_push(o, 0x21); bv_u32(o, ftmp_li);
+                bv_push(o, 0x20); bv_u32(o, ftmp_li);
+                bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
+                bv_push(o, 0x20); bv_u32(o, ftmp_li);
+            } else {
+                atmp_li = find_local("__atmp");
+                bv_push(o, 0x21); bv_u32(o, atmp_li);
+                bv_push(o, 0x20); bv_u32(o, atmp_li);
+                bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
+                bv_push(o, 0x20); bv_u32(o, atmp_li);
+            }
+        } else {
+            if (tgt_float) {
+                bv_push(o, 0x21); bv_u32(o, find_local(name)); /* local.set */
+                bv_push(o, 0x20); bv_u32(o, find_local(name)); /* local.get */
+            } else {
+                bv_push(o, 0x22); bv_u32(o, find_local(name)); /* local.tee */
+            }
+        }
+        bin_last_float = tgt_float;
+    } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
+        esz = expr_elem_size(tgt->c0);
+        if (n->ival == TOK_EQ) {
+            gen_expr_bin(o, n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6A);
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6B);
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+            else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+            else { bv_push(o, 0x75); }
+        }
+        li = find_local("__atmp");
+        bv_push(o, 0x21); bv_u32(o, li);
+        gen_expr_bin(o, tgt->c0);
+        bv_push(o, 0x20); bv_u32(o, li);
+        if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x20); bv_u32(o, li);
+    } else if (tgt->kind == ND_MEMBER) {
+        off = resolve_field_offset(tgt->sval);
+        if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
+        if (n->ival == TOK_EQ) {
+            gen_expr_bin(o, n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6A);
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6B);
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+            gen_expr_bin(o, n->c1);
+            if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+            else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+            else { bv_push(o, 0x75); }
+        }
+        li = find_local("__atmp");
+        bv_push(o, 0x21); bv_u32(o, li);
+        gen_expr_bin(o, tgt->c0);
+        if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+        bv_push(o, 0x20); bv_u32(o, li);
+        bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+        bv_push(o, 0x20); bv_u32(o, li);
+    } else if (tgt->kind == ND_SUBSCRIPT) {
+        esz = expr_elem_size(tgt->c0);
+        if (n->ival == TOK_EQ) {
+            gen_expr_bin(o, n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            gen_expr_bin(o, tgt->c1);
+            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6A);
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            gen_expr_bin(o, tgt->c1);
+            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6B);
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            gen_expr_bin(o, tgt->c1);
+            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+            else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+            else { bv_push(o, 0x75); }
+        }
+        li = find_local("__atmp");
+        bv_push(o, 0x21); bv_u32(o, li);
+        gen_expr_bin(o, tgt->c0);
+        gen_expr_bin(o, tgt->c1);
+        if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        bv_push(o, 0x20); bv_u32(o, li);
+        if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x20); bv_u32(o, li);
+    }
+}
+
+void gen_expr_bin_unary(struct ByteVec *o, struct Node *n) {
+    int esz;
+
+    if (n->ival == TOK_MINUS) {
+        int atmp_neg;
+        gen_expr_bin(o, n->c0);
+        if (bin_last_float) {
+            bv_push(o, 0x9A); /* f64.neg */
+        } else {
+            atmp_neg = find_local("__atmp");
+            bv_push(o, 0x21); bv_u32(o, atmp_neg); /* local.set __atmp */
+            bv_push(o, 0x41); bv_i32(o, 0);        /* i32.const 0 */
+            bv_push(o, 0x20); bv_u32(o, atmp_neg); /* local.get __atmp */
+            bv_push(o, 0x6B);                      /* i32.sub */
+            bin_last_float = 0;
+        }
+    } else if (n->ival == TOK_BANG) {
+        gen_expr_bin(o, n->c0);
+        bv_push(o, 0x45);
+    } else if (n->ival == TOK_TILDE) {
+        bv_push(o, 0x41); bv_i32(o, -1);
+        gen_expr_bin(o, n->c0);
+        bv_push(o, 0x73);
+    } else if (n->ival == TOK_STAR) {
+        esz = expr_elem_size(n->c0);
+        gen_expr_bin(o, n->c0);
+        if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+    } else if (n->ival == TOK_AMP) {
+        error(n->nline, n->ncol, "cannot take address of this expression");
+    }
+}
+
+void gen_expr_bin_binary(struct ByteVec *o, struct Node *n) {
+    int left_float;
+    int right_float;
+    int ftmp_bin;
+    gen_expr_bin(o, n->c0);
+    left_float = bin_last_float;
+    gen_expr_bin(o, n->c1);
+    right_float = bin_last_float;
+    if (left_float || right_float) {
+        if (left_float && !right_float) {
+            /* stack: [f64, i32] - convert right(i32) to f64 */
+            bv_push(o, 0xB7); /* f64.convert_i32_s */
+        } else if (!left_float && right_float) {
+            /* stack: [i32, f64] - save right, convert left, restore right */
+            ftmp_bin = find_local("__ftmp");
+            bv_push(o, 0x21); bv_u32(o, ftmp_bin); /* local.set __ftmp = right */
+            bv_push(o, 0xB7); /* f64.convert_i32_s converts left */
+            bv_push(o, 0x20); bv_u32(o, ftmp_bin); /* local.get __ftmp */
+        }
+        if (n->ival == TOK_PLUS) { bv_push(o, 0xA0); bin_last_float = 2; }
+        else if (n->ival == TOK_MINUS) { bv_push(o, 0xA1); bin_last_float = 2; }
+        else if (n->ival == TOK_STAR) { bv_push(o, 0xA2); bin_last_float = 2; }
+        else if (n->ival == TOK_SLASH) { bv_push(o, 0xA3); bin_last_float = 2; }
+        else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x61); bin_last_float = 0; }
+        else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x62); bin_last_float = 0; }
+        else if (n->ival == TOK_LT) { bv_push(o, 0x63); bin_last_float = 0; }
+        else if (n->ival == TOK_GT) { bv_push(o, 0x64); bin_last_float = 0; }
+        else if (n->ival == TOK_LT_EQ) { bv_push(o, 0x65); bin_last_float = 0; }
+        else if (n->ival == TOK_GT_EQ) { bv_push(o, 0x66); bin_last_float = 0; }
+        else { error(n->nline, n->ncol, "unsupported float binary op"); }
+    } else {
+        if (n->ival == TOK_PLUS) { bv_push(o, 0x6A); }
+        else if (n->ival == TOK_MINUS) { bv_push(o, 0x6B); }
+        else if (n->ival == TOK_STAR) { bv_push(o, 0x6C); }
+        else if (n->ival == TOK_SLASH) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x6E); } else { bv_push(o, 0x6D); } }
+        else if (n->ival == TOK_PERCENT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x70); } else { bv_push(o, 0x6F); } }
+        else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x46); }
+        else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x47); }
+        else if (n->ival == TOK_LT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x49); } else { bv_push(o, 0x48); } }
+        else if (n->ival == TOK_GT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4B); } else { bv_push(o, 0x4A); } }
+        else if (n->ival == TOK_LT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4D); } else { bv_push(o, 0x4C); } }
+        else if (n->ival == TOK_GT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4F); } else { bv_push(o, 0x4E); } }
+        else if (n->ival == TOK_AMP_AMP) { bv_push(o, 0x71); }
+        else if (n->ival == TOK_PIPE_PIPE) { bv_push(o, 0x72); }
+        else if (n->ival == TOK_AMP) { bv_push(o, 0x71); }
+        else if (n->ival == TOK_PIPE) { bv_push(o, 0x72); }
+        else if (n->ival == TOK_LSHIFT) { bv_push(o, 0x74); }
+        else if (n->ival == TOK_RSHIFT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x76); } else { bv_push(o, 0x75); } }
+        else if (n->ival == TOK_CARET) { bv_push(o, 0x73); }
+        else { error(n->nline, n->ncol, "unsupported binary operator"); }
+        bin_last_float = 0;
+    }
+}
+
+void gen_expr_bin_call(struct ByteVec *o, struct Node *n) {
     char *fmt;
     int flen;
     int ai;
     int fi;
     int sid;
     int i;
-    int li;
 
-    switch (n->kind) {
-    case ND_INT_LIT:
-        bv_push(o, 0x41); bv_i32(o, n->ival);
-        bin_last_float = 0;
-        break;
-    case ND_FLOAT_LIT:
-        emit_f64_const_bin(o, n->sval);
-        bin_last_float = 2;
-        break;
-    case ND_CAST:
-        gen_expr_bin(o, n->c0);
-        if (n->ival >= 1 && !bin_last_float) {
-            bv_push(o, 0xB7); /* f64.convert_i32_s */
-            bin_last_float = 2;
-        } else if (n->ival == 0 && bin_last_float) {
-            bv_push(o, 0xAA); /* i32.trunc_f64_s */
-            bin_last_float = 0;
+    if (strcmp(n->sval, "printf") == 0) {
+        if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
+            error(n->nline, n->ncol, "printf requires string literal format");
         }
-        break;
-    case ND_IDENT:
-        if (find_global(n->sval) >= 0) {
-            bv_push(o, 0x23); bv_u32(o, bin_global_idx(n->sval));
-        } else {
-            bv_push(o, 0x20); bv_u32(o, find_local(n->sval));
-        }
-        bin_last_float = var_is_float(n->sval);
-        break;
-    case ND_ASSIGN:
-        tgt = n->c0;
-        if (tgt->kind == ND_IDENT) {
-            int tgt_float;
-            int ftmp_li;
-            int atmp_li;
-            name = tgt->sval;
-            is_global = (find_global(name) >= 0);
-            tgt_float = var_is_float(name);
-            if (n->ival == TOK_EQ) {
-                gen_expr_bin(o, n->c1);
-                /* convert if needed */
-                if (tgt_float && !bin_last_float) {
-                    bv_push(o, 0xB7); /* f64.convert_i32_s */
-                    bin_last_float = 2;
-                } else if (!tgt_float && bin_last_float) {
-                    bv_push(o, 0xAA); /* i32.trunc_f64_s */
-                    bin_last_float = 0;
-                }
-            } else if (n->ival == TOK_PLUS_EQ) {
-                if (is_global) {
-                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
-                } else {
-                    bv_push(o, 0x20); bv_u32(o, find_local(name));
-                }
-                gen_expr_bin(o, n->c1);
-                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
-                else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
-                if (tgt_float) { bv_push(o, 0xA0); } else { bv_push(o, 0x6A); }
-            } else if (n->ival == TOK_MINUS_EQ) {
-                if (is_global) {
-                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
-                } else {
-                    bv_push(o, 0x20); bv_u32(o, find_local(name));
-                }
-                gen_expr_bin(o, n->c1);
-                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
-                else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
-                if (tgt_float) { bv_push(o, 0xA1); } else { bv_push(o, 0x6B); }
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                if (is_global) {
-                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
-                } else {
-                    bv_push(o, 0x20); bv_u32(o, find_local(name));
-                }
-                gen_expr_bin(o, n->c1);
-                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
-                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
-                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
-                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
-                else { bv_push(o, 0x75); }
-            }
-            if (is_global) {
-                if (tgt_float) {
-                    ftmp_li = find_local("__ftmp");
-                    bv_push(o, 0x21); bv_u32(o, ftmp_li);
-                    bv_push(o, 0x20); bv_u32(o, ftmp_li);
-                    bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
-                    bv_push(o, 0x20); bv_u32(o, ftmp_li);
-                } else {
-                    atmp_li = find_local("__atmp");
-                    bv_push(o, 0x21); bv_u32(o, atmp_li);
-                    bv_push(o, 0x20); bv_u32(o, atmp_li);
-                    bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
-                    bv_push(o, 0x20); bv_u32(o, atmp_li);
-                }
-            } else {
-                if (tgt_float) {
-                    bv_push(o, 0x21); bv_u32(o, find_local(name)); /* local.set */
-                    bv_push(o, 0x20); bv_u32(o, find_local(name)); /* local.get */
-                } else {
-                    bv_push(o, 0x22); bv_u32(o, find_local(name)); /* local.tee */
-                }
-            }
-            bin_last_float = tgt_float;
-        } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
-            esz = expr_elem_size(tgt->c0);
-            if (n->ival == TOK_EQ) {
-                gen_expr_bin(o, n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6A);
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6B);
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
-                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
-                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
-                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
-                else { bv_push(o, 0x75); }
-            }
-            li = find_local("__atmp");
-            bv_push(o, 0x21); bv_u32(o, li);
-            gen_expr_bin(o, tgt->c0);
-            bv_push(o, 0x20); bv_u32(o, li);
-            if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, li);
-        } else if (tgt->kind == ND_MEMBER) {
-            off = resolve_field_offset(tgt->sval);
-            if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
-            if (n->ival == TOK_EQ) {
-                gen_expr_bin(o, n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6A);
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6B);
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-                gen_expr_bin(o, n->c1);
-                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
-                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
-                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
-                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
-                else { bv_push(o, 0x75); }
-            }
-            li = find_local("__atmp");
-            bv_push(o, 0x21); bv_u32(o, li);
-            gen_expr_bin(o, tgt->c0);
-            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-            bv_push(o, 0x20); bv_u32(o, li);
-            bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
-            bv_push(o, 0x20); bv_u32(o, li);
-        } else if (tgt->kind == ND_SUBSCRIPT) {
-            esz = expr_elem_size(tgt->c0);
-            if (n->ival == TOK_EQ) {
-                gen_expr_bin(o, n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                gen_expr_bin(o, tgt->c1);
-                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-                bv_push(o, 0x6A);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6A);
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                gen_expr_bin(o, tgt->c1);
-                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-                bv_push(o, 0x6A);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6B);
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                gen_expr_bin(o, tgt->c1);
-                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-                bv_push(o, 0x6A);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
-                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
-                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
-                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
-                else { bv_push(o, 0x75); }
-            }
-            li = find_local("__atmp");
-            bv_push(o, 0x21); bv_u32(o, li);
-            gen_expr_bin(o, tgt->c0);
-            gen_expr_bin(o, tgt->c1);
-            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-            bv_push(o, 0x6A);
-            bv_push(o, 0x20); bv_u32(o, li);
-            if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, li);
-        }
-        break;
-    case ND_UNARY:
-        if (n->ival == TOK_MINUS) {
-            int atmp_neg;
-            gen_expr_bin(o, n->c0);
-            if (bin_last_float) {
-                bv_push(o, 0x9A); /* f64.neg */
-            } else {
-                atmp_neg = find_local("__atmp");
-                bv_push(o, 0x21); bv_u32(o, atmp_neg); /* local.set __atmp */
-                bv_push(o, 0x41); bv_i32(o, 0);        /* i32.const 0 */
-                bv_push(o, 0x20); bv_u32(o, atmp_neg); /* local.get __atmp */
-                bv_push(o, 0x6B);                      /* i32.sub */
-                bin_last_float = 0;
-            }
-        } else if (n->ival == TOK_BANG) {
-            gen_expr_bin(o, n->c0);
-            bv_push(o, 0x45);
-        } else if (n->ival == TOK_TILDE) {
-            bv_push(o, 0x41); bv_i32(o, -1);
-            gen_expr_bin(o, n->c0);
-            bv_push(o, 0x73);
-        } else if (n->ival == TOK_STAR) {
-            esz = expr_elem_size(n->c0);
-            gen_expr_bin(o, n->c0);
-            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-        } else if (n->ival == TOK_AMP) {
-            error(n->nline, n->ncol, "cannot take address of this expression");
-        }
-        break;
-    case ND_BINARY: {
-        int left_float;
-        int right_float;
-        int ftmp_bin;
-        gen_expr_bin(o, n->c0);
-        left_float = bin_last_float;
-        gen_expr_bin(o, n->c1);
-        right_float = bin_last_float;
-        if (left_float || right_float) {
-            if (left_float && !right_float) {
-                /* stack: [f64, i32] - convert right(i32) to f64 */
-                bv_push(o, 0xB7); /* f64.convert_i32_s */
-            } else if (!left_float && right_float) {
-                /* stack: [i32, f64] - save right, convert left, restore right */
-                ftmp_bin = find_local("__ftmp");
-                bv_push(o, 0x21); bv_u32(o, ftmp_bin); /* local.set __ftmp = right */
-                bv_push(o, 0xB7); /* f64.convert_i32_s converts left */
-                bv_push(o, 0x20); bv_u32(o, ftmp_bin); /* local.get __ftmp */
-            }
-            if (n->ival == TOK_PLUS) { bv_push(o, 0xA0); bin_last_float = 2; }
-            else if (n->ival == TOK_MINUS) { bv_push(o, 0xA1); bin_last_float = 2; }
-            else if (n->ival == TOK_STAR) { bv_push(o, 0xA2); bin_last_float = 2; }
-            else if (n->ival == TOK_SLASH) { bv_push(o, 0xA3); bin_last_float = 2; }
-            else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x61); bin_last_float = 0; }
-            else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x62); bin_last_float = 0; }
-            else if (n->ival == TOK_LT) { bv_push(o, 0x63); bin_last_float = 0; }
-            else if (n->ival == TOK_GT) { bv_push(o, 0x64); bin_last_float = 0; }
-            else if (n->ival == TOK_LT_EQ) { bv_push(o, 0x65); bin_last_float = 0; }
-            else if (n->ival == TOK_GT_EQ) { bv_push(o, 0x66); bin_last_float = 0; }
-            else { error(n->nline, n->ncol, "unsupported float binary op"); }
-        } else {
-            if (n->ival == TOK_PLUS) { bv_push(o, 0x6A); }
-            else if (n->ival == TOK_MINUS) { bv_push(o, 0x6B); }
-            else if (n->ival == TOK_STAR) { bv_push(o, 0x6C); }
-            else if (n->ival == TOK_SLASH) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x6E); } else { bv_push(o, 0x6D); } }
-            else if (n->ival == TOK_PERCENT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x70); } else { bv_push(o, 0x6F); } }
-            else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x46); }
-            else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x47); }
-            else if (n->ival == TOK_LT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x49); } else { bv_push(o, 0x48); } }
-            else if (n->ival == TOK_GT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4B); } else { bv_push(o, 0x4A); } }
-            else if (n->ival == TOK_LT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4D); } else { bv_push(o, 0x4C); } }
-            else if (n->ival == TOK_GT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4F); } else { bv_push(o, 0x4E); } }
-            else if (n->ival == TOK_AMP_AMP) { bv_push(o, 0x71); }
-            else if (n->ival == TOK_PIPE_PIPE) { bv_push(o, 0x72); }
-            else if (n->ival == TOK_AMP) { bv_push(o, 0x71); }
-            else if (n->ival == TOK_PIPE) { bv_push(o, 0x72); }
-            else if (n->ival == TOK_LSHIFT) { bv_push(o, 0x74); }
-            else if (n->ival == TOK_RSHIFT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x76); } else { bv_push(o, 0x75); } }
-            else if (n->ival == TOK_CARET) { bv_push(o, 0x73); }
-            else { error(n->nline, n->ncol, "unsupported binary operator"); }
-            bin_last_float = 0;
-        }
-        break;
-    }
-    case ND_CALL:
-        if (strcmp(n->sval, "printf") == 0) {
-            if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
-                error(n->nline, n->ncol, "printf requires string literal format");
-            }
-            sid = n->list[0]->ival;
-            fmt = str_table[sid]->data;
-            flen = str_table[sid]->len;
-            ai = 1;
-            for (fi = 0; fi < flen; fi++) {
-                if (fmt[fi] == '%' && fi + 1 < flen) {
-                    fi++;
-                    if (fmt[fi] == 'd') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_int"));
-                    } else if (fmt[fi] == 's') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_str"));
-                    } else if (fmt[fi] == 'c') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
-                        bv_push(o, 0x1A);
-                    } else if (fmt[fi] == 'x') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_hex"));
-                    } else if (fmt[fi] == 'f') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        if (!bin_last_float) {
-                            bv_push(o, 0xB7); /* f64.convert_i32_s */
-                        }
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_float"));
-                    } else if (fmt[fi] == '%') {
-                        bv_push(o, 0x41); bv_i32(o, 37);
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
-                        bv_push(o, 0x1A);
-                    } else {
-                        error(n->nline, n->ncol, "unsupported printf format");
-                    }
-                } else {
-                    bv_push(o, 0x41); bv_i32(o, fmt[fi] & 255);
+        sid = n->list[0]->ival;
+        fmt = str_table[sid]->data;
+        flen = str_table[sid]->len;
+        ai = 1;
+        for (fi = 0; fi < flen; fi++) {
+            if (fmt[fi] == '%' && fi + 1 < flen) {
+                fi++;
+                if (fmt[fi] == 'd') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_int"));
+                } else if (fmt[fi] == 's') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_str"));
+                } else if (fmt[fi] == 'c') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
                     bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
                     bv_push(o, 0x1A);
+                } else if (fmt[fi] == 'x') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_hex"));
+                } else if (fmt[fi] == 'f') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
+                    if (!bin_last_float) {
+                        bv_push(o, 0xB7); /* f64.convert_i32_s */
+                    }
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_float"));
+                } else if (fmt[fi] == '%') {
+                    bv_push(o, 0x41); bv_i32(o, 37);
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+                    bv_push(o, 0x1A);
+                } else {
+                    error(n->nline, n->ncol, "unsupported printf format");
                 }
+            } else {
+                bv_push(o, 0x41); bv_i32(o, fmt[fi] & 255);
+                bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+                bv_push(o, 0x1A);
             }
+        }
+        bv_push(o, 0x41); bv_i32(o, 0);
+        bin_last_float = 0;
+    } else if (strcmp(n->sval, "putchar") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+    } else if (strcmp(n->sval, "getchar") == 0) {
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("getchar"));
+    } else if (strcmp(n->sval, "exit") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, 0);
+        bv_push(o, 0x41); bv_i32(o, 0);
+    } else if (strcmp(n->sval, "malloc") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
+    } else if (strcmp(n->sval, "free") == 0) {
+        if (n->ival2 > 0) {
+            gen_expr_bin(o, n->list[0]);
+        } else {
+            bv_push(o, 0x41); bv_i32(o, 0);
+        }
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("free"));
+        bv_push(o, 0x41); bv_i32(o, 0);
+    } else if (strcmp(n->sval, "strlen") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strlen"));
+    } else if (strcmp(n->sval, "strcmp") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strcmp"));
+    } else if (strcmp(n->sval, "strncpy") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strncpy"));
+    } else if (strcmp(n->sval, "memcpy") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memcpy"));
+    } else if (strcmp(n->sval, "memset") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memset"));
+    } else if (strcmp(n->sval, "memcmp") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memcmp"));
+    /* --- new libc builtins (binary) --- */
+    } else if (strcmp(n->sval, "isdigit") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isdigit"));
+    } else if (strcmp(n->sval, "isalpha") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isalpha"));
+    } else if (strcmp(n->sval, "isalnum") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isalnum"));
+    } else if (strcmp(n->sval, "isspace") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isspace"));
+    } else if (strcmp(n->sval, "isupper") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isupper"));
+    } else if (strcmp(n->sval, "islower") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("islower"));
+    } else if (strcmp(n->sval, "isprint") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isprint"));
+    } else if (strcmp(n->sval, "ispunct") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("ispunct"));
+    } else if (strcmp(n->sval, "isxdigit") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isxdigit"));
+    } else if (strcmp(n->sval, "toupper") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("toupper"));
+    } else if (strcmp(n->sval, "tolower") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("tolower"));
+    } else if (strcmp(n->sval, "abs") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("abs"));
+    } else if (strcmp(n->sval, "atoi") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("atoi"));
+    } else if (strcmp(n->sval, "puts") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("puts"));
+    } else if (strcmp(n->sval, "srand") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("srand"));
+        bv_push(o, 0x41); bv_i32(o, 0);
+    } else if (strcmp(n->sval, "rand") == 0) {
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("rand"));
+    } else if (strcmp(n->sval, "strcpy") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strcpy"));
+    } else if (strcmp(n->sval, "strcat") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strcat"));
+    } else if (strcmp(n->sval, "strchr") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strchr"));
+    } else if (strcmp(n->sval, "strrchr") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strrchr"));
+    } else if (strcmp(n->sval, "strstr") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strstr"));
+    } else if (strcmp(n->sval, "calloc") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("calloc"));
+    } else if (strcmp(n->sval, "strncmp") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strncmp"));
+    } else if (strcmp(n->sval, "strncat") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strncat"));
+    } else if (strcmp(n->sval, "memmove") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memmove"));
+    } else if (strcmp(n->sval, "memchr") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memchr"));
+    } else if (strcmp(n->sval, "strtol") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strtol"));
+    } else {
+        for (i = 0; i < n->ival2; i++) {
+            gen_expr_bin(o, n->list[i]);
+            if (func_param_is_float(n->sval, i) && !bin_last_float) {
+                bv_push(o, 0xB7); /* f64.convert_i32_s */
+            } else if (!func_param_is_float(n->sval, i) && bin_last_float) {
+                bv_push(o, 0xAA); /* i32.trunc_f64_s */
+            }
+        }
+        bv_push(o, 0x10); bv_u32(o, bin_find_func(n->sval));
+        if (func_is_void(n->sval)) {
             bv_push(o, 0x41); bv_i32(o, 0);
             bin_last_float = 0;
-        } else if (strcmp(n->sval, "putchar") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
-        } else if (strcmp(n->sval, "getchar") == 0) {
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("getchar"));
-        } else if (strcmp(n->sval, "exit") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, 0);
-            bv_push(o, 0x41); bv_i32(o, 0);
-        } else if (strcmp(n->sval, "malloc") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
-        } else if (strcmp(n->sval, "free") == 0) {
-            if (n->ival2 > 0) {
-                gen_expr_bin(o, n->list[0]);
-            } else {
-                bv_push(o, 0x41); bv_i32(o, 0);
-            }
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("free"));
-            bv_push(o, 0x41); bv_i32(o, 0);
-        } else if (strcmp(n->sval, "strlen") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strlen"));
-        } else if (strcmp(n->sval, "strcmp") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcmp"));
-        } else if (strcmp(n->sval, "strncpy") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncpy"));
-        } else if (strcmp(n->sval, "memcpy") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memcpy"));
-        } else if (strcmp(n->sval, "memset") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memset"));
-        } else if (strcmp(n->sval, "memcmp") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memcmp"));
-        /* --- new libc builtins (binary) --- */
-        } else if (strcmp(n->sval, "isdigit") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isdigit"));
-        } else if (strcmp(n->sval, "isalpha") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isalpha"));
-        } else if (strcmp(n->sval, "isalnum") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isalnum"));
-        } else if (strcmp(n->sval, "isspace") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isspace"));
-        } else if (strcmp(n->sval, "isupper") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isupper"));
-        } else if (strcmp(n->sval, "islower") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("islower"));
-        } else if (strcmp(n->sval, "isprint") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isprint"));
-        } else if (strcmp(n->sval, "ispunct") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("ispunct"));
-        } else if (strcmp(n->sval, "isxdigit") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isxdigit"));
-        } else if (strcmp(n->sval, "toupper") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("toupper"));
-        } else if (strcmp(n->sval, "tolower") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("tolower"));
-        } else if (strcmp(n->sval, "abs") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("abs"));
-        } else if (strcmp(n->sval, "atoi") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("atoi"));
-        } else if (strcmp(n->sval, "puts") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("puts"));
-        } else if (strcmp(n->sval, "srand") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("srand"));
-            bv_push(o, 0x41); bv_i32(o, 0);
-        } else if (strcmp(n->sval, "rand") == 0) {
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("rand"));
-        } else if (strcmp(n->sval, "strcpy") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcpy"));
-        } else if (strcmp(n->sval, "strcat") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcat"));
-        } else if (strcmp(n->sval, "strchr") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strchr"));
-        } else if (strcmp(n->sval, "strrchr") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strrchr"));
-        } else if (strcmp(n->sval, "strstr") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strstr"));
-        } else if (strcmp(n->sval, "calloc") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("calloc"));
-        } else if (strcmp(n->sval, "strncmp") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncmp"));
-        } else if (strcmp(n->sval, "strncat") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncat"));
-        } else if (strcmp(n->sval, "memmove") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memmove"));
-        } else if (strcmp(n->sval, "memchr") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memchr"));
-        } else if (strcmp(n->sval, "strtol") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strtol"));
         } else {
-            for (i = 0; i < n->ival2; i++) {
-                gen_expr_bin(o, n->list[i]);
-                if (func_param_is_float(n->sval, i) && !bin_last_float) {
-                    bv_push(o, 0xB7); /* f64.convert_i32_s */
-                } else if (!func_param_is_float(n->sval, i) && bin_last_float) {
-                    bv_push(o, 0xAA); /* i32.trunc_f64_s */
-                }
-            }
-            bv_push(o, 0x10); bv_u32(o, bin_find_func(n->sval));
-            if (func_is_void(n->sval)) {
-                bv_push(o, 0x41); bv_i32(o, 0);
-                bin_last_float = 0;
-            } else {
-                bin_last_float = func_ret_is_float(n->sval);
-            }
+            bin_last_float = func_ret_is_float(n->sval);
         }
-        break;
-    case ND_STR_LIT:
-        bv_push(o, 0x41); bv_i32(o, str_table[n->ival]->offset);
-        bin_last_float = 0;
-        break;
-    case ND_CALL_INDIRECT: {
-        int ci_i;
-        int ci_np;
-        int ci_type_idx;
-        ci_np = n->ival;
-        /* push arguments */
-        for (ci_i = 0; ci_i < n->ival2; ci_i++) {
-            gen_expr_bin(o, n->list[ci_i]);
-        }
-        /* push table index */
-        gen_expr_bin(o, n->c0);
-        /* call_indirect type_idx table_idx(0) */
-        ci_type_idx = bin_find_or_add_type(ci_np, n->ival3 ? 0 : 1);
-        bv_push(o, 0x11); /* call_indirect */
-        bv_u32(o, ci_type_idx);
-        bv_u32(o, 0); /* table index 0 */
-        if (n->ival3) {
-            /* void fn — push dummy i32 */
-            bv_push(o, 0x41); bv_i32(o, 0);
-        }
-        bin_last_float = 0;
-        break;
     }
-    case ND_MEMBER:
-        off = resolve_field_offset(n->sval);
-        if (off < 0) error(n->nline, n->ncol, "unknown struct field");
-        gen_expr_bin(o, n->c0);
-        if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-        bin_last_float = 0;
-        break;
-    case ND_SIZEOF: {
-        struct StructDef *sd;
-        int sz;
-        if (n->ival == 1) {
-            sz = 4;
-        } else if (n->c0 != (struct Node *)0) {
-            if (n->c0->kind == ND_IDENT) {
-                sz = var_elem_size(n->c0->sval);
-            } else {
-                sz = 4;
-            }
-        } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
-            sz = 1;
-        } else if (n->sval != (char *)0) {
-            sd = find_struct(n->sval);
-            if (sd != (struct StructDef *)0) {
-                sz = sd->size;
-            } else {
-                sz = 4;
-            }
-        } else if (n->ival2 > 0) {
-            sz = n->ival2;
+}
+
+void gen_expr_bin_str_lit(struct ByteVec *o, struct Node *n) {
+    bv_push(o, 0x41); bv_i32(o, str_table[n->ival]->offset);
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_call_indirect(struct ByteVec *o, struct Node *n) {
+    int ci_i;
+    int ci_np;
+    int ci_type_idx;
+    ci_np = n->ival;
+    /* push arguments */
+    for (ci_i = 0; ci_i < n->ival2; ci_i++) {
+        gen_expr_bin(o, n->list[ci_i]);
+    }
+    /* push table index */
+    gen_expr_bin(o, n->c0);
+    /* call_indirect type_idx table_idx(0) */
+    ci_type_idx = bin_find_or_add_type(ci_np, n->ival3 ? 0 : 1);
+    bv_push(o, 0x11); /* call_indirect */
+    bv_u32(o, ci_type_idx);
+    bv_u32(o, 0); /* table index 0 */
+    if (n->ival3) {
+        /* void fn — push dummy i32 */
+        bv_push(o, 0x41); bv_i32(o, 0);
+    }
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_member(struct ByteVec *o, struct Node *n) {
+    int off;
+
+    off = resolve_field_offset(n->sval);
+    if (off < 0) error(n->nline, n->ncol, "unknown struct field");
+    gen_expr_bin(o, n->c0);
+    if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+    bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_sizeof(struct ByteVec *o, struct Node *n) {
+    struct StructDef *sd;
+    int sz;
+    if (n->ival == 1) {
+        sz = 4;
+    } else if (n->c0 != (struct Node *)0) {
+        if (n->c0->kind == ND_IDENT) {
+            sz = var_elem_size(n->c0->sval);
         } else {
             sz = 4;
         }
-        bv_push(o, 0x41); bv_i32(o, sz);
-        bin_last_float = 0;
-        break;
+    } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
+        sz = 1;
+    } else if (n->sval != (char *)0) {
+        sd = find_struct(n->sval);
+        if (sd != (struct StructDef *)0) {
+            sz = sd->size;
+        } else {
+            sz = 4;
+        }
+    } else if (n->ival2 > 0) {
+        sz = n->ival2;
+    } else {
+        sz = 4;
     }
-    case ND_SUBSCRIPT:
-        esz = expr_elem_size(n->c0);
-        gen_expr_bin(o, n->c0);
-        gen_expr_bin(o, n->c1);
-        if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-        bv_push(o, 0x6A);
-        if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-        else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+    bv_push(o, 0x41); bv_i32(o, sz);
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_subscript(struct ByteVec *o, struct Node *n) {
+    int esz;
+
+    esz = expr_elem_size(n->c0);
+    gen_expr_bin(o, n->c0);
+    gen_expr_bin(o, n->c1);
+    if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+    bv_push(o, 0x6A);
+    if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+    else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+    else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_post_inc_dec(struct ByteVec *o, struct Node *n) {
+    int li;
+
+    struct Node *tgt2;
+    char *pname;
+    int pis_global;
+    int pesz;
+    int poff;
+    int atmp;
+    atmp = find_local("__atmp");
+    tgt2 = n->c0;
+    if (tgt2->kind == ND_IDENT) {
+        pname = tgt2->sval;
+        pis_global = (find_global(pname) >= 0);
+        if (pis_global) {
+            bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
+            bv_push(o, 0x21); bv_u32(o, atmp);
+            bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
+            bv_push(o, 0x41); bv_i32(o, 1);
+            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+            bv_push(o, 0x24); bv_u32(o, bin_global_idx(pname));
+            bv_push(o, 0x20); bv_u32(o, atmp);
+        } else {
+            li = find_local(pname);
+            bv_push(o, 0x20); bv_u32(o, li);
+            bv_push(o, 0x20); bv_u32(o, li);
+            bv_push(o, 0x41); bv_i32(o, 1);
+            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+            bv_push(o, 0x21); bv_u32(o, li);
+        }
+    } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
+        pesz = expr_elem_size(tgt2->c0);
+        gen_expr_bin(o, tgt2->c0);
+        if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
         else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-        bin_last_float = 0;
-        break;
-    case ND_POST_INC:
-    case ND_POST_DEC: {
-        struct Node *tgt2;
-        char *pname;
-        int pis_global;
-        int pesz;
-        int poff;
-        int atmp;
-        atmp = find_local("__atmp");
-        tgt2 = n->c0;
-        if (tgt2->kind == ND_IDENT) {
-            pname = tgt2->sval;
-            pis_global = (find_global(pname) >= 0);
-            if (pis_global) {
-                bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
-                bv_push(o, 0x21); bv_u32(o, atmp);
-                bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
-                bv_push(o, 0x41); bv_i32(o, 1);
-                if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-                bv_push(o, 0x24); bv_u32(o, bin_global_idx(pname));
-                bv_push(o, 0x20); bv_u32(o, atmp);
-            } else {
-                li = find_local(pname);
-                bv_push(o, 0x20); bv_u32(o, li);
-                bv_push(o, 0x20); bv_u32(o, li);
-                bv_push(o, 0x41); bv_i32(o, 1);
-                if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-                bv_push(o, 0x21); bv_u32(o, li);
-            }
-        } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
-            pesz = expr_elem_size(tgt2->c0);
-            gen_expr_bin(o, tgt2->c0);
-            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x21); bv_u32(o, atmp);
-            gen_expr_bin(o, tgt2->c0);
-            gen_expr_bin(o, tgt2->c0);
-            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x41); bv_i32(o, 1);
-            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-            if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, atmp);
-        } else if (tgt2->kind == ND_SUBSCRIPT) {
-            pesz = expr_elem_size(tgt2->c0);
-            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
-            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
-            bv_push(o, 0x6A);
-            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x21); bv_u32(o, atmp);
-            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
-            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
-            bv_push(o, 0x6A);
-            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
-            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
-            bv_push(o, 0x6A);
-            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x41); bv_i32(o, 1);
-            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-            if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, atmp);
-        } else if (tgt2->kind == ND_MEMBER) {
-            poff = resolve_field_offset(tgt2->sval);
-            if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
-            gen_expr_bin(o, tgt2->c0);
-            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
-            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-            bv_push(o, 0x21); bv_u32(o, atmp);
-            gen_expr_bin(o, tgt2->c0);
-            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
-            gen_expr_bin(o, tgt2->c0);
-            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
-            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-            bv_push(o, 0x41); bv_i32(o, 1);
-            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-            bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
-            bv_push(o, 0x20); bv_u32(o, atmp);
-        } else {
-            error(n->nline, n->ncol, "unsupported post-inc/dec target");
-        }
-        bin_last_float = 0;
-        break;
+        bv_push(o, 0x21); bv_u32(o, atmp);
+        gen_expr_bin(o, tgt2->c0);
+        gen_expr_bin(o, tgt2->c0);
+        if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x41); bv_i32(o, 1);
+        if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+        if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x20); bv_u32(o, atmp);
+    } else if (tgt2->kind == ND_SUBSCRIPT) {
+        pesz = expr_elem_size(tgt2->c0);
+        gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+        if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x21); bv_u32(o, atmp);
+        gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+        if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+        if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x41); bv_i32(o, 1);
+        if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+        if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x20); bv_u32(o, atmp);
+    } else if (tgt2->kind == ND_MEMBER) {
+        poff = resolve_field_offset(tgt2->sval);
+        if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
+        gen_expr_bin(o, tgt2->c0);
+        if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+        bv_push(o, 0x21); bv_u32(o, atmp);
+        gen_expr_bin(o, tgt2->c0);
+        if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+        gen_expr_bin(o, tgt2->c0);
+        if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+        bv_push(o, 0x41); bv_i32(o, 1);
+        if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+        bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+        bv_push(o, 0x20); bv_u32(o, atmp);
+    } else {
+        error(n->nline, n->ncol, "unsupported post-inc/dec target");
     }
-    case ND_TERNARY:
-        gen_expr_bin(o, n->c0);
-        bv_push(o, 0x04); bv_push(o, 0x7F); bin_lbl_sp++;
-        gen_expr_bin(o, n->c1);
-        bv_push(o, 0x05);
-        gen_expr_bin(o, n->c2);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        bin_last_float = 0;
-        break;
-    default:
-        error(n->nline, n->ncol, "unsupported expression in codegen");
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_ternary(struct ByteVec *o, struct Node *n) {
+    gen_expr_bin(o, n->c0);
+    bv_push(o, 0x04); bv_push(o, 0x7F); bin_lbl_sp++;
+    gen_expr_bin(o, n->c1);
+    bv_push(o, 0x05);
+    gen_expr_bin(o, n->c2);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_error(struct ByteVec *o, struct Node *n) {
+    error(n->nline, n->ncol, "unsupported expression in binary codegen");
+}
+
+void init_gen_expr_bin_tbl(void) {
+    int tbl_i;
+    gen_expr_bin_tbl = (GenExprBinFn *)malloc(ND_COUNT * sizeof(GenExprBinFn));
+    for (tbl_i = 0; tbl_i < ND_COUNT; tbl_i++) {
+        gen_expr_bin_tbl[tbl_i] = gen_expr_bin_error;
     }
+    gen_expr_bin_tbl[ND_ASSIGN] = gen_expr_bin_assign;
+    gen_expr_bin_tbl[ND_BINARY] = gen_expr_bin_binary;
+    gen_expr_bin_tbl[ND_CALL] = gen_expr_bin_call;
+    gen_expr_bin_tbl[ND_CALL_INDIRECT] = gen_expr_bin_call_indirect;
+    gen_expr_bin_tbl[ND_CAST] = gen_expr_bin_cast;
+    gen_expr_bin_tbl[ND_FLOAT_LIT] = gen_expr_bin_float_lit;
+    gen_expr_bin_tbl[ND_IDENT] = gen_expr_bin_ident;
+    gen_expr_bin_tbl[ND_INT_LIT] = gen_expr_bin_int_lit;
+    gen_expr_bin_tbl[ND_MEMBER] = gen_expr_bin_member;
+    gen_expr_bin_tbl[ND_POST_DEC] = gen_expr_bin_post_inc_dec;
+    gen_expr_bin_tbl[ND_POST_INC] = gen_expr_bin_post_inc_dec;
+    gen_expr_bin_tbl[ND_SIZEOF] = gen_expr_bin_sizeof;
+    gen_expr_bin_tbl[ND_STR_LIT] = gen_expr_bin_str_lit;
+    gen_expr_bin_tbl[ND_SUBSCRIPT] = gen_expr_bin_subscript;
+    gen_expr_bin_tbl[ND_TERNARY] = gen_expr_bin_ternary;
+    gen_expr_bin_tbl[ND_UNARY] = gen_expr_bin_unary;
+}
+
+void gen_expr_bin(struct ByteVec *o, struct Node *n) {
+    GenExprBinFn efn;
+    if (n->kind < 0 || n->kind >= ND_COUNT) {
+        error(n->nline, n->ncol, "unsupported expression in binary codegen");
+    }
+    efn = gen_expr_bin_tbl[n->kind];
+    efn(o, n);
 }
 
 /* --- Binary statement codegen --- */
@@ -7052,253 +7125,312 @@ void gen_body_bin(struct ByteVec *o, struct Node *n) {
     }
 }
 
-void gen_stmt_bin(struct ByteVec *o, struct Node *n) {
-    int lbl;
-    int i;
+/* --- Binary statement codegen --- */
+
+typedef void (*GenStmtBinFn)(struct ByteVec *, struct Node *);
+GenStmtBinFn *gen_stmt_bin_tbl;
+
+void gen_stmt_bin_return(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_var_decl(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_expr_stmt(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_if(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_while(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_for(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_do_while(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_break(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_continue(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_block(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_switch(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_error(struct ByteVec *o, struct Node *n);
+
+void gen_stmt_bin_return(struct ByteVec *o, struct Node *n) {
+    if (n->c0 != (struct Node *)0) {
+        gen_expr_bin(o, n->c0);
+    }
+    bv_push(o, 0x0F);
+}
+
+void gen_stmt_bin_var_decl(struct ByteVec *o, struct Node *n) {
     int bsz;
     int decl_float;
 
-    switch (n->kind) {
-    case ND_RETURN:
-        if (n->c0 != (struct Node *)0) {
-            gen_expr_bin(o, n->c0);
-        }
-        bv_push(o, 0x0F);
-        break;
-    case ND_VAR_DECL:
-        if (n->ival > 0) {
-            bsz = n->ival * n->ival2;
-            bv_push(o, 0x41); bv_i32(o, bsz);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
-            bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
-        } else if (n->c0 != (struct Node *)0) {
-            decl_float = var_is_float(n->sval);
-            gen_expr_bin(o, n->c0);
-            if (decl_float && !bin_last_float) {
-                bv_push(o, 0xB7); /* f64.convert_i32_s */
-            } else if (!decl_float && bin_last_float) {
-                bv_push(o, 0xAA); /* i32.trunc_f64_s */
-            }
-            bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
-        }
-        break;
-    case ND_EXPR_STMT:
+    if (n->ival > 0) {
+        bsz = n->ival * n->ival2;
+        bv_push(o, 0x41); bv_i32(o, bsz);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
+        bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
+    } else if (n->c0 != (struct Node *)0) {
+        decl_float = var_is_float(n->sval);
         gen_expr_bin(o, n->c0);
-        bv_push(o, 0x1A);
-        break;
-    case ND_IF:
-        gen_expr_bin(o, n->c0);
-        if (n->c2 != (struct Node *)0) {
-            bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
-            gen_body_bin(o, n->c1);
-            bv_push(o, 0x05);
-            gen_body_bin(o, n->c2);
-            bv_push(o, 0x0B); bin_lbl_sp--;
-        } else {
-            bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
-            gen_body_bin(o, n->c1);
-            bv_push(o, 0x0B); bin_lbl_sp--;
+        if (decl_float && !bin_last_float) {
+            bv_push(o, 0xB7); /* f64.convert_i32_s */
+        } else if (!decl_float && bin_last_float) {
+            bv_push(o, 0xAA); /* i32.trunc_f64_s */
         }
-        break;
-    case ND_WHILE:
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        bin_brk_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        bin_loop_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
-        loop_sp++;
-        gen_expr_bin(o, n->c0);
-        bv_push(o, 0x45);
-        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
-        bin_cont_at[loop_sp - 1] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
+    }
+}
+
+void gen_stmt_bin_expr_stmt(struct ByteVec *o, struct Node *n) {
+    gen_expr_bin(o, n->c0);
+    bv_push(o, 0x1A);
+}
+
+void gen_stmt_bin_if(struct ByteVec *o, struct Node *n) {
+    gen_expr_bin(o, n->c0);
+    if (n->c2 != (struct Node *)0) {
+        bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
+        gen_body_bin(o, n->c1);
+        bv_push(o, 0x05);
+        gen_body_bin(o, n->c2);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+    } else {
+        bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
         gen_body_bin(o, n->c1);
         bv_push(o, 0x0B); bin_lbl_sp--;
-        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        loop_sp--;
-        break;
-    case ND_FOR:
-        if (n->c0 != (struct Node *)0) {
-            gen_stmt_bin(o, n->c0);
-        }
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        bin_brk_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        bin_loop_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
-        loop_sp++;
-        if (n->c1 != (struct Node *)0) {
-            gen_expr_bin(o, n->c1);
-            bv_push(o, 0x45);
-            bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
-        }
-        bin_cont_at[loop_sp - 1] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        gen_body_bin(o, n->c3);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        if (n->c2 != (struct Node *)0) {
-            gen_expr_bin(o, n->c2);
-            bv_push(o, 0x1A);
-        }
-        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        loop_sp--;
-        break;
-    case ND_DO_WHILE:
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        bin_brk_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        bin_loop_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
-        bin_cont_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        loop_sp++;
-        gen_body_bin(o, n->c0);
-        bv_push(o, 0x0B); bin_lbl_sp--;
+    }
+}
+
+void gen_stmt_bin_while(struct ByteVec *o, struct Node *n) {
+    int lbl;
+
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    bin_brk_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    bin_loop_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+    loop_sp++;
+    gen_expr_bin(o, n->c0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+    bin_cont_at[loop_sp - 1] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    gen_body_bin(o, n->c1);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    loop_sp--;
+}
+
+void gen_stmt_bin_for(struct ByteVec *o, struct Node *n) {
+    int lbl;
+
+    if (n->c0 != (struct Node *)0) {
+        gen_stmt_bin(o, n->c0);
+    }
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    bin_brk_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    bin_loop_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+    loop_sp++;
+    if (n->c1 != (struct Node *)0) {
         gen_expr_bin(o, n->c1);
-        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        loop_sp--;
-        break;
-    case ND_BREAK:
-        if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
+        bv_push(o, 0x45);
+        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+    }
+    bin_cont_at[loop_sp - 1] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    gen_body_bin(o, n->c3);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    if (n->c2 != (struct Node *)0) {
+        gen_expr_bin(o, n->c2);
+        bv_push(o, 0x1A);
+    }
+    bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    loop_sp--;
+}
+
+void gen_stmt_bin_do_while(struct ByteVec *o, struct Node *n) {
+    int lbl;
+
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    bin_brk_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    bin_loop_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+    bin_cont_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    loop_sp++;
+    gen_body_bin(o, n->c0);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    gen_expr_bin(o, n->c1);
+    bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    loop_sp--;
+}
+
+void gen_stmt_bin_break(struct ByteVec *o, struct Node *n) {
+    if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
+    bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+}
+
+void gen_stmt_bin_continue(struct ByteVec *o, struct Node *n) {
+    if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
+    if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
+    bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_cont_at[loop_sp - 1] - 1);
+}
+
+void gen_stmt_bin_block(struct ByteVec *o, struct Node *n) {
+    int i;
+
+    for (i = 0; i < n->ival2; i++) {
+        gen_stmt_bin(o, n->list[i]);
+    }
+}
+
+void gen_stmt_bin_switch(struct ByteVec *o, struct Node *n) {
+    int case_vals[256];
+    int case_start[256];
+    int case_depth[256];
+    int nc;
+    int dflt_pos;
+    int has_dflt;
+    int k;
+    int j;
+    int next_start;
+    int sw_lbl;
+    int si;
+    int last_case_pos;
+    int dflt_depth;
+
+    nc = 0;
+    dflt_pos = -1;
+    has_dflt = 0;
+    for (si = 0; si < n->ival2; si++) {
+        if (n->list[si]->kind == ND_CASE) {
+            if (nc >= MAX_CASES) {
+                error(n->nline, n->ncol, "too many cases in switch");
+            }
+            case_vals[nc] = n->list[si]->ival;
+            case_start[nc] = si;
+            nc++;
+        } else if (n->list[si]->kind == ND_DEFAULT) {
+            dflt_pos = si;
+            has_dflt = 1;
+        }
+    }
+
+    if (has_dflt) {
+        last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
+        if (dflt_pos < last_case_pos) {
+            error(n->c0->nline, n->c0->ncol,
+                  "default must appear after all case labels");
+        }
+    }
+
+    sw_lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = sw_lbl;
+    if (loop_sp > 0) {
+        cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
+        bin_cont_at[loop_sp] = bin_cont_at[loop_sp - 1];
+    } else {
+        cont_lbl[loop_sp] = -1;
+    }
+
+    gen_expr_bin(o, n->c0);
+    bv_push(o, 0x21); bv_u32(o, find_local("__stmp"));
+
+    bin_brk_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+
+    dflt_depth = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+
+    for (k = nc - 1; k >= 0; k--) {
+        case_depth[k] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    }
+
+    loop_sp++;
+
+    for (k = 0; k < nc; k++) {
+        bv_push(o, 0x20); bv_u32(o, find_local("__stmp"));
+        bv_push(o, 0x41); bv_i32(o, case_vals[k]);
+        bv_push(o, 0x46);
+        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - case_depth[k] - 1);
+    }
+    if (has_dflt) {
+        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - dflt_depth - 1);
+    } else {
         bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
-        break;
-    case ND_CONTINUE:
-        if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
-        if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
-        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_cont_at[loop_sp - 1] - 1);
-        break;
-    case ND_BLOCK:
-        for (i = 0; i < n->ival2; i++) {
-            gen_stmt_bin(o, n->list[i]);
-        }
-        break;
-    case ND_SWITCH: {
-        int case_vals[256];
-        int case_start[256];
-        int case_depth[256];
-        int nc;
-        int dflt_pos;
-        int has_dflt;
-        int k;
-        int j;
-        int next_start;
-        int sw_lbl;
-        int si;
-        int last_case_pos;
-        int dflt_depth;
-
-        nc = 0;
-        dflt_pos = -1;
-        has_dflt = 0;
-        for (si = 0; si < n->ival2; si++) {
-            if (n->list[si]->kind == ND_CASE) {
-                if (nc >= MAX_CASES) {
-                    error(n->nline, n->ncol, "too many cases in switch");
-                }
-                case_vals[nc] = n->list[si]->ival;
-                case_start[nc] = si;
-                nc++;
-            } else if (n->list[si]->kind == ND_DEFAULT) {
-                dflt_pos = si;
-                has_dflt = 1;
-            }
-        }
-
-        if (has_dflt) {
-            last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
-            if (dflt_pos < last_case_pos) {
-                error(n->c0->nline, n->c0->ncol,
-                      "default must appear after all case labels");
-            }
-        }
-
-        sw_lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = sw_lbl;
-        if (loop_sp > 0) {
-            cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
-            bin_cont_at[loop_sp] = bin_cont_at[loop_sp - 1];
-        } else {
-            cont_lbl[loop_sp] = -1;
-        }
-
-        gen_expr_bin(o, n->c0);
-        bv_push(o, 0x21); bv_u32(o, find_local("__stmp"));
-
-        bin_brk_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-
-        dflt_depth = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-
-        for (k = nc - 1; k >= 0; k--) {
-            case_depth[k] = bin_lbl_sp;
-            bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        }
-
-        loop_sp++;
-
-        for (k = 0; k < nc; k++) {
-            bv_push(o, 0x20); bv_u32(o, find_local("__stmp"));
-            bv_push(o, 0x41); bv_i32(o, case_vals[k]);
-            bv_push(o, 0x46);
-            bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - case_depth[k] - 1);
-        }
-        if (has_dflt) {
-            bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - dflt_depth - 1);
-        } else {
-            bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
-        }
-
-        for (k = 0; k < nc; k++) {
-            bv_push(o, 0x0B); bin_lbl_sp--;
-            if (k + 1 < nc) {
-                next_start = case_start[k + 1];
-            } else if (has_dflt) {
-                next_start = dflt_pos;
-            } else {
-                next_start = n->ival2;
-            }
-            for (j = case_start[k] + 1; j < next_start; j++) {
-                if (n->list[j]->kind == ND_CASE) continue;
-                if (n->list[j]->kind == ND_DEFAULT) continue;
-                gen_stmt_bin(o, n->list[j]);
-            }
-        }
-
-        bv_push(o, 0x0B); bin_lbl_sp--;
-
-        if (has_dflt) {
-            for (j = dflt_pos + 1; j < n->ival2; j++) {
-                if (n->list[j]->kind == ND_CASE) continue;
-                if (n->list[j]->kind == ND_DEFAULT) continue;
-                gen_stmt_bin(o, n->list[j]);
-            }
-        }
-
-        bv_push(o, 0x0B); bin_lbl_sp--;
-
-        loop_sp--;
-        break;
     }
-    default:
-        error(n->nline, n->ncol, "unsupported statement in codegen");
+
+    for (k = 0; k < nc; k++) {
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        if (k + 1 < nc) {
+            next_start = case_start[k + 1];
+        } else if (has_dflt) {
+            next_start = dflt_pos;
+        } else {
+            next_start = n->ival2;
+        }
+        for (j = case_start[k] + 1; j < next_start; j++) {
+            if (n->list[j]->kind == ND_CASE) continue;
+            if (n->list[j]->kind == ND_DEFAULT) continue;
+            gen_stmt_bin(o, n->list[j]);
+        }
     }
+
+    bv_push(o, 0x0B); bin_lbl_sp--;
+
+    if (has_dflt) {
+        for (j = dflt_pos + 1; j < n->ival2; j++) {
+            if (n->list[j]->kind == ND_CASE) continue;
+            if (n->list[j]->kind == ND_DEFAULT) continue;
+            gen_stmt_bin(o, n->list[j]);
+        }
+    }
+
+    bv_push(o, 0x0B); bin_lbl_sp--;
+
+    loop_sp--;
+}
+
+void gen_stmt_bin_error(struct ByteVec *o, struct Node *n) {
+    error(n->nline, n->ncol, "unsupported statement in binary codegen");
+}
+
+void init_gen_stmt_bin_tbl(void) {
+    int tbl_i;
+    gen_stmt_bin_tbl = (GenStmtBinFn *)malloc(ND_COUNT * sizeof(GenStmtBinFn));
+    for (tbl_i = 0; tbl_i < ND_COUNT; tbl_i++) {
+        gen_stmt_bin_tbl[tbl_i] = gen_stmt_bin_error;
+    }
+    gen_stmt_bin_tbl[ND_BLOCK] = gen_stmt_bin_block;
+    gen_stmt_bin_tbl[ND_BREAK] = gen_stmt_bin_break;
+    gen_stmt_bin_tbl[ND_CONTINUE] = gen_stmt_bin_continue;
+    gen_stmt_bin_tbl[ND_DO_WHILE] = gen_stmt_bin_do_while;
+    gen_stmt_bin_tbl[ND_EXPR_STMT] = gen_stmt_bin_expr_stmt;
+    gen_stmt_bin_tbl[ND_FOR] = gen_stmt_bin_for;
+    gen_stmt_bin_tbl[ND_IF] = gen_stmt_bin_if;
+    gen_stmt_bin_tbl[ND_RETURN] = gen_stmt_bin_return;
+    gen_stmt_bin_tbl[ND_SWITCH] = gen_stmt_bin_switch;
+    gen_stmt_bin_tbl[ND_VAR_DECL] = gen_stmt_bin_var_decl;
+    gen_stmt_bin_tbl[ND_WHILE] = gen_stmt_bin_while;
+}
+
+void gen_stmt_bin(struct ByteVec *o, struct Node *n) {
+    GenStmtBinFn sfn;
+    if (n->kind < 0 || n->kind >= ND_COUNT) {
+        error(n->nline, n->ncol, "unsupported statement in binary codegen");
+    }
+    sfn = gen_stmt_bin_tbl[n->kind];
+    sfn(o, n);
 }
 
 /* --- Binary function codegen --- */
@@ -9194,15 +9326,15 @@ void gen_module_bin(struct Node *prog) {
     bv_u32(sec, bin_ntypes);
     for (i = 0; i < bin_ntypes; i++) {
         bv_push(sec, 0x60);
-        bv_u32(sec, bin_types[i]->nparams);
-        for (j = 0; j < bin_types[i]->nparams; j++) {
-            if (j < 16 && bin_types[i]->param_is_float[j]) {
+        bv_u32(sec, bin_types[i]->bt_nparams);
+        for (j = 0; j < bin_types[i]->bt_nparams; j++) {
+            if (j < 16 && bin_types[i]->bt_pif[j]) {
                 bv_push(sec, 0x7C); /* f64 */
             } else {
                 bv_push(sec, 0x7F); /* i32 */
             }
         }
-        if (bin_types[i]->has_result) {
+        if (bin_types[i]->bt_has_result) {
             bv_u32(sec, 1);
             if (bin_types[i]->result_is_float) {
                 bv_push(sec, 0x7C); /* f64 */
@@ -9444,6 +9576,8 @@ int main(void) {
     init_loop_labels();
     init_gen_expr_tbl();
     init_gen_stmt_tbl();
+    init_gen_expr_bin_tbl();
+    init_gen_stmt_bin_tbl();
 
     read_source();
     lex_init();
