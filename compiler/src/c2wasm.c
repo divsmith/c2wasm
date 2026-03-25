@@ -6170,6 +6170,11 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         } else {
             for (i = 0; i < n->ival2; i++) {
                 gen_expr_bin(o, n->list[i]);
+                if (func_param_is_float(n->sval, i) && !bin_last_float) {
+                    bv_push(o, 0xB7); /* f64.convert_i32_s */
+                } else if (!func_param_is_float(n->sval, i) && bin_last_float) {
+                    bv_push(o, 0xAA); /* i32.trunc_f64_s */
+                }
             }
             bv_push(o, 0x10); bv_u32(o, bin_find_func(n->sval));
             if (func_is_void(n->sval)) {
@@ -6651,7 +6656,14 @@ void gen_func_bin(struct ByteVec *cs, struct Node *n) {
     }
 
     if (n->ival != 1) {
-        bv_push(fb, 0x41); bv_i32(fb, 0);
+        if (func_ret_is_float(n->sval)) {
+            /* f64.const 0.0 — 8 zero bytes IEEE 754 */
+            bv_push(fb, 0x44);
+            bv_push(fb, 0); bv_push(fb, 0); bv_push(fb, 0); bv_push(fb, 0);
+            bv_push(fb, 0); bv_push(fb, 0); bv_push(fb, 0); bv_push(fb, 0);
+        } else {
+            bv_push(fb, 0x41); bv_i32(fb, 0);
+        }
     }
 
     bv_push(fb, 0x0B);
