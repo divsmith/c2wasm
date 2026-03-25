@@ -963,7 +963,8 @@ void fn_table_add(char *name) {
         if (strcmp(fn_table_names[i], name) == 0) return;
     }
     if (fn_table_count < MAX_FN_TABLE) {
-        fn_table_names[fn_table_count++] = name;
+        fn_table_names[fn_table_count] = name;
+        fn_table_count++;
     }
 }
 
@@ -3030,396 +3031,235 @@ int last_expr_is_float; /* 0=i32, 1=f32, 2=f64 — set by gen_expr */
 
 /* --- Expression codegen --- */
 
-void gen_expr(struct Node *n) {
+/* Forward declarations for dispatch table refactoring */
+void gen_expr(struct Node *n);
+void gen_stmt(struct Node *n);
+
+typedef void (*GenExprFn)(struct Node *);
+typedef void (*GenStmtFn)(struct Node *);
+
+#define ND_COUNT 31
+
+GenExprFn *gen_expr_tbl;
+GenStmtFn *gen_stmt_tbl;
+
+void gen_expr_int_lit(struct Node *n) {
+    emit_indent();
+    printf("i32.const %d\n", n->ival);
+    last_expr_is_float = 0;
+}
+
+void gen_expr_float_lit(struct Node *n) {
+    emit_indent();
+    printf("f64.const %s\n", n->sval);
+    last_expr_is_float = 2;
+}
+
+void gen_expr_cast(struct Node *n) {
+    gen_expr(n->c0);
+    if (n->ival >= 1 && !last_expr_is_float) {
+        /* cast to float/double, expr is int */
+        emit_indent();
+        printf("f64.convert_i32_s\n");
+        last_expr_is_float = 2;
+    } else if (n->ival >= 1 && last_expr_is_float) {
+        /* cast to float/double, already float — no-op */
+        last_expr_is_float = 2;
+    } else if (n->ival == 0 && last_expr_is_float) {
+        /* cast to int, expr is float */
+        emit_indent();
+        printf("i32.trunc_f64_s\n");
+        last_expr_is_float = 0;
+    }
+    /* cast to int when already int — no-op */
+}
+
+void gen_expr_ident(struct Node *n) {
+    int vf;
+    vf = var_is_float(n->sval);
+    if (find_global(n->sval) >= 0) {
+        emit_indent();
+        printf("global.get $%s\n", n->sval);
+    } else {
+        emit_indent();
+        printf("local.get $%s\n", n->sval);
+    }
+    last_expr_is_float = vf;
+}
+
+void gen_expr_assign(struct Node *n) {
     struct Node *tgt;
     char *name;
     int is_global;
     int off;
     int esz;
-    char *fmt;
-    int flen;
-    int ai;
-    int fi;
-    int sid;
-    int i;
 
-    switch (n->kind) {
-    case ND_INT_LIT:
-        emit_indent();
-        printf("i32.const %d\n", n->ival);
-        last_expr_is_float = 0;
-        break;
-    case ND_FLOAT_LIT:
-        emit_indent();
-        printf("f64.const %s\n", n->sval);
-        last_expr_is_float = 2;
-        break;
-    case ND_CAST:
-        gen_expr(n->c0);
-        if (n->ival >= 1 && !last_expr_is_float) {
-            /* cast to float/double, expr is int */
-            emit_indent();
-            printf("f64.convert_i32_s\n");
-            last_expr_is_float = 2;
-        } else if (n->ival >= 1 && last_expr_is_float) {
-            /* cast to float/double, already float — no-op */
-            last_expr_is_float = 2;
-        } else if (n->ival == 0 && last_expr_is_float) {
-            /* cast to int, expr is float */
-            emit_indent();
-            printf("i32.trunc_f64_s\n");
-            last_expr_is_float = 0;
-        }
-        /* cast to int when already int — no-op */
-        break;
-    case ND_IDENT: {
-        int vf;
-        vf = var_is_float(n->sval);
-        if (find_global(n->sval) >= 0) {
-            emit_indent();
-            printf("global.get $%s\n", n->sval);
-        } else {
-            emit_indent();
-            printf("local.get $%s\n", n->sval);
-        }
-        last_expr_is_float = vf;
-        break;
-    }
-    case ND_ASSIGN:
-        tgt = n->c0;
-        if (tgt->kind == ND_IDENT) {
-            int tgt_float;
-            name = tgt->sval;
-            is_global = (find_global(name) >= 0);
-            tgt_float = var_is_float(name);
-            if (n->ival == TOK_EQ) {
-                gen_expr(n->c1);
-                /* insert float/int conversion if needed */
-                if (tgt_float && !last_expr_is_float) {
-                    emit_indent();
-                    printf("f64.convert_i32_s\n");
-                    last_expr_is_float = 2;
-                } else if (!tgt_float && last_expr_is_float) {
-                    emit_indent();
-                    printf("i32.trunc_f64_s\n");
-                    last_expr_is_float = 0;
-                }
-            } else if (n->ival == TOK_PLUS_EQ) {
+    tgt = n->c0;
+    if (tgt->kind == ND_IDENT) {
+        int tgt_float;
+        name = tgt->sval;
+        is_global = (find_global(name) >= 0);
+        tgt_float = var_is_float(name);
+        if (n->ival == TOK_EQ) {
+            gen_expr(n->c1);
+            /* insert float/int conversion if needed */
+            if (tgt_float && !last_expr_is_float) {
                 emit_indent();
-                if (is_global) {
-                    printf("global.get $%s\n", name);
-                } else {
-                    printf("local.get $%s\n", name);
-                }
-                gen_expr(n->c1);
-                if (tgt_float) {
-                    if (!last_expr_is_float) {
-                        emit_indent();
-                        printf("f64.convert_i32_s\n");
-                    }
-                    emit_indent();
-                    printf("f64.add\n");
-                    last_expr_is_float = 2;
-                } else {
-                    emit_indent();
-                    printf("i32.add\n");
-                    last_expr_is_float = 0;
-                }
-            } else if (n->ival == TOK_MINUS_EQ) {
+                printf("f64.convert_i32_s\n");
+                last_expr_is_float = 2;
+            } else if (!tgt_float && last_expr_is_float) {
                 emit_indent();
-                if (is_global) {
-                    printf("global.get $%s\n", name);
-                } else {
-                    printf("local.get $%s\n", name);
-                }
-                gen_expr(n->c1);
-                if (tgt_float) {
-                    if (!last_expr_is_float) {
-                        emit_indent();
-                        printf("f64.convert_i32_s\n");
-                    }
-                    emit_indent();
-                    printf("f64.sub\n");
-                    last_expr_is_float = 2;
-                } else {
-                    emit_indent();
-                    printf("i32.sub\n");
-                    last_expr_is_float = 0;
-                }
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                emit_indent();
-                if (is_global) {
-                    printf("global.get $%s\n", name);
-                } else {
-                    printf("local.get $%s\n", name);
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-                else { printf("i32.shr_s\n"); }
+                printf("i32.trunc_f64_s\n");
                 last_expr_is_float = 0;
             }
+        } else if (n->ival == TOK_PLUS_EQ) {
+            emit_indent();
             if (is_global) {
-                if (tgt_float) {
+                printf("global.get $%s\n", name);
+            } else {
+                printf("local.get $%s\n", name);
+            }
+            gen_expr(n->c1);
+            if (tgt_float) {
+                if (!last_expr_is_float) {
                     emit_indent();
-                    printf("local.set $__ftmp\n");
-                    emit_indent();
-                    printf("local.get $__ftmp\n");
-                    emit_indent();
-                    printf("global.set $%s\n", name);
-                    emit_indent();
-                    printf("local.get $__ftmp\n");
-                } else {
-                    emit_indent();
-                    printf("local.set $__atmp\n");
-                    emit_indent();
-                    printf("local.get $__atmp\n");
-                    emit_indent();
-                    printf("global.set $%s\n", name);
-                    emit_indent();
-                    printf("local.get $__atmp\n");
+                    printf("f64.convert_i32_s\n");
                 }
+                emit_indent();
+                printf("f64.add\n");
+                last_expr_is_float = 2;
             } else {
                 emit_indent();
-                printf("local.tee $%s\n", name);
-            }
-            last_expr_is_float = tgt_float;
-        } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
-            esz = expr_elem_size(tgt->c0);
-            if (n->ival == TOK_EQ) {
-                gen_expr(n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr(tgt->c0);
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
                 printf("i32.add\n");
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr(tgt->c0);
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
+                last_expr_is_float = 0;
+            }
+        } else if (n->ival == TOK_MINUS_EQ) {
+            emit_indent();
+            if (is_global) {
+                printf("global.get $%s\n", name);
+            } else {
+                printf("local.get $%s\n", name);
+            }
+            gen_expr(n->c1);
+            if (tgt_float) {
+                if (!last_expr_is_float) {
+                    emit_indent();
+                    printf("f64.convert_i32_s\n");
                 }
-                gen_expr(n->c1);
+                emit_indent();
+                printf("f64.sub\n");
+                last_expr_is_float = 2;
+            } else {
                 emit_indent();
                 printf("i32.sub\n");
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr(tgt->c0);
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-                else { printf("i32.shr_s\n"); }
+                last_expr_is_float = 0;
             }
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
             emit_indent();
-            if (last_expr_is_float) {
+            if (is_global) {
+                printf("global.get $%s\n", name);
+            } else {
+                printf("local.get $%s\n", name);
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+            else { printf("i32.shr_s\n"); }
+            last_expr_is_float = 0;
+        }
+        if (is_global) {
+            if (tgt_float) {
+                emit_indent();
                 printf("local.set $__ftmp\n");
-                gen_expr(tgt->c0);
                 emit_indent();
                 printf("local.get $__ftmp\n");
                 emit_indent();
-                printf("f64.store\n");
+                printf("global.set $%s\n", name);
                 emit_indent();
                 printf("local.get $__ftmp\n");
             } else {
+                emit_indent();
                 printf("local.set $__atmp\n");
-                gen_expr(tgt->c0);
                 emit_indent();
                 printf("local.get $__atmp\n");
                 emit_indent();
-                if (esz == 1) {
-                    printf("i32.store8\n");
-                } else if (esz == 2) {
-                    printf("i32.store16\n");
-                } else {
-                    printf("i32.store\n");
-                }
+                printf("global.set $%s\n", name);
                 emit_indent();
                 printf("local.get $__atmp\n");
             }
-        } else if (tgt->kind == ND_MEMBER) {
-            off = resolve_field_offset(tgt->sval);
-            if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
-            if (n->ival == TOK_EQ) {
-                gen_expr(n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr(tgt->c0);
-                if (off > 0) {
-                    emit_indent();
-                    printf("i32.const %d\n", off);
-                    emit_indent();
-                    printf("i32.add\n");
-                }
-                emit_indent();
-                printf("i32.load\n");
-                gen_expr(n->c1);
-                emit_indent();
-                printf("i32.add\n");
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr(tgt->c0);
-                if (off > 0) {
-                    emit_indent();
-                    printf("i32.const %d\n", off);
-                    emit_indent();
-                    printf("i32.add\n");
-                }
-                emit_indent();
-                printf("i32.load\n");
-                gen_expr(n->c1);
-                emit_indent();
-                printf("i32.sub\n");
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr(tgt->c0);
-                if (off > 0) {
-                    emit_indent();
-                    printf("i32.const %d\n", off);
-                    emit_indent();
-                    printf("i32.add\n");
-                }
-                emit_indent();
-                printf("i32.load\n");
-                gen_expr(n->c1);
-                emit_indent();
-                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-                else { printf("i32.shr_s\n"); }
-            }
+        } else {
             emit_indent();
-            printf("local.set $__atmp\n");
+            printf("local.tee $%s\n", name);
+        }
+        last_expr_is_float = tgt_float;
+    } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
+        esz = expr_elem_size(tgt->c0);
+        if (n->ival == TOK_EQ) {
+            gen_expr(n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
             gen_expr(tgt->c0);
-            if (off > 0) {
-                emit_indent();
-                printf("i32.const %d\n", off);
-                emit_indent();
-                printf("i32.add\n");
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
             }
-            emit_indent();
-            printf("local.get $__atmp\n");
-            emit_indent();
-            printf("i32.store\n");
-            emit_indent();
-            printf("local.get $__atmp\n");
-        } else if (tgt->kind == ND_SUBSCRIPT) {
-            esz = expr_elem_size(tgt->c0);
-            if (n->ival == TOK_EQ) {
-                gen_expr(n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr(tgt->c0);
-                gen_expr(tgt->c1);
-                if (esz > 1) {
-                    emit_indent();
-                    printf("i32.const %d\n", esz);
-                    emit_indent();
-                    printf("i32.mul\n");
-                }
-                emit_indent();
-                printf("i32.add\n");
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                printf("i32.add\n");
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr(tgt->c0);
-                gen_expr(tgt->c1);
-                if (esz > 1) {
-                    emit_indent();
-                    printf("i32.const %d\n", esz);
-                    emit_indent();
-                    printf("i32.mul\n");
-                }
-                emit_indent();
-                printf("i32.add\n");
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                printf("i32.sub\n");
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr(tgt->c0);
-                gen_expr(tgt->c1);
-                if (esz > 1) {
-                    emit_indent();
-                    printf("i32.const %d\n", esz);
-                    emit_indent();
-                    printf("i32.mul\n");
-                }
-                emit_indent();
-                printf("i32.add\n");
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-                else { printf("i32.shr_s\n"); }
-            }
-            emit_indent();
-            printf("local.set $__atmp\n");
-            gen_expr(tgt->c0);
-            gen_expr(tgt->c1);
-            if (esz > 1) {
-                emit_indent();
-                printf("i32.const %d\n", esz);
-                emit_indent();
-                printf("i32.mul\n");
-            }
+            gen_expr(n->c1);
             emit_indent();
             printf("i32.add\n");
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr(tgt->c0);
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            printf("i32.sub\n");
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr(tgt->c0);
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+            else { printf("i32.shr_s\n"); }
+        }
+        emit_indent();
+        if (last_expr_is_float) {
+            printf("local.set $__ftmp\n");
+            gen_expr(tgt->c0);
+            emit_indent();
+            printf("local.get $__ftmp\n");
+            emit_indent();
+            printf("f64.store\n");
+            emit_indent();
+            printf("local.get $__ftmp\n");
+        } else {
+            printf("local.set $__atmp\n");
+            gen_expr(tgt->c0);
             emit_indent();
             printf("local.get $__atmp\n");
             emit_indent();
@@ -3433,482 +3273,60 @@ void gen_expr(struct Node *n) {
             emit_indent();
             printf("local.get $__atmp\n");
         }
-        break;
-    case ND_UNARY:
-        if (n->ival == TOK_MINUS) {
-            gen_expr(n->c0);
-            if (last_expr_is_float) {
+    } else if (tgt->kind == ND_MEMBER) {
+        off = resolve_field_offset(tgt->sval);
+        if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
+        if (n->ival == TOK_EQ) {
+            gen_expr(n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr(tgt->c0);
+            if (off > 0) {
                 emit_indent();
-                printf("f64.neg\n");
-            } else {
-                /* save value, push 0, push value, sub */
+                printf("i32.const %d\n", off);
                 emit_indent();
-                printf("local.set $__atmp\n");
-                emit_indent();
-                printf("i32.const 0\n");
-                emit_indent();
-                printf("local.get $__atmp\n");
-                emit_indent();
-                printf("i32.sub\n");
-            }
-        } else if (n->ival == TOK_BANG) {
-            gen_expr(n->c0);
-            if (last_expr_is_float) {
-                emit_indent();
-                printf("f64.const 0\n");
-                emit_indent();
-                printf("f64.eq\n");
-                last_expr_is_float = 0;
-            } else {
-                emit_indent();
-                printf("i32.eqz\n");
-            }
-        } else if (n->ival == TOK_TILDE) {
-            emit_indent();
-            printf("i32.const -1\n");
-            gen_expr(n->c0);
-            emit_indent();
-            printf("i32.xor\n");
-            last_expr_is_float = 0;
-        } else if (n->ival == TOK_STAR) {
-            esz = expr_elem_size(n->c0);
-            gen_expr(n->c0);
-            if (esz == 8) {
-                emit_indent();
-                printf("f64.load\n");
-                last_expr_is_float = 2;
-            } else {
-                last_expr_is_float = 0;
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-            }
-        } else if (n->ival == TOK_AMP) {
-            error(n->nline, n->ncol, "cannot take address of this expression");
-        }
-        break;
-    case ND_BINARY: {
-        int left_float;
-        int right_float;
-        int op_float;
-        gen_expr(n->c0);
-        left_float = last_expr_is_float;
-        gen_expr(n->c1);
-        right_float = last_expr_is_float;
-        op_float = 0;
-        if (left_float || right_float) {
-            op_float = 2;
-            /* promote: if either is float, both should be f64 */
-            if (left_float && !right_float) {
-                /* stack: [f64, i32] — convert top (right) from i32 to f64 */
-                emit_indent();
-                printf("f64.convert_i32_s\n");
-            } else if (!left_float && right_float) {
-                /* stack: [i32, f64] — need to swap and convert left */
-                emit_indent();
-                printf("local.set $__ftmp\n");
-                emit_indent();
-                printf("f64.convert_i32_s\n");
-                emit_indent();
-                printf("local.get $__ftmp\n");
-            }
-        }
-        if (op_float) {
-            emit_indent();
-            if (n->ival == TOK_PLUS) {
-                printf("f64.add\n");
-                last_expr_is_float = 2;
-            } else if (n->ival == TOK_MINUS) {
-                printf("f64.sub\n");
-                last_expr_is_float = 2;
-            } else if (n->ival == TOK_STAR) {
-                printf("f64.mul\n");
-                last_expr_is_float = 2;
-            } else if (n->ival == TOK_SLASH) {
-                printf("f64.div\n");
-                last_expr_is_float = 2;
-            } else if (n->ival == TOK_EQ_EQ) {
-                printf("f64.eq\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_BANG_EQ) {
-                printf("f64.ne\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_LT) {
-                printf("f64.lt\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_GT) {
-                printf("f64.gt\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_LT_EQ) {
-                printf("f64.le\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_GT_EQ) {
-                printf("f64.ge\n");
-                last_expr_is_float = 0;
-            } else {
-                error(n->nline, n->ncol, "unsupported float binary operator");
-            }
-        } else {
-            emit_indent();
-            if (n->ival == TOK_PLUS) {
                 printf("i32.add\n");
-            } else if (n->ival == TOK_MINUS) {
-                printf("i32.sub\n");
-            } else if (n->ival == TOK_STAR) {
-                printf("i32.mul\n");
-            } else if (n->ival == TOK_SLASH) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.div_u\n"); } else { printf("i32.div_s\n"); }
-            } else if (n->ival == TOK_PERCENT) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.rem_u\n"); } else { printf("i32.rem_s\n"); }
-            } else if (n->ival == TOK_EQ_EQ) {
-                printf("i32.eq\n");
-            } else if (n->ival == TOK_BANG_EQ) {
-                printf("i32.ne\n");
-            } else if (n->ival == TOK_LT) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.lt_u\n"); } else { printf("i32.lt_s\n"); }
-            } else if (n->ival == TOK_GT) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.gt_u\n"); } else { printf("i32.gt_s\n"); }
-            } else if (n->ival == TOK_LT_EQ) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.le_u\n"); } else { printf("i32.le_s\n"); }
-            } else if (n->ival == TOK_GT_EQ) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.ge_u\n"); } else { printf("i32.ge_s\n"); }
-            } else if (n->ival == TOK_AMP_AMP) {
-                printf("i32.and\n");
-            } else if (n->ival == TOK_PIPE_PIPE) {
-                printf("i32.or\n");
-            } else if (n->ival == TOK_AMP) {
-                printf("i32.and\n");
-            } else if (n->ival == TOK_PIPE) {
-                printf("i32.or\n");
-            } else if (n->ival == TOK_LSHIFT) {
-                printf("i32.shl\n");
-            } else if (n->ival == TOK_RSHIFT) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.shr_u\n"); } else { printf("i32.shr_s\n"); }
-            } else if (n->ival == TOK_CARET) {
-                printf("i32.xor\n");
-            } else {
-                error(n->nline, n->ncol, "unsupported binary operator");
-            }
-            last_expr_is_float = 0;
-        }
-        break;
-    }
-    case ND_CALL:
-        if (strcmp(n->sval, "printf") == 0) {
-            if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
-                error(n->nline, n->ncol, "printf requires string literal format");
-            }
-            sid = n->list[0]->ival;
-            fmt = str_table[sid]->data;
-            flen = str_table[sid]->len;
-            ai = 1;
-            for (fi = 0; fi < flen; fi++) {
-                if (fmt[fi] == '%' && fi + 1 < flen) {
-                    fi++;
-                    if (fmt[fi] == 'd') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
-                        gen_expr(n->list[ai]);
-                        ai++;
-                        emit_indent();
-                        printf("call $__print_int\n");
-                    } else if (fmt[fi] == 's') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
-                        gen_expr(n->list[ai]);
-                        ai++;
-                        emit_indent();
-                        printf("call $__print_str\n");
-                    } else if (fmt[fi] == 'c') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
-                        gen_expr(n->list[ai]);
-                        ai++;
-                        emit_indent();
-                        printf("call $putchar\n");
-                        emit_indent();
-                        printf("drop\n");
-                    } else if (fmt[fi] == 'x') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
-                        gen_expr(n->list[ai]);
-                        ai++;
-                        emit_indent();
-                        printf("call $__print_hex\n");
-                    } else if (fmt[fi] == 'f') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
-                        gen_expr(n->list[ai]);
-                        if (!last_expr_is_float) {
-                            emit_indent();
-                            printf("f64.convert_i32_s\n");
-                        }
-                        ai++;
-                        emit_indent();
-                        printf("call $__print_float\n");
-                    } else if (fmt[fi] == '%') {
-                        emit_indent();
-                        printf("i32.const 37\n");
-                        emit_indent();
-                        printf("call $putchar\n");
-                        emit_indent();
-                        printf("drop\n");
-                    } else {
-                        error(n->nline, n->ncol, "unsupported printf format");
-                    }
-                } else {
-                    emit_indent();
-                    printf("i32.const %d\n", fmt[fi] & 255);
-                    emit_indent();
-                    printf("call $putchar\n");
-                    emit_indent();
-                    printf("drop\n");
-                }
             }
             emit_indent();
-            printf("i32.const 0\n");
-            last_expr_is_float = 0;
-        } else if (strcmp(n->sval, "putchar") == 0) {
-            gen_expr(n->list[0]);
+            printf("i32.load\n");
+            gen_expr(n->c1);
             emit_indent();
-            printf("call $putchar\n");
-        } else if (strcmp(n->sval, "getchar") == 0) {
-            emit_indent();
-            printf("call $getchar\n");
-        } else if (strcmp(n->sval, "exit") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $__proc_exit\n");
-            emit_indent();
-            printf("i32.const 0\n");
-        } else if (strcmp(n->sval, "malloc") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $malloc\n");
-        } else if (strcmp(n->sval, "free") == 0) {
-            if (n->ival2 > 0) {
-                gen_expr(n->list[0]);
-            } else {
+            printf("i32.add\n");
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr(tgt->c0);
+            if (off > 0) {
                 emit_indent();
-                printf("i32.const 0\n");
-            }
-            emit_indent();
-            printf("call $free\n");
-            emit_indent();
-            printf("i32.const 0\n");
-        } else if (strcmp(n->sval, "strlen") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $strlen\n");
-        } else if (strcmp(n->sval, "strcmp") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strcmp\n");
-        } else if (strcmp(n->sval, "strncpy") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $strncpy\n");
-        } else if (strcmp(n->sval, "memcpy") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memcpy\n");
-        } else if (strcmp(n->sval, "memset") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memset\n");
-        } else if (strcmp(n->sval, "memcmp") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memcmp\n");
-        /* --- new libc builtins --- */
-        } else if (strcmp(n->sval, "isdigit") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isdigit\n");
-        } else if (strcmp(n->sval, "isalpha") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isalpha\n");
-        } else if (strcmp(n->sval, "isalnum") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isalnum\n");
-        } else if (strcmp(n->sval, "isspace") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isspace\n");
-        } else if (strcmp(n->sval, "isupper") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isupper\n");
-        } else if (strcmp(n->sval, "islower") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $islower\n");
-        } else if (strcmp(n->sval, "isprint") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isprint\n");
-        } else if (strcmp(n->sval, "ispunct") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $ispunct\n");
-        } else if (strcmp(n->sval, "isxdigit") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isxdigit\n");
-        } else if (strcmp(n->sval, "toupper") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $toupper\n");
-        } else if (strcmp(n->sval, "tolower") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $tolower\n");
-        } else if (strcmp(n->sval, "abs") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $abs\n");
-        } else if (strcmp(n->sval, "atoi") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $atoi\n");
-        } else if (strcmp(n->sval, "puts") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $puts\n");
-        } else if (strcmp(n->sval, "srand") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $srand\n");
-            emit_indent();
-            printf("i32.const 0\n");
-        } else if (strcmp(n->sval, "rand") == 0) {
-            emit_indent();
-            printf("call $rand\n");
-        } else if (strcmp(n->sval, "strcpy") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strcpy\n");
-        } else if (strcmp(n->sval, "strcat") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strcat\n");
-        } else if (strcmp(n->sval, "strchr") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strchr\n");
-        } else if (strcmp(n->sval, "strrchr") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strrchr\n");
-        } else if (strcmp(n->sval, "strstr") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strstr\n");
-        } else if (strcmp(n->sval, "calloc") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $calloc\n");
-        } else if (strcmp(n->sval, "strncmp") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $strncmp\n");
-        } else if (strcmp(n->sval, "strncat") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $strncat\n");
-        } else if (strcmp(n->sval, "memmove") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memmove\n");
-        } else if (strcmp(n->sval, "memchr") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memchr\n");
-        } else if (strcmp(n->sval, "strtol") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $strtol\n");
-        } else {
-            for (i = 0; i < n->ival2; i++) {
-                gen_expr(n->list[i]);
-                /* convert param if needed */
-                if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
-                    emit_indent();
-                    printf("f64.convert_i32_s\n");
-                } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
-                    emit_indent();
-                    printf("i32.trunc_f64_s\n");
-                }
-            }
-            emit_indent();
-            printf("call $%s\n", n->sval);
-            if (func_is_void(n->sval)) {
+                printf("i32.const %d\n", off);
                 emit_indent();
-                printf("i32.const 0\n");
-                last_expr_is_float = 0;
-            } else {
-                last_expr_is_float = func_ret_is_float(n->sval);
+                printf("i32.add\n");
             }
-        }
-        break;
-    case ND_STR_LIT:
-        emit_indent();
-        printf("i32.const %d\n", str_table[n->ival]->offset);
-        last_expr_is_float = 0;
-        break;
-    case ND_CALL_INDIRECT: {
-        int ci_i;
-        int ci_np;
-        ci_np = n->ival; /* declared param count */
-        /* push arguments */
-        for (ci_i = 0; ci_i < n->ival2; ci_i++) {
-            gen_expr(n->list[ci_i]);
-        }
-        /* push table index (the callee expression) */
-        gen_expr(n->c0);
-        /* emit call_indirect with matching type signature */
-        emit_indent();
-        printf("call_indirect (type $__fntype_%d_%s)\n",
-               ci_np, n->ival3 ? "void" : "i32");
-        if (n->ival3) {
-            /* void function — push dummy i32 */
             emit_indent();
-            printf("i32.const 0\n");
+            printf("i32.load\n");
+            gen_expr(n->c1);
+            emit_indent();
+            printf("i32.sub\n");
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr(tgt->c0);
+            if (off > 0) {
+                emit_indent();
+                printf("i32.const %d\n", off);
+                emit_indent();
+                printf("i32.add\n");
+            }
+            emit_indent();
+            printf("i32.load\n");
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+            else { printf("i32.shr_s\n"); }
         }
-        last_expr_is_float = 0;
-        break;
-    }
-    case ND_MEMBER:
-        off = resolve_field_offset(n->sval);
-        if (off < 0) error(n->nline, n->ncol, "unknown struct field");
-        gen_expr(n->c0);
+        emit_indent();
+        printf("local.set $__atmp\n");
+        gen_expr(tgt->c0);
         if (off > 0) {
             emit_indent();
             printf("i32.const %d\n", off);
@@ -3916,42 +3334,92 @@ void gen_expr(struct Node *n) {
             printf("i32.add\n");
         }
         emit_indent();
-        printf("i32.load\n");
-        break;
-    case ND_SIZEOF: {
-        struct StructDef *sd;
-        int sz;
-        if (n->ival == 1) {
-            sz = 4; /* pointer type */
-        } else if (n->c0 != (struct Node *)0) {
-            /* sizeof(expr): infer size from variable */
-            if (n->c0->kind == ND_IDENT) {
-                sz = var_elem_size(n->c0->sval);
-            } else {
-                sz = 4;
+        printf("local.get $__atmp\n");
+        emit_indent();
+        printf("i32.store\n");
+        emit_indent();
+        printf("local.get $__atmp\n");
+    } else if (tgt->kind == ND_SUBSCRIPT) {
+        esz = expr_elem_size(tgt->c0);
+        if (n->ival == TOK_EQ) {
+            gen_expr(n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (esz > 1) {
+                emit_indent();
+                printf("i32.const %d\n", esz);
+                emit_indent();
+                printf("i32.mul\n");
             }
-        } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
-            sz = 1;
-        } else if (n->sval != (char *)0) {
-            sd = find_struct(n->sval);
-            if (sd != (struct StructDef *)0) {
-                sz = sd->size;
+            emit_indent();
+            printf("i32.add\n");
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
             } else {
-                sz = 4;
+                printf("i32.load\n");
             }
-        } else if (n->ival2 > 0) {
-            sz = n->ival2;
-        } else {
-            sz = 4;
+            gen_expr(n->c1);
+            emit_indent();
+            printf("i32.add\n");
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (esz > 1) {
+                emit_indent();
+                printf("i32.const %d\n", esz);
+                emit_indent();
+                printf("i32.mul\n");
+            }
+            emit_indent();
+            printf("i32.add\n");
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            printf("i32.sub\n");
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (esz > 1) {
+                emit_indent();
+                printf("i32.const %d\n", esz);
+                emit_indent();
+                printf("i32.mul\n");
+            }
+            emit_indent();
+            printf("i32.add\n");
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+            else { printf("i32.shr_s\n"); }
         }
         emit_indent();
-        printf("i32.const %d\n", sz);
-        break;
-    }
-    case ND_SUBSCRIPT:
-        esz = expr_elem_size(n->c0);
-        gen_expr(n->c0);
-        gen_expr(n->c1);
+        printf("local.set $__atmp\n");
+        gen_expr(tgt->c0);
+        gen_expr(tgt->c1);
         if (esz > 1) {
             emit_indent();
             printf("i32.const %d\n", esz);
@@ -3961,138 +3429,700 @@ void gen_expr(struct Node *n) {
         emit_indent();
         printf("i32.add\n");
         emit_indent();
+        printf("local.get $__atmp\n");
+        emit_indent();
         if (esz == 1) {
-            printf("i32.load8_u\n");
+            printf("i32.store8\n");
         } else if (esz == 2) {
-            printf("i32.load16_s\n");
+            printf("i32.store16\n");
         } else {
-            printf("i32.load\n");
+            printf("i32.store\n");
         }
-        break;
-    case ND_POST_INC:
-    case ND_POST_DEC: {
-        struct Node *tgt2;
-        char *pname;
-        int pis_global;
-        int pesz;
-        int poff;
-        tgt2 = n->c0;
-        if (tgt2->kind == ND_IDENT) {
-            pname = tgt2->sval;
-            pis_global = (find_global(pname) >= 0);
-            if (pis_global) {
-                emit_indent(); printf("global.get $%s\n", pname);
-                emit_indent(); printf("local.set $__atmp\n");
-                emit_indent(); printf("global.get $%s\n", pname);
-                emit_indent(); printf("i32.const 1\n");
-                emit_indent();
-                if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-                emit_indent(); printf("global.set $%s\n", pname);
-                emit_indent(); printf("local.get $__atmp\n");
-            } else {
-                emit_indent(); printf("local.get $%s\n", pname);
-                emit_indent(); printf("local.get $%s\n", pname);
-                emit_indent(); printf("i32.const 1\n");
-                emit_indent();
-                if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-                emit_indent(); printf("local.set $%s\n", pname);
-            }
-        } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
-            /* NOTE: tgt2->c0 evaluated 3x (save old val, store addr, reload).
-               Correct only when pointer expression has no side effects. */
-            pesz = expr_elem_size(tgt2->c0);
-            gen_expr(tgt2->c0);
-            emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-            emit_indent(); printf("local.set $__atmp\n");
-            gen_expr(tgt2->c0);
-            gen_expr(tgt2->c0);
-            emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-            emit_indent(); printf("i32.const 1\n");
-            emit_indent();
-            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-            emit_indent();
-            if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
-            emit_indent(); printf("local.get $__atmp\n");
-        } else if (tgt2->kind == ND_SUBSCRIPT) {
-            /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
-               Correct only when the array and index expressions have no side effects. */
-            pesz = expr_elem_size(tgt2->c0);
-            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-            emit_indent(); printf("i32.add\n");
-            emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-            emit_indent(); printf("local.set $__atmp\n");
-            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-            emit_indent(); printf("i32.add\n");
-            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-            emit_indent(); printf("i32.add\n");
-            emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-            emit_indent(); printf("i32.const 1\n");
-            emit_indent();
-            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-            emit_indent();
-            if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
-            emit_indent(); printf("local.get $__atmp\n");
-        } else if (tgt2->kind == ND_MEMBER) {
-            poff = resolve_field_offset(tgt2->sval);
-            if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
-            gen_expr(tgt2->c0);
-            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
-            emit_indent(); printf("i32.load\n");
-            emit_indent(); printf("local.set $__atmp\n");
-            gen_expr(tgt2->c0);
-            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
-            gen_expr(tgt2->c0);
-            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
-            emit_indent(); printf("i32.load\n");
-            emit_indent(); printf("i32.const 1\n");
-            emit_indent();
-            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-            emit_indent(); printf("i32.store\n");
-            emit_indent(); printf("local.get $__atmp\n");
-        } else {
-            error(n->nline, n->ncol, "unsupported post-inc/dec target");
-        }
-        break;
+        emit_indent();
+        printf("local.get $__atmp\n");
     }
-    case ND_TERNARY:
+}
+
+void gen_expr_unary(struct Node *n) {
+    int esz;
+
+    if (n->ival == TOK_MINUS) {
         gen_expr(n->c0);
-        /* both branches produce i32; compiler is uniformly i32 throughout */
+        if (last_expr_is_float) {
+            emit_indent();
+            printf("f64.neg\n");
+        } else {
+            /* save value, push 0, push value, sub */
+            emit_indent();
+            printf("local.set $__atmp\n");
+            emit_indent();
+            printf("i32.const 0\n");
+            emit_indent();
+            printf("local.get $__atmp\n");
+            emit_indent();
+            printf("i32.sub\n");
+        }
+    } else if (n->ival == TOK_BANG) {
+        gen_expr(n->c0);
+        if (last_expr_is_float) {
+            emit_indent();
+            printf("f64.const 0\n");
+            emit_indent();
+            printf("f64.eq\n");
+            last_expr_is_float = 0;
+        } else {
+            emit_indent();
+            printf("i32.eqz\n");
+        }
+    } else if (n->ival == TOK_TILDE) {
         emit_indent();
-        printf("(if (result i32)\n");
-        indent_level++;
+        printf("i32.const -1\n");
+        gen_expr(n->c0);
         emit_indent();
-        printf("(then\n");
-        indent_level++;
-        gen_expr(n->c1);
-        indent_level--;
+        printf("i32.xor\n");
+        last_expr_is_float = 0;
+    } else if (n->ival == TOK_STAR) {
+        esz = expr_elem_size(n->c0);
+        gen_expr(n->c0);
+        if (esz == 8) {
+            emit_indent();
+            printf("f64.load\n");
+            last_expr_is_float = 2;
+        } else {
+            last_expr_is_float = 0;
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+        }
+    } else if (n->ival == TOK_AMP) {
+        error(n->nline, n->ncol, "cannot take address of this expression");
+    }
+}
+
+void gen_expr_binary(struct Node *n) {
+    int left_float;
+    int right_float;
+    int op_float;
+    gen_expr(n->c0);
+    left_float = last_expr_is_float;
+    gen_expr(n->c1);
+    right_float = last_expr_is_float;
+    op_float = 0;
+    if (left_float || right_float) {
+        op_float = 2;
+        /* promote: if either is float, both should be f64 */
+        if (left_float && !right_float) {
+            /* stack: [f64, i32] — convert top (right) from i32 to f64 */
+            emit_indent();
+            printf("f64.convert_i32_s\n");
+        } else if (!left_float && right_float) {
+            /* stack: [i32, f64] — need to swap and convert left */
+            emit_indent();
+            printf("local.set $__ftmp\n");
+            emit_indent();
+            printf("f64.convert_i32_s\n");
+            emit_indent();
+            printf("local.get $__ftmp\n");
+        }
+    }
+    if (op_float) {
         emit_indent();
-        printf(")\n");
+        if (n->ival == TOK_PLUS) {
+            printf("f64.add\n");
+            last_expr_is_float = 2;
+        } else if (n->ival == TOK_MINUS) {
+            printf("f64.sub\n");
+            last_expr_is_float = 2;
+        } else if (n->ival == TOK_STAR) {
+            printf("f64.mul\n");
+            last_expr_is_float = 2;
+        } else if (n->ival == TOK_SLASH) {
+            printf("f64.div\n");
+            last_expr_is_float = 2;
+        } else if (n->ival == TOK_EQ_EQ) {
+            printf("f64.eq\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_BANG_EQ) {
+            printf("f64.ne\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_LT) {
+            printf("f64.lt\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_GT) {
+            printf("f64.gt\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_LT_EQ) {
+            printf("f64.le\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_GT_EQ) {
+            printf("f64.ge\n");
+            last_expr_is_float = 0;
+        } else {
+            error(n->nline, n->ncol, "unsupported float binary operator");
+        }
+    } else {
         emit_indent();
-        printf("(else\n");
-        indent_level++;
-        gen_expr(n->c2);
-        indent_level--;
+        if (n->ival == TOK_PLUS) {
+            printf("i32.add\n");
+        } else if (n->ival == TOK_MINUS) {
+            printf("i32.sub\n");
+        } else if (n->ival == TOK_STAR) {
+            printf("i32.mul\n");
+        } else if (n->ival == TOK_SLASH) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.div_u\n"); } else { printf("i32.div_s\n"); }
+        } else if (n->ival == TOK_PERCENT) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.rem_u\n"); } else { printf("i32.rem_s\n"); }
+        } else if (n->ival == TOK_EQ_EQ) {
+            printf("i32.eq\n");
+        } else if (n->ival == TOK_BANG_EQ) {
+            printf("i32.ne\n");
+        } else if (n->ival == TOK_LT) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.lt_u\n"); } else { printf("i32.lt_s\n"); }
+        } else if (n->ival == TOK_GT) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.gt_u\n"); } else { printf("i32.gt_s\n"); }
+        } else if (n->ival == TOK_LT_EQ) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.le_u\n"); } else { printf("i32.le_s\n"); }
+        } else if (n->ival == TOK_GT_EQ) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.ge_u\n"); } else { printf("i32.ge_s\n"); }
+        } else if (n->ival == TOK_AMP_AMP) {
+            printf("i32.and\n");
+        } else if (n->ival == TOK_PIPE_PIPE) {
+            printf("i32.or\n");
+        } else if (n->ival == TOK_AMP) {
+            printf("i32.and\n");
+        } else if (n->ival == TOK_PIPE) {
+            printf("i32.or\n");
+        } else if (n->ival == TOK_LSHIFT) {
+            printf("i32.shl\n");
+        } else if (n->ival == TOK_RSHIFT) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.shr_u\n"); } else { printf("i32.shr_s\n"); }
+        } else if (n->ival == TOK_CARET) {
+            printf("i32.xor\n");
+        } else {
+            error(n->nline, n->ncol, "unsupported binary operator");
+        }
+        last_expr_is_float = 0;
+    }
+}
+
+void gen_expr_call(struct Node *n) {
+    char *fmt;
+    int flen;
+    int ai;
+    int fi;
+    int sid;
+    int i;
+
+    if (strcmp(n->sval, "printf") == 0) {
+        if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
+            error(n->nline, n->ncol, "printf requires string literal format");
+        }
+        sid = n->list[0]->ival;
+        fmt = str_table[sid]->data;
+        flen = str_table[sid]->len;
+        ai = 1;
+        for (fi = 0; fi < flen; fi++) {
+            if (fmt[fi] == '%' && fi + 1 < flen) {
+                fi++;
+                if (fmt[fi] == 'd') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    printf("call $__print_int\n");
+                } else if (fmt[fi] == 's') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    printf("call $__print_str\n");
+                } else if (fmt[fi] == 'c') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    printf("call $putchar\n");
+                    emit_indent();
+                    printf("drop\n");
+                } else if (fmt[fi] == 'x') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    printf("call $__print_hex\n");
+                } else if (fmt[fi] == 'f') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
+                    gen_expr(n->list[ai]);
+                    if (!last_expr_is_float) {
+                        emit_indent();
+                        printf("f64.convert_i32_s\n");
+                    }
+                    ai++;
+                    emit_indent();
+                    printf("call $__print_float\n");
+                } else if (fmt[fi] == '%') {
+                    emit_indent();
+                    printf("i32.const 37\n");
+                    emit_indent();
+                    printf("call $putchar\n");
+                    emit_indent();
+                    printf("drop\n");
+                } else {
+                    error(n->nline, n->ncol, "unsupported printf format");
+                }
+            } else {
+                emit_indent();
+                printf("i32.const %d\n", fmt[fi] & 255);
+                emit_indent();
+                printf("call $putchar\n");
+                emit_indent();
+                printf("drop\n");
+            }
+        }
         emit_indent();
-        printf(")\n");
-        indent_level--;
+        printf("i32.const 0\n");
+        last_expr_is_float = 0;
+    } else if (strcmp(n->sval, "putchar") == 0) {
+        gen_expr(n->list[0]);
         emit_indent();
-        printf(")\n");
-        break;
-    default:
+        printf("call $putchar\n");
+    } else if (strcmp(n->sval, "getchar") == 0) {
+        emit_indent();
+        printf("call $getchar\n");
+    } else if (strcmp(n->sval, "exit") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $__proc_exit\n");
+        emit_indent();
+        printf("i32.const 0\n");
+    } else if (strcmp(n->sval, "malloc") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $malloc\n");
+    } else if (strcmp(n->sval, "free") == 0) {
+        if (n->ival2 > 0) {
+            gen_expr(n->list[0]);
+        } else {
+            emit_indent();
+            printf("i32.const 0\n");
+        }
+        emit_indent();
+        printf("call $free\n");
+        emit_indent();
+        printf("i32.const 0\n");
+    } else if (strcmp(n->sval, "strlen") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $strlen\n");
+    } else if (strcmp(n->sval, "strcmp") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strcmp\n");
+    } else if (strcmp(n->sval, "strncpy") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $strncpy\n");
+    } else if (strcmp(n->sval, "memcpy") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memcpy\n");
+    } else if (strcmp(n->sval, "memset") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memset\n");
+    } else if (strcmp(n->sval, "memcmp") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memcmp\n");
+    /* --- new libc builtins --- */
+    } else if (strcmp(n->sval, "isdigit") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isdigit\n");
+    } else if (strcmp(n->sval, "isalpha") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isalpha\n");
+    } else if (strcmp(n->sval, "isalnum") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isalnum\n");
+    } else if (strcmp(n->sval, "isspace") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isspace\n");
+    } else if (strcmp(n->sval, "isupper") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isupper\n");
+    } else if (strcmp(n->sval, "islower") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $islower\n");
+    } else if (strcmp(n->sval, "isprint") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isprint\n");
+    } else if (strcmp(n->sval, "ispunct") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $ispunct\n");
+    } else if (strcmp(n->sval, "isxdigit") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isxdigit\n");
+    } else if (strcmp(n->sval, "toupper") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $toupper\n");
+    } else if (strcmp(n->sval, "tolower") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $tolower\n");
+    } else if (strcmp(n->sval, "abs") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $abs\n");
+    } else if (strcmp(n->sval, "atoi") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $atoi\n");
+    } else if (strcmp(n->sval, "puts") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $puts\n");
+    } else if (strcmp(n->sval, "srand") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $srand\n");
+        emit_indent();
+        printf("i32.const 0\n");
+    } else if (strcmp(n->sval, "rand") == 0) {
+        emit_indent();
+        printf("call $rand\n");
+    } else if (strcmp(n->sval, "strcpy") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strcpy\n");
+    } else if (strcmp(n->sval, "strcat") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strcat\n");
+    } else if (strcmp(n->sval, "strchr") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strchr\n");
+    } else if (strcmp(n->sval, "strrchr") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strrchr\n");
+    } else if (strcmp(n->sval, "strstr") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strstr\n");
+    } else if (strcmp(n->sval, "calloc") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $calloc\n");
+    } else if (strcmp(n->sval, "strncmp") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $strncmp\n");
+    } else if (strcmp(n->sval, "strncat") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $strncat\n");
+    } else if (strcmp(n->sval, "memmove") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memmove\n");
+    } else if (strcmp(n->sval, "memchr") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memchr\n");
+    } else if (strcmp(n->sval, "strtol") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $strtol\n");
+    } else {
+        for (i = 0; i < n->ival2; i++) {
+            gen_expr(n->list[i]);
+            /* convert param if needed */
+            if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
+                emit_indent();
+                printf("f64.convert_i32_s\n");
+            } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
+                emit_indent();
+                printf("i32.trunc_f64_s\n");
+            }
+        }
+        emit_indent();
+        printf("call $%s\n", n->sval);
+        if (func_is_void(n->sval)) {
+            emit_indent();
+            printf("i32.const 0\n");
+            last_expr_is_float = 0;
+        } else {
+            last_expr_is_float = func_ret_is_float(n->sval);
+        }
+    }
+}
+
+void gen_expr_str_lit(struct Node *n) {
+    emit_indent();
+    printf("i32.const %d\n", str_table[n->ival]->offset);
+    last_expr_is_float = 0;
+}
+
+void gen_expr_call_indirect(struct Node *n) {
+    int ci_i;
+    int ci_np;
+    ci_np = n->ival; /* declared param count */
+    /* push arguments */
+    for (ci_i = 0; ci_i < n->ival2; ci_i++) {
+        gen_expr(n->list[ci_i]);
+    }
+    /* push table index (the callee expression) */
+    gen_expr(n->c0);
+    /* emit call_indirect with matching type signature */
+    emit_indent();
+    printf("call_indirect (type $__fntype_%d_%s)\n",
+           ci_np, n->ival3 ? "void" : "i32");
+    if (n->ival3) {
+        /* void function — push dummy i32 */
+        emit_indent();
+        printf("i32.const 0\n");
+    }
+    last_expr_is_float = 0;
+}
+
+void gen_expr_member(struct Node *n) {
+    int off;
+
+    off = resolve_field_offset(n->sval);
+    if (off < 0) error(n->nline, n->ncol, "unknown struct field");
+    gen_expr(n->c0);
+    if (off > 0) {
+        emit_indent();
+        printf("i32.const %d\n", off);
+        emit_indent();
+        printf("i32.add\n");
+    }
+    emit_indent();
+    printf("i32.load\n");
+}
+
+void gen_expr_sizeof(struct Node *n) {
+    struct StructDef *sd;
+    int sz;
+    if (n->ival == 1) {
+        sz = 4; /* pointer type */
+    } else if (n->c0 != (struct Node *)0) {
+        /* sizeof(expr): infer size from variable */
+        if (n->c0->kind == ND_IDENT) {
+            sz = var_elem_size(n->c0->sval);
+        } else {
+            sz = 4;
+        }
+    } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
+        sz = 1;
+    } else if (n->sval != (char *)0) {
+        sd = find_struct(n->sval);
+        if (sd != (struct StructDef *)0) {
+            sz = sd->size;
+        } else {
+            sz = 4;
+        }
+    } else if (n->ival2 > 0) {
+        sz = n->ival2;
+    } else {
+        sz = 4;
+    }
+    emit_indent();
+    printf("i32.const %d\n", sz);
+}
+
+void gen_expr_subscript(struct Node *n) {
+    int esz;
+
+    esz = expr_elem_size(n->c0);
+    gen_expr(n->c0);
+    gen_expr(n->c1);
+    if (esz > 1) {
+        emit_indent();
+        printf("i32.const %d\n", esz);
+        emit_indent();
+        printf("i32.mul\n");
+    }
+    emit_indent();
+    printf("i32.add\n");
+    emit_indent();
+    if (esz == 1) {
+        printf("i32.load8_u\n");
+    } else if (esz == 2) {
+        printf("i32.load16_s\n");
+    } else {
+        printf("i32.load\n");
+    }
+}
+
+void gen_expr_post_inc_dec(struct Node *n) {
+    struct Node *tgt2;
+    char *pname;
+    int pis_global;
+    int pesz;
+    int poff;
+    tgt2 = n->c0;
+    if (tgt2->kind == ND_IDENT) {
+        pname = tgt2->sval;
+        pis_global = (find_global(pname) >= 0);
+        if (pis_global) {
+            emit_indent(); printf("global.get $%s\n", pname);
+            emit_indent(); printf("local.set $__atmp\n");
+            emit_indent(); printf("global.get $%s\n", pname);
+            emit_indent(); printf("i32.const 1\n");
+            emit_indent();
+            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+            emit_indent(); printf("global.set $%s\n", pname);
+            emit_indent(); printf("local.get $__atmp\n");
+        } else {
+            emit_indent(); printf("local.get $%s\n", pname);
+            emit_indent(); printf("local.get $%s\n", pname);
+            emit_indent(); printf("i32.const 1\n");
+            emit_indent();
+            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+            emit_indent(); printf("local.set $%s\n", pname);
+        }
+    } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
+        /* NOTE: tgt2->c0 evaluated 3x (save old val, store addr, reload).
+           Correct only when pointer expression has no side effects. */
+        pesz = expr_elem_size(tgt2->c0);
+        gen_expr(tgt2->c0);
+        emit_indent();
+        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
+        emit_indent(); printf("local.set $__atmp\n");
+        gen_expr(tgt2->c0);
+        gen_expr(tgt2->c0);
+        emit_indent();
+        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
+        emit_indent(); printf("i32.const 1\n");
+        emit_indent();
+        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+        emit_indent();
+        if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
+        emit_indent(); printf("local.get $__atmp\n");
+    } else if (tgt2->kind == ND_SUBSCRIPT) {
+        /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
+           Correct only when the array and index expressions have no side effects. */
+        pesz = expr_elem_size(tgt2->c0);
+        gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+        emit_indent(); printf("i32.add\n");
+        emit_indent();
+        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
+        emit_indent(); printf("local.set $__atmp\n");
+        gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+        emit_indent(); printf("i32.add\n");
+        gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+        emit_indent(); printf("i32.add\n");
+        emit_indent();
+        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
+        emit_indent(); printf("i32.const 1\n");
+        emit_indent();
+        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+        emit_indent();
+        if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
+        emit_indent(); printf("local.get $__atmp\n");
+    } else if (tgt2->kind == ND_MEMBER) {
+        poff = resolve_field_offset(tgt2->sval);
+        if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
+        gen_expr(tgt2->c0);
+        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+        emit_indent(); printf("i32.load\n");
+        emit_indent(); printf("local.set $__atmp\n");
+        gen_expr(tgt2->c0);
+        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+        gen_expr(tgt2->c0);
+        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+        emit_indent(); printf("i32.load\n");
+        emit_indent(); printf("i32.const 1\n");
+        emit_indent();
+        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+        emit_indent(); printf("i32.store\n");
+        emit_indent(); printf("local.get $__atmp\n");
+    } else {
+        error(n->nline, n->ncol, "unsupported post-inc/dec target");
+    }
+}
+
+void gen_expr_ternary(struct Node *n) {
+    gen_expr(n->c0);
+    /* both branches produce i32; compiler is uniformly i32 throughout */
+    emit_indent();
+    printf("(if (result i32)\n");
+    indent_level++;
+    emit_indent();
+    printf("(then\n");
+    indent_level++;
+    gen_expr(n->c1);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("(else\n");
+    indent_level++;
+    gen_expr(n->c2);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+}
+
+void gen_expr(struct Node *n) {
+    GenExprFn fn;
+    if (n->kind < 0 || n->kind >= ND_COUNT) {
         error(n->nline, n->ncol, "unsupported expression in codegen");
     }
+    fn = gen_expr_tbl[n->kind];
+    fn(n);
 }
 
 /* --- Statement codegen --- */
 
-void gen_stmt(struct Node *n);
 
 void gen_body(struct Node *n) {
     int i;
@@ -4105,110 +4135,157 @@ void gen_body(struct Node *n) {
     }
 }
 
-void gen_stmt(struct Node *n) {
-    int lbl;
-    int i;
-    int bsz;
-
-    switch (n->kind) {
-    case ND_RETURN:
-        if (n->c0 != (struct Node *)0) {
-            gen_expr(n->c0);
-        }
-        emit_indent();
-        printf("return\n");
-        break;
-    case ND_VAR_DECL: {
-        int vd_is_flt;
-        vd_is_flt = n->ival3 >> 4;
-        if (n->ival > 0) {
-            /* Array: allocate n->ival elements of elem_size bytes */
-            bsz = n->ival * n->ival2;
-            emit_indent();
-            printf("i32.const %d\n", bsz);
-            emit_indent();
-            printf("call $malloc\n");
-            emit_indent();
-            printf("local.set $%s\n", n->sval);
-        } else if (n->c0 != (struct Node *)0) {
-            gen_expr(n->c0);
-            /* type conversion if needed */
-            if (vd_is_flt && !last_expr_is_float) {
-                emit_indent();
-                printf("f64.convert_i32_s\n");
-            } else if (!vd_is_flt && last_expr_is_float) {
-                emit_indent();
-                printf("i32.trunc_f64_s\n");
-            }
-            emit_indent();
-            printf("local.set $%s\n", n->sval);
-        }
-        break;
+void gen_stmt_return(struct Node *n) {
+    if (n->c0 != (struct Node *)0) {
+        gen_expr(n->c0);
     }
-    case ND_EXPR_STMT:
-        gen_expr(n->c0);
+    emit_indent();
+    printf("return\n");
+}
+
+void gen_stmt_var_decl(struct Node *n) {
+    int bsz;
+    int vd_is_flt;
+    vd_is_flt = n->ival3 >> 4;
+    if (n->ival > 0) {
+        /* Array: allocate n->ival elements of elem_size bytes */
+        bsz = n->ival * n->ival2;
         emit_indent();
-        printf("drop\n");
-        break;
-    case ND_IF:
-        gen_expr(n->c0);
-        if (last_expr_is_float) {
-            /* convert float condition to boolean: f64 != 0.0 */
-            emit_indent();
-            printf("f64.const 0\n");
-            emit_indent();
-            printf("f64.ne\n");
-        }
-        if (n->c2 != (struct Node *)0) {
-            emit_indent();
-            printf("(if\n");
-            indent_level++;
-            emit_indent();
-            printf("(then\n");
-            indent_level++;
-            gen_body(n->c1);
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-            emit_indent();
-            printf("(else\n");
-            indent_level++;
-            gen_body(n->c2);
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-        } else {
-            emit_indent();
-            printf("(if\n");
-            indent_level++;
-            emit_indent();
-            printf("(then\n");
-            indent_level++;
-            gen_body(n->c1);
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-        }
-        break;
-    case ND_WHILE:
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        loop_sp++;
+        printf("i32.const %d\n", bsz);
         emit_indent();
-        printf("(block $brk_%d\n", lbl);
+        printf("call $malloc\n");
+        emit_indent();
+        printf("local.set $%s\n", n->sval);
+    } else if (n->c0 != (struct Node *)0) {
+        gen_expr(n->c0);
+        /* type conversion if needed */
+        if (vd_is_flt && !last_expr_is_float) {
+            emit_indent();
+            printf("f64.convert_i32_s\n");
+        } else if (!vd_is_flt && last_expr_is_float) {
+            emit_indent();
+            printf("i32.trunc_f64_s\n");
+        }
+        emit_indent();
+        printf("local.set $%s\n", n->sval);
+    }
+}
+
+void gen_stmt_expr_stmt(struct Node *n) {
+    gen_expr(n->c0);
+    emit_indent();
+    printf("drop\n");
+}
+
+void gen_stmt_if(struct Node *n) {
+    gen_expr(n->c0);
+    if (last_expr_is_float) {
+        /* convert float condition to boolean: f64 != 0.0 */
+        emit_indent();
+        printf("f64.const 0\n");
+        emit_indent();
+        printf("f64.ne\n");
+    }
+    if (n->c2 != (struct Node *)0) {
+        emit_indent();
+        printf("(if\n");
         indent_level++;
         emit_indent();
-        printf("(loop $lp_%d\n", lbl);
+        printf("(then\n");
         indent_level++;
-        gen_expr(n->c0);
+        gen_body(n->c1);
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+        emit_indent();
+        printf("(else\n");
+        indent_level++;
+        gen_body(n->c2);
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+    } else {
+        emit_indent();
+        printf("(if\n");
+        indent_level++;
+        emit_indent();
+        printf("(then\n");
+        indent_level++;
+        gen_body(n->c1);
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+    }
+}
+
+void gen_stmt_while(struct Node *n) {
+    int lbl;
+
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    loop_sp++;
+    emit_indent();
+    printf("(block $brk_%d\n", lbl);
+    indent_level++;
+    emit_indent();
+    printf("(loop $lp_%d\n", lbl);
+    indent_level++;
+    gen_expr(n->c0);
+    if (last_expr_is_float) {
+        emit_indent();
+        printf("f64.const 0\n");
+        emit_indent();
+        printf("f64.ne\n");
+    }
+    emit_indent();
+    printf("i32.eqz\n");
+    emit_indent();
+    printf("br_if $brk_%d\n", lbl);
+    emit_indent();
+    printf("(block $cont_%d\n", lbl);
+    indent_level++;
+    gen_body(n->c1);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("br $lp_%d\n", lbl);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    loop_sp--;
+}
+
+void gen_stmt_for(struct Node *n) {
+    int lbl;
+
+    if (n->c0 != (struct Node *)0) {
+        gen_stmt(n->c0);
+    }
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    loop_sp++;
+    emit_indent();
+    printf("(block $brk_%d\n", lbl);
+    indent_level++;
+    emit_indent();
+    printf("(loop $lp_%d\n", lbl);
+    indent_level++;
+    if (n->c1 != (struct Node *)0) {
+        gen_expr(n->c1);
         if (last_expr_is_float) {
             emit_indent();
             printf("f64.const 0\n");
@@ -4219,251 +4296,271 @@ void gen_stmt(struct Node *n) {
         printf("i32.eqz\n");
         emit_indent();
         printf("br_if $brk_%d\n", lbl);
-        emit_indent();
-        printf("(block $cont_%d\n", lbl);
-        indent_level++;
-        gen_body(n->c1);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        emit_indent();
-        printf("br $lp_%d\n", lbl);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        loop_sp--;
-        break;
-    case ND_FOR:
-        if (n->c0 != (struct Node *)0) {
-            gen_stmt(n->c0);
-        }
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        loop_sp++;
-        emit_indent();
-        printf("(block $brk_%d\n", lbl);
-        indent_level++;
-        emit_indent();
-        printf("(loop $lp_%d\n", lbl);
-        indent_level++;
-        if (n->c1 != (struct Node *)0) {
-            gen_expr(n->c1);
-            if (last_expr_is_float) {
-                emit_indent();
-                printf("f64.const 0\n");
-                emit_indent();
-                printf("f64.ne\n");
-            }
-            emit_indent();
-            printf("i32.eqz\n");
-            emit_indent();
-            printf("br_if $brk_%d\n", lbl);
-        }
-        emit_indent();
-        printf("(block $cont_%d\n", lbl);
-        indent_level++;
-        gen_body(n->c3);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        if (n->c2 != (struct Node *)0) {
-            gen_expr(n->c2);
-            emit_indent();
-            printf("drop\n");
-        }
-        emit_indent();
-        printf("br $lp_%d\n", lbl);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        loop_sp--;
-        break;
-    case ND_DO_WHILE:
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        loop_sp++;
-        emit_indent();
-        printf("(block $brk_%d\n", lbl);
-        indent_level++;
-        emit_indent();
-        printf("(loop $lp_%d\n", lbl);
-        indent_level++;
-        emit_indent();
-        printf("(block $cont_%d\n", lbl);
-        indent_level++;
-        gen_body(n->c0);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        gen_expr(n->c1);
-        if (last_expr_is_float) {
-            emit_indent();
-            printf("f64.const 0\n");
-            emit_indent();
-            printf("f64.ne\n");
-        }
-        emit_indent();
-        printf("br_if $lp_%d\n", lbl);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        loop_sp--;
-        break;
-    case ND_BREAK:
-        if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
-        emit_indent();
-        printf("br $brk_%d\n", brk_lbl[loop_sp - 1]);
-        break;
-    case ND_CONTINUE:
-        if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
-        if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
-        emit_indent();
-        printf("br $cont_%d\n", cont_lbl[loop_sp - 1]);
-        break;
-    case ND_BLOCK:
-        for (i = 0; i < n->ival2; i++) {
-            gen_stmt(n->list[i]);
-        }
-        break;
-    case ND_SWITCH: {
-        int case_vals[256];
-        int case_start[256];
-        int nc;
-        int dflt_pos;
-        int has_dflt;
-        int k;
-        int j;
-        int next_start;
-        int sw_lbl;
-        int si;
-        int last_case_pos;
-
-        nc = 0;
-        dflt_pos = -1;
-        has_dflt = 0;
-        for (si = 0; si < n->ival2; si++) {
-            if (n->list[si]->kind == ND_CASE) {
-                if (nc >= MAX_CASES) {
-                    error(n->nline, n->ncol, "too many cases in switch");
-                }
-                case_vals[nc] = n->list[si]->ival;
-                case_start[nc] = si;
-                nc++;
-            } else if (n->list[si]->kind == ND_DEFAULT) {
-                dflt_pos = si;
-                has_dflt = 1;
-            }
-        }
-
-        /* enforce: default must be last (limitation of WAT codegen) */
-        if (has_dflt) {
-            last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
-            if (dflt_pos < last_case_pos) {
-                error(n->c0->nline, n->c0->ncol,
-                      "default must appear after all case labels");
-            }
-        }
-
-        sw_lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = sw_lbl;
-        if (loop_sp > 0) {
-            cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
-        } else {
-            cont_lbl[loop_sp] = -1;
-        }
-        loop_sp++;
-
-        /* save switch value */
-        gen_expr(n->c0);
-        emit_indent();
-        printf("local.set $__stmp\n");
-
-        /* outer break block */
-        emit_indent();
-        printf("(block $brk_%d\n", sw_lbl);
-        indent_level++;
-
-        /* default target block (outermost) */
-        emit_indent();
-        printf("(block $sw%d_dflt\n", sw_lbl);
-        indent_level++;
-
-        /* open case blocks in reverse order: first case = innermost */
-        for (k = nc - 1; k >= 0; k--) {
-            emit_indent();
-            printf("(block $sw%d_c%d\n", sw_lbl, k);
-            indent_level++;
-        }
-
-        /* dispatch: compare and branch for each case */
-        for (k = 0; k < nc; k++) {
-            emit_indent(); printf("local.get $__stmp\n");
-            emit_indent(); printf("i32.const %d\n", case_vals[k]);
-            emit_indent(); printf("i32.eq\n");
-            emit_indent(); printf("br_if $sw%d_c%d\n", sw_lbl, k);
-        }
-        emit_indent();
-        if (has_dflt) {
-            printf("br $sw%d_dflt\n", sw_lbl);
-        } else {
-            printf("br $brk_%d\n", sw_lbl);
-        }
-
-        /* close case blocks in forward order and emit case bodies */
-        for (k = 0; k < nc; k++) {
-            indent_level--;
-            emit_indent(); printf(")\n");
-            if (k + 1 < nc) {
-                next_start = case_start[k + 1];
-            } else if (has_dflt) {
-                next_start = dflt_pos;
-            } else {
-                next_start = n->ival2;
-            }
-            for (j = case_start[k] + 1; j < next_start; j++) {
-                if (n->list[j]->kind == ND_CASE) continue;
-                if (n->list[j]->kind == ND_DEFAULT) continue;
-                gen_stmt(n->list[j]);
-            }
-        }
-
-        /* close default target block */
-        indent_level--;
-        emit_indent(); printf(")\n");
-
-        /* emit default body */
-        if (has_dflt) {
-            for (j = dflt_pos + 1; j < n->ival2; j++) {
-                if (n->list[j]->kind == ND_CASE) continue;
-                if (n->list[j]->kind == ND_DEFAULT) continue;
-                gen_stmt(n->list[j]);
-            }
-        }
-
-        /* close break block */
-        indent_level--;
-        emit_indent(); printf(")\n");
-
-        loop_sp--;
-        break;
     }
-    default:
+    emit_indent();
+    printf("(block $cont_%d\n", lbl);
+    indent_level++;
+    gen_body(n->c3);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    if (n->c2 != (struct Node *)0) {
+        gen_expr(n->c2);
+        emit_indent();
+        printf("drop\n");
+    }
+    emit_indent();
+    printf("br $lp_%d\n", lbl);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    loop_sp--;
+}
+
+void gen_stmt_do_while(struct Node *n) {
+    int lbl;
+
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    loop_sp++;
+    emit_indent();
+    printf("(block $brk_%d\n", lbl);
+    indent_level++;
+    emit_indent();
+    printf("(loop $lp_%d\n", lbl);
+    indent_level++;
+    emit_indent();
+    printf("(block $cont_%d\n", lbl);
+    indent_level++;
+    gen_body(n->c0);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    gen_expr(n->c1);
+    if (last_expr_is_float) {
+        emit_indent();
+        printf("f64.const 0\n");
+        emit_indent();
+        printf("f64.ne\n");
+    }
+    emit_indent();
+    printf("br_if $lp_%d\n", lbl);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    loop_sp--;
+}
+
+void gen_stmt_break(struct Node *n) {
+    if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
+    emit_indent();
+    printf("br $brk_%d\n", brk_lbl[loop_sp - 1]);
+}
+
+void gen_stmt_continue(struct Node *n) {
+    if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
+    if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
+    emit_indent();
+    printf("br $cont_%d\n", cont_lbl[loop_sp - 1]);
+}
+
+void gen_stmt_block(struct Node *n) {
+    int i;
+
+    for (i = 0; i < n->ival2; i++) {
+        gen_stmt(n->list[i]);
+    }
+}
+
+void gen_stmt_switch(struct Node *n) {
+    int case_vals[256];
+    int case_start[256];
+    int nc;
+    int dflt_pos;
+    int has_dflt;
+    int k;
+    int j;
+    int next_start;
+    int sw_lbl;
+    int si;
+    int last_case_pos;
+
+    nc = 0;
+    dflt_pos = -1;
+    has_dflt = 0;
+    for (si = 0; si < n->ival2; si++) {
+        if (n->list[si]->kind == ND_CASE) {
+            if (nc >= MAX_CASES) {
+                error(n->nline, n->ncol, "too many cases in switch");
+            }
+            case_vals[nc] = n->list[si]->ival;
+            case_start[nc] = si;
+            nc++;
+        } else if (n->list[si]->kind == ND_DEFAULT) {
+            dflt_pos = si;
+            has_dflt = 1;
+        }
+    }
+
+    /* enforce: default must be last (limitation of WAT codegen) */
+    if (has_dflt) {
+        last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
+        if (dflt_pos < last_case_pos) {
+            error(n->c0->nline, n->c0->ncol,
+                  "default must appear after all case labels");
+        }
+    }
+
+    sw_lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = sw_lbl;
+    if (loop_sp > 0) {
+        cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
+    } else {
+        cont_lbl[loop_sp] = -1;
+    }
+    loop_sp++;
+
+    /* save switch value */
+    gen_expr(n->c0);
+    emit_indent();
+    printf("local.set $__stmp\n");
+
+    /* outer break block */
+    emit_indent();
+    printf("(block $brk_%d\n", sw_lbl);
+    indent_level++;
+
+    /* default target block (outermost) */
+    emit_indent();
+    printf("(block $sw%d_dflt\n", sw_lbl);
+    indent_level++;
+
+    /* open case blocks in reverse order: first case = innermost */
+    for (k = nc - 1; k >= 0; k--) {
+        emit_indent();
+        printf("(block $sw%d_c%d\n", sw_lbl, k);
+        indent_level++;
+    }
+
+    /* dispatch: compare and branch for each case */
+    for (k = 0; k < nc; k++) {
+        emit_indent(); printf("local.get $__stmp\n");
+        emit_indent(); printf("i32.const %d\n", case_vals[k]);
+        emit_indent(); printf("i32.eq\n");
+        emit_indent(); printf("br_if $sw%d_c%d\n", sw_lbl, k);
+    }
+    emit_indent();
+    if (has_dflt) {
+        printf("br $sw%d_dflt\n", sw_lbl);
+    } else {
+        printf("br $brk_%d\n", sw_lbl);
+    }
+
+    /* close case blocks in forward order and emit case bodies */
+    for (k = 0; k < nc; k++) {
+        indent_level--;
+        emit_indent(); printf(")\n");
+        if (k + 1 < nc) {
+            next_start = case_start[k + 1];
+        } else if (has_dflt) {
+            next_start = dflt_pos;
+        } else {
+            next_start = n->ival2;
+        }
+        for (j = case_start[k] + 1; j < next_start; j++) {
+            if (n->list[j]->kind == ND_CASE) continue;
+            if (n->list[j]->kind == ND_DEFAULT) continue;
+            gen_stmt(n->list[j]);
+        }
+    }
+
+    /* close default target block */
+    indent_level--;
+    emit_indent(); printf(")\n");
+
+    /* emit default body */
+    if (has_dflt) {
+        for (j = dflt_pos + 1; j < n->ival2; j++) {
+            if (n->list[j]->kind == ND_CASE) continue;
+            if (n->list[j]->kind == ND_DEFAULT) continue;
+            gen_stmt(n->list[j]);
+        }
+    }
+
+    /* close break block */
+    indent_level--;
+    emit_indent(); printf(")\n");
+
+    loop_sp--;
+}
+
+void gen_stmt(struct Node *n) {
+    GenStmtFn fn;
+    if (n->kind < 0 || n->kind >= ND_COUNT) {
         error(n->nline, n->ncol, "unsupported statement in codegen");
     }
+    fn = gen_stmt_tbl[n->kind];
+    fn(n);
+}
+
+void gen_expr_error(struct Node *n) {
+    error(n->nline, n->ncol, "unsupported expression in codegen");
+}
+
+void gen_stmt_error(struct Node *n) {
+    error(n->nline, n->ncol, "unsupported statement in codegen");
+}
+
+void init_gen_expr_tbl(void) {
+    int i;
+    gen_expr_tbl = (GenExprFn *)malloc(ND_COUNT * sizeof(void *));
+    for (i = 0; i < ND_COUNT; i++) {
+        gen_expr_tbl[i] = gen_expr_error;
+    }
+    gen_expr_tbl[ND_INT_LIT] = gen_expr_int_lit;
+    gen_expr_tbl[ND_FLOAT_LIT] = gen_expr_float_lit;
+    gen_expr_tbl[ND_CAST] = gen_expr_cast;
+    gen_expr_tbl[ND_IDENT] = gen_expr_ident;
+    gen_expr_tbl[ND_ASSIGN] = gen_expr_assign;
+    gen_expr_tbl[ND_UNARY] = gen_expr_unary;
+    gen_expr_tbl[ND_BINARY] = gen_expr_binary;
+    gen_expr_tbl[ND_CALL] = gen_expr_call;
+    gen_expr_tbl[ND_STR_LIT] = gen_expr_str_lit;
+    gen_expr_tbl[ND_CALL_INDIRECT] = gen_expr_call_indirect;
+    gen_expr_tbl[ND_MEMBER] = gen_expr_member;
+    gen_expr_tbl[ND_SIZEOF] = gen_expr_sizeof;
+    gen_expr_tbl[ND_SUBSCRIPT] = gen_expr_subscript;
+    gen_expr_tbl[ND_POST_INC] = gen_expr_post_inc_dec;
+    gen_expr_tbl[ND_POST_DEC] = gen_expr_post_inc_dec;
+    gen_expr_tbl[ND_TERNARY] = gen_expr_ternary;
+}
+
+void init_gen_stmt_tbl(void) {
+    int i;
+    gen_stmt_tbl = (GenStmtFn *)malloc(ND_COUNT * sizeof(void *));
+    for (i = 0; i < ND_COUNT; i++) {
+        gen_stmt_tbl[i] = gen_stmt_error;
+    }
+    gen_stmt_tbl[ND_RETURN] = gen_stmt_return;
+    gen_stmt_tbl[ND_VAR_DECL] = gen_stmt_var_decl;
+    gen_stmt_tbl[ND_EXPR_STMT] = gen_stmt_expr_stmt;
+    gen_stmt_tbl[ND_IF] = gen_stmt_if;
+    gen_stmt_tbl[ND_WHILE] = gen_stmt_while;
+    gen_stmt_tbl[ND_FOR] = gen_stmt_for;
+    gen_stmt_tbl[ND_DO_WHILE] = gen_stmt_do_while;
+    gen_stmt_tbl[ND_BREAK] = gen_stmt_break;
+    gen_stmt_tbl[ND_CONTINUE] = gen_stmt_continue;
+    gen_stmt_tbl[ND_BLOCK] = gen_stmt_block;
+    gen_stmt_tbl[ND_SWITCH] = gen_stmt_switch;
 }
 
 /* --- Function codegen --- */
@@ -9345,6 +9442,8 @@ int main(void) {
     init_type_aliases();
     init_local_tracking();
     init_loop_labels();
+    init_gen_expr_tbl();
+    init_gen_stmt_tbl();
 
     read_source();
     lex_init();
