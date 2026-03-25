@@ -65,7 +65,7 @@ Integer types map to `i32`. Float types use `f64` in WASM (WAT mode). Unsigned t
 
 ## How It Works
 
-### Compiler Pipeline (inside `compiler/src/c2wasm.c`)
+### Compiler Pipeline (inside `src/c2wasm.c`)
 
 ```
 Source text
@@ -199,7 +199,7 @@ make bootstrap    # run the 3-stage bootstrap check alone
 
 ### Rebuild the browser compiler
 
-Only needed when you change `compiler/src/c2wasm.c` and want to update the demo:
+Only needed when you change `src/c2wasm.c` and want to update the demo:
 
 ```bash
 cd compiler && make wasm
@@ -221,7 +221,7 @@ cd compiler && make serve
 
 ### Test Programs
 
-`compiler/tests/programs/` contains 39 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, and array initializers.
+`tests/programs/` contains 39 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, and array initializers.
 
 ---
 
@@ -229,12 +229,13 @@ cd compiler && make serve
 
 ```
 wasm-c/
+├── src/
+│   └── c2wasm.c              ← the compiler (~5,000 lines of C)
+├── tests/
+│   ├── run_tests.sh          ← test runner (supports --binary flag)
+│   └── programs/             ← 39 test programs + expected output
 ├── compiler/
-│   ├── src/c2wasm.c          ← the compiler (~5,000 lines of C)
-│   ├── Makefile
-│   └── tests/
-│       ├── run_tests.sh      ← test runner (supports --binary flag)
-│       └── programs/         ← 39 test programs + expected output
+│   └── Makefile
 ├── demo/
 │   ├── index.html            ← browser UI
 │   ├── main.js               ← editor, pipeline, localStorage file management

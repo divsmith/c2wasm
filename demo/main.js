@@ -631,12 +631,9 @@
   var consoleOutput = document.getElementById('console-output');
   var terminalInputRow = document.getElementById('terminal-input-row');
   var terminalInput = document.getElementById('terminal-input');
-  var watOutput = document.getElementById('wat-output');
-  var tabs = document.querySelectorAll('.tab');
   var resizeHandle = document.getElementById('resize-handle');
 
   var editor = null;
-  var wabtInstance = null;
   var isRunning = false;
   var idleTimerId = null;
   var autoSaveTimer = null;
@@ -722,27 +719,6 @@
   }
 
   // ── Tab switching ──
-
-  function activateTab(name) {
-    for (var i = 0; i < tabs.length; i++) {
-      var t = tabs[i];
-      if (t.dataset.tab === name) {
-        t.classList.add('active');
-      } else {
-        t.classList.remove('active');
-      }
-    }
-    consoleTabContent.classList.toggle('hidden', name !== 'console');
-    watOutput.classList.toggle('hidden', name !== 'wat');
-  }
-
-  for (var i = 0; i < tabs.length; i++) {
-    (function (tab) {
-      tab.addEventListener('click', function () {
-        activateTab(tab.dataset.tab);
-      });
-    })(tabs[i]);
-  }
 
   // ── File selector events ──
 
@@ -917,36 +893,6 @@
 
   // ── wabt.js (lazy-loaded) ──
 
-  function loadWabt() {
-    if (wabtInstance) return Promise.resolve(wabtInstance);
-
-    return new Promise(function (resolve, reject) {
-      // Temporarily hide AMD define so wabt registers as a global, not AMD
-      var origDefine = window.define;
-      window.define = undefined;
-
-      var script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/wabt@1.0.36/index.js';
-      script.onload = function () {
-        window.define = origDefine;
-        var factory = window.WabtModule || window.wabt;
-        if (typeof factory !== 'function') {
-          reject(new Error('wabt.js loaded but factory function not found'));
-          return;
-        }
-        factory().then(function (w) {
-          wabtInstance = w;
-          resolve(w);
-        }).catch(reject);
-      };
-      script.onerror = function () {
-        window.define = origDefine;
-        reject(new Error('Failed to load wabt.js from CDN'));
-      };
-      document.head.appendChild(script);
-    });
-  }
-
   // ── Interactive WASM runner (Web Worker + SharedArrayBuffer) ──
 
   // SAB layout: Int32[0]=signal, Int32[1]=byte count, bytes from offset 8.
@@ -1091,10 +1037,6 @@
         runBtn.textContent = '⏳ Compiling…';
         runBtn.disabled = true;
         break;
-      case 'assembling':
-        runBtn.textContent = '⏳ Assembling…';
-        runBtn.disabled = true;
-        break;
       case 'running':
         runBtn.textContent = '⏳ Running…';
         runBtn.disabled = true;
@@ -1129,7 +1071,6 @@
 
   function clearOutput() {
     consoleOutput.textContent = '';
-    watOutput.textContent = '';
   }
 
   // ── Compile & Run pipeline ──
@@ -1141,35 +1082,13 @@
     var source = editor.getValue();
     clearOutput();
     monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
-    activateTab('console');
 
     setButtonState('compiling');
     setStatus('Compiling…');
 
     CompilerAPI.compileBinary(source)
       .then(function (bytes) {
-        /* Check if output is WASM binary (starts with \0asm magic) */
-        if (bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x61
-            && bytes[2] === 0x73 && bytes[3] === 0x6D) {
-          /* Binary mode — skip wabt entirely */
-          watOutput.textContent = '(Binary output mode — WAT not available)';
-          return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        }
-
-        /* WAT mode — decode as text and assemble via wabt */
-        var watText = new TextDecoder().decode(bytes);
-        watOutput.textContent = watText;
-
-        setButtonState('assembling');
-        setStatus('Assembling WAT → WASM…');
-
-        return loadWabt().then(function (wabt) {
-          var wabtModule = wabt.parseWat('output.wat', watText);
-          var result = wabtModule.toBinary({ log: false, write_debug_names: false });
-          wabtModule.destroy();
-          var typed = result.buffer;
-          return typed.buffer.slice(typed.byteOffset, typed.byteOffset + typed.byteLength);
-        });
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       })
       .then(function (wasmBytes) {
         setButtonState('running');
