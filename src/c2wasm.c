@@ -286,32 +286,53 @@ int is_xdigit(char c) {
     return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
+#define MAX_KW 32
+char **kw_words;
+int *kw_toks;
+int nkw;
+
+void kw_add(char *word, int tok) {
+    kw_words[nkw] = word;
+    kw_toks[nkw] = tok;
+    nkw++;
+}
+
+void init_kw_table(void) {
+    kw_words = (char **)malloc(MAX_KW * sizeof(char *));
+    kw_toks = (int *)malloc(MAX_KW * sizeof(int));
+    nkw = 0;
+    kw_add("int", TOK_INT);
+    kw_add("char", TOK_CHAR_KW);
+    kw_add("void", TOK_VOID);
+    kw_add("return", TOK_RETURN);
+    kw_add("if", TOK_IF);
+    kw_add("else", TOK_ELSE);
+    kw_add("while", TOK_WHILE);
+    kw_add("do", TOK_DO);
+    kw_add("for", TOK_FOR);
+    kw_add("break", TOK_BREAK);
+    kw_add("continue", TOK_CONTINUE);
+    kw_add("switch", TOK_SWITCH);
+    kw_add("case", TOK_CASE);
+    kw_add("default", TOK_DEFAULT);
+    kw_add("const", TOK_CONST);
+    kw_add("enum", TOK_ENUM);
+    kw_add("typedef", TOK_TYPEDEF);
+    kw_add("struct", TOK_STRUCT);
+    kw_add("sizeof", TOK_SIZEOF);
+    kw_add("unsigned", TOK_UNSIGNED);
+    kw_add("signed", TOK_SIGNED);
+    kw_add("short", TOK_SHORT);
+    kw_add("long", TOK_LONG);
+    kw_add("float", TOK_FLOAT);
+    kw_add("double", TOK_DOUBLE);
+}
+
 int kw_lookup(char *s) {
-    if (strcmp(s, "int") == 0) return TOK_INT;
-    if (strcmp(s, "char") == 0) return TOK_CHAR_KW;
-    if (strcmp(s, "void") == 0) return TOK_VOID;
-    if (strcmp(s, "return") == 0) return TOK_RETURN;
-    if (strcmp(s, "if") == 0) return TOK_IF;
-    if (strcmp(s, "else") == 0) return TOK_ELSE;
-    if (strcmp(s, "while") == 0) return TOK_WHILE;
-    if (strcmp(s, "do") == 0) return TOK_DO;
-    if (strcmp(s, "for") == 0) return TOK_FOR;
-    if (strcmp(s, "break") == 0) return TOK_BREAK;
-    if (strcmp(s, "continue") == 0) return TOK_CONTINUE;
-    if (strcmp(s, "switch") == 0) return TOK_SWITCH;
-    if (strcmp(s, "case") == 0) return TOK_CASE;
-    if (strcmp(s, "default") == 0) return TOK_DEFAULT;
-    if (strcmp(s, "const") == 0) return TOK_CONST;
-    if (strcmp(s, "enum") == 0) return TOK_ENUM;
-    if (strcmp(s, "typedef") == 0) return TOK_TYPEDEF;
-    if (strcmp(s, "struct") == 0) return TOK_STRUCT;
-    if (strcmp(s, "sizeof") == 0) return TOK_SIZEOF;
-    if (strcmp(s, "unsigned") == 0) return TOK_UNSIGNED;
-    if (strcmp(s, "signed") == 0) return TOK_SIGNED;
-    if (strcmp(s, "short") == 0) return TOK_SHORT;
-    if (strcmp(s, "long") == 0) return TOK_LONG;
-    if (strcmp(s, "float") == 0) return TOK_FLOAT;
-    if (strcmp(s, "double") == 0) return TOK_DOUBLE;
+    int i;
+    for (i = 0; i < nkw; i++) {
+        if (strcmp(s, kw_words[i]) == 0) return kw_toks[i];
+    }
     return 0;
 }
 
@@ -1591,6 +1612,7 @@ struct Node *parse_var_decl(void) {
     int vd_is_float;
     int vd_is_void;
     int is_ptr;
+    int ptr_depth_vd;
     int arr_size;
     int ei;
     int tai_vd;
@@ -1603,6 +1625,7 @@ struct Node *parse_var_decl(void) {
     vd_is_float = 0;
     vd_is_void = 0;
     is_ptr = 0;
+    ptr_depth_vd = 0;
     arr_size = 0;
     tai_vd = -1;
     had_mod_vd = 0;
@@ -1692,8 +1715,9 @@ struct Node *parse_var_decl(void) {
             }
         }
     }
-    while (at(TOK_STAR)) { is_ptr = 1; vd_is_float = 0; advance_tok(); }
-    if (last_type_is_ptr) is_ptr = 1;
+    while (at(TOK_STAR)) { is_ptr = 1; ptr_depth_vd++; vd_is_float = 0; advance_tok(); }
+    if (last_type_is_ptr) { is_ptr = 1; ptr_depth_vd++; }
+    if (ptr_depth_vd >= 2) vd_elem_size = 4;
     /* function pointer: type (*name)(params) or type (*name[N])(params) */
     if (at(TOK_LPAREN)) {
         struct Node *fp_sz;
@@ -2373,6 +2397,7 @@ void parse_global_var(void) {
     int gv_uns;
     int gv_flt;
     int is_ptr;
+    int ptr_depth;
     int neg;
     int tai_gv;
     int had_mod_gv;
@@ -2381,6 +2406,7 @@ void parse_global_var(void) {
     gv_uns = 0;
     gv_flt = 0;
     is_ptr = 0;
+    ptr_depth = 0;
     tai_gv = -1;
     had_mod_gv = 0;
     while (at(TOK_CONST)) advance_tok();
@@ -2437,8 +2463,10 @@ void parse_global_var(void) {
             }
         }
     }
-    while (at(TOK_STAR)) { is_ptr = 1; gv_flt = 0; advance_tok(); }
-    if (last_type_is_ptr) is_ptr = 1;
+    while (at(TOK_STAR)) { is_ptr = 1; ptr_depth++; gv_flt = 0; advance_tok(); }
+    if (last_type_is_ptr) { is_ptr = 1; ptr_depth++; }
+    /* double+ pointer: subscript element is pointer-sized */
+    if (ptr_depth >= 2) gv_es = 4;
     /* global function pointer: type (*name)(params) */
     if (at(TOK_LPAREN)) {
         int gfp_nparams;
@@ -2522,6 +2550,7 @@ void parse_global_var(void) {
             advance_tok();
         }
         expect(TOK_RBRACKET, "expected ']'");
+        if (is_ptr) globals_tbl[nglobals]->gv_elem_size = 4;
         if (at(TOK_EQ)) {
             advance_tok();
             expect(TOK_LBRACE, "expected '{'");
@@ -2561,8 +2590,6 @@ void parse_global_var(void) {
                 if (ga_size == 0) ga_size = sa_count;
                 globals_tbl[nglobals]->gv_arr_len = ga_size;
                 globals_tbl[nglobals]->gv_arr_str_ids = sa_ids;
-                /* pointer arrays have 4-byte elements */
-                if (is_ptr) globals_tbl[nglobals]->gv_elem_size = 4;
             }
         }
         nglobals++;
@@ -9307,6 +9334,7 @@ void gen_module_bin(struct Node *prog) {
 int main(void) {
     struct Node *prog;
 
+    init_kw_table();
     init_macros();
     init_strings();
     init_structs();
