@@ -65,7 +65,7 @@ Integer types map to `i32`. Float types use `f64` in WASM (WAT mode). Unsigned t
 
 ## How It Works
 
-### Compiler Pipeline (inside `compiler/src/c2wasm.c`)
+### Compiler Pipeline (inside `src/c2wasm.c`)
 
 ```
 Source text
@@ -140,8 +140,8 @@ There are **three binaries** in this project:
 
 | Binary | What it is | How to build |
 |--------|-----------|-------------|
-| `build/c2wasm` | Native compiler — WAT output (for debugging) | `cd compiler && make` |
-| `build/c2wasm-bin` | Native compiler — binary output (for tests) | `cd compiler && make ../build/c2wasm-bin` |
+| `build/c2wasm` | Native compiler — WAT output (for debugging) | `make` |
+| `build/c2wasm-bin` | Native compiler — binary output (for tests) | `make build/c2wasm-bin` |
 | `demo/compiler.wasm` | Browser compiler — binary output (for the demo) | `WASI_SDK=... make wasm` |
 
 `demo/compiler.wasm` is gitignored — a fresh clone won't have it. You only need to rebuild it if you're working on the demo or changed the compiler and want to update the deployed binary.
@@ -179,7 +179,6 @@ You can also use a different path — just pass it explicitly: `WASI_SDK=/your/p
 ### Build the native compiler
 
 ```bash
-cd compiler
 make           # builds build/c2wasm from src/c2wasm.c
 make clean     # force a clean rebuild next time
 ```
@@ -191,7 +190,6 @@ make clean     # force a clean rebuild next time
 Requires `wat2wasm` and `wasmtime` on `PATH`:
 
 ```bash
-cd compiler
 make test         # WAT path: all 39 tests + bootstrap self-hosting check
 make test-binary  # binary path: all 39 tests (only needs wasmtime, not wat2wasm)
 make bootstrap    # run the 3-stage bootstrap check alone
@@ -199,10 +197,10 @@ make bootstrap    # run the 3-stage bootstrap check alone
 
 ### Rebuild the browser compiler
 
-Only needed when you change `compiler/src/c2wasm.c` and want to update the demo:
+Only needed when you change `src/c2wasm.c` and want to update the demo:
 
 ```bash
-cd compiler && make wasm
+make wasm
 # auto-detects wasi-sdk at /opt/wasi-sdk or ~/.local/wasi-sdk
 # produces demo/compiler.wasm (229 KB)
 ```
@@ -211,7 +209,7 @@ cd compiler && make wasm
 ### Serve the demo locally
 
 ```bash
-cd compiler && make serve
+make serve
 # open http://localhost:8080
 ```
 
@@ -221,7 +219,7 @@ cd compiler && make serve
 
 ### Test Programs
 
-`compiler/tests/programs/` contains 39 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, and array initializers.
+`tests/programs/` contains 39 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, and array initializers.
 
 ---
 
@@ -229,12 +227,13 @@ cd compiler && make serve
 
 ```
 wasm-c/
+├── src/
+│   └── c2wasm.c              ← the compiler (~5,000 lines of C)
+├── tests/
+│   ├── run_tests.sh          ← test runner (supports --binary flag)
+│   └── programs/             ← 39 test programs + expected output
 ├── compiler/
-│   ├── src/c2wasm.c          ← the compiler (~5,000 lines of C)
-│   ├── Makefile
-│   └── tests/
-│       ├── run_tests.sh      ← test runner (supports --binary flag)
-│       └── programs/         ← 39 test programs + expected output
+│   └── Makefile
 ├── demo/
 │   ├── index.html            ← browser UI
 │   ├── main.js               ← editor, pipeline, localStorage file management

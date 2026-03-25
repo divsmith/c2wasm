@@ -13,9 +13,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ "$BINARY_MODE" -eq 1 ]; then
-    COMPILER="$SCRIPT_DIR/../../build/c2wasm-bin"
+    COMPILER="$SCRIPT_DIR/../build/c2wasm-bin"
 else
-    COMPILER="$SCRIPT_DIR/../../build/c2wasm"
+    COMPILER="$SCRIPT_DIR/../build/c2wasm"
 fi
 PROG_DIR="$SCRIPT_DIR/programs"
 TMP_DIR="${TMPDIR:-/tmp}/c2wasm-tests"

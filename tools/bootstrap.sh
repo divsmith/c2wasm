@@ -2,7 +2,7 @@
 set -eo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/compiler/src/c2wasm.c"
+SRC="$ROOT/src/c2wasm.c"
 BIN="$ROOT/build/c2wasm"
 TMP="$ROOT/.tmp"
 
@@ -12,7 +12,7 @@ echo "=== Self-hosting bootstrap ==="
 
 # Build native compiler
 echo "[1/5] Building native compiler..."
-(cd "$ROOT/compiler" && make clean && make) >/dev/null 2>&1
+(cd "$ROOT" && make clean && make) >/dev/null 2>&1
 
 # Stage 1: native compiler compiles itself
 echo "[2/5] Stage 1: native compiler -> s1.wat"
@@ -37,7 +37,7 @@ fi
 
 # Run test suite
 echo "[5/5] Running test suite..."
-(cd "$ROOT/compiler" && bash tests/run_tests.sh) 2>&1 | tail -1
+bash "$ROOT/tests/run_tests.sh" 2>&1 | tail -1
 
 echo ""
 echo "=== Bootstrap successful! ==="

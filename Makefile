@@ -1,8 +1,8 @@
 CC       ?= gcc
 CFLAGS    = -Wall -Wextra -std=c11 -pedantic -O2
 SRC       = src/c2wasm.c
-BIN       = ../build/c2wasm
-DEMO      = ../demo
+BIN       = build/c2wasm
+DEMO      = demo
 
 # Locate wasi-sdk: prefer env override, then /opt, then ~/.local
 ifeq ($(WASI_SDK),)
@@ -30,7 +30,7 @@ test: $(BIN)
 	@if command -v wat2wasm >/dev/null 2>&1 && command -v wasmtime >/dev/null 2>&1; then \
 		echo ""; \
 		echo "=== Running bootstrap validation ==="; \
-		bash ../tools/bootstrap.sh; \
+		bash tools/bootstrap.sh; \
 	else \
 		echo ""; \
 		echo "Skipping bootstrap (wat2wasm/wasmtime not found)"; \
@@ -40,7 +40,7 @@ test-binary: $(BIN)-bin
 	bash tests/run_tests.sh --binary
 
 bootstrap: $(BIN)
-	bash ../tools/bootstrap.sh
+	bash tools/bootstrap.sh
 
 # ── WASM build targets ──
 

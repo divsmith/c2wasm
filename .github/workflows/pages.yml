@@ -32,7 +32,7 @@ jobs:
           sudo mv "wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" /opt/wasi-sdk
 
       - name: Build compiler.wasm
-        run: cd compiler && make wasm
+        run: make wasm
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

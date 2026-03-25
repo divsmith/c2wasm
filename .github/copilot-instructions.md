@@ -10,24 +10,22 @@ See [README.md](../README.md) for the full feature list and architecture diagram
 
 ## Build & Test
 
-All commands run from `compiler/`:
+All commands run from the project root:
 
 ```bash
-cd compiler
-make              # build native binary → compiler/c2wasm
+make              # build native binary → build/c2wasm
 make test         # run test suite (requires wat2wasm + wasmtime on PATH)
-make wasm         # rebuild compiler.js via Emscripten (requires emcc)
+make wasm         # rebuild compiler.wasm via wasi-sdk (requires wasi-sdk)
 make serve        # serve demo/ at http://localhost:8080 (requires Python 3)
 make clean        # remove binary
 ```
 
 **Quick smoke test without wat2wasm/wasmtime:**
 ```bash
-cd compiler
-echo 'int main() { return 42; }' | ./c2wasm   # prints WAT to stdout
+echo 'int main() { return 42; }' | ./build/c2wasm   # prints WAT to stdout
 ```
 
-**Test program anatomy** (`compiler/tests/programs/`):
+**Test program anatomy** (`tests/programs/`):
 - Files are numbered `NN_name.c`; tests run in glob order.
 - Optional `// EXPECT_EXIT: N` on line 1 overrides the expected exit code (default 0).
 - Optional `NN_name.expected` file is diffed against stdout.
@@ -36,7 +34,7 @@ echo 'int main() { return 42; }' | ./c2wasm   # prints WAT to stdout
 
 ## Architecture
 
-Pipeline: **Lexer → Parser → Type Checker → Code Gen** — all in `compiler/src/c2wasm.c` (~2,800 lines).
+Pipeline: **Lexer → Parser → Type Checker → Code Gen** — all in `src/c2wasm.c` (~2,800 lines).
 
 | Layer | Key detail |
 |-------|-----------|
@@ -61,7 +59,7 @@ Supported C subset at a glance: `int`, `char`, `void`, pointers, 1D arrays, stru
 
 ## Key Conventions
 
-- **No new files** for compiler features — everything lives in `compiler/src/c2wasm.c`.
+- **No new files** for compiler features — everything lives in `src/c2wasm.c`.
 - **Add a test program** for every new language feature. Number it sequentially (e.g. `35_enum.c`). Add a `.expected` file if the program produces stdout.
 - **Update `README.md`** for relevant changes in features, usage, or behavior so docs stay in sync with code.
 - **`#define` only** — no enums, no `typedef` until those features are implemented and self-hosting verified.
