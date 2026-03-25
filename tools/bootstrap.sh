@@ -12,7 +12,7 @@ echo "=== Self-hosting bootstrap ==="
 
 # Build native compiler
 echo "[1/5] Building native compiler..."
-(cd "$ROOT/compiler" && make clean && make) >/dev/null 2>&1
+(cd "$ROOT" && make clean && make) >/dev/null 2>&1
 
 # Stage 1: native compiler compiles itself
 echo "[2/5] Stage 1: native compiler -> s1.wat"
