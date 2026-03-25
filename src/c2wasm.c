@@ -125,7 +125,8 @@ enum {
     ND_CASE = 26,
     ND_DEFAULT = 27,
     ND_FLOAT_LIT = 28,
-    ND_CAST = 29
+    ND_CAST = 29,
+    ND_CALL_INDIRECT = 30
 };
 
 /* Limits */
@@ -825,6 +826,8 @@ struct GlobalVar {
     int gv_is_unsigned;
     int gv_is_float;      /* 0=int, 1=float(f32), 2=double(f64) */
     char *gv_float_init;  /* float literal text for init, or NULL */
+    int gv_arr_len;       /* >0 if array with brace init */
+    int *gv_arr_str_ids;  /* string table IDs for {str,...} init, or NULL */
 };
 
 struct GlobalVar **globals_tbl;
@@ -891,6 +894,75 @@ int func_param_is_float(char *name, int idx) {
 }
 
 /* ================================================================
+ * Function Pointer Registry
+ * ================================================================ */
+
+struct FnPtrVar {
+    char *name;
+    int nparams;
+    int is_void;  /* 0=returns i32, 1=returns void */
+};
+
+#define MAX_FNPTR_VARS 512
+#define MAX_FN_TABLE   512
+
+struct FnPtrVar **fnptr_vars;
+int nfnptr_vars;
+
+char **fn_table_names;
+int fn_table_count;
+
+void init_fnptr_registry(void) {
+    fnptr_vars = (struct FnPtrVar **)malloc(MAX_FNPTR_VARS * sizeof(void *));
+    nfnptr_vars = 0;
+    fn_table_names = (char **)malloc(MAX_FN_TABLE * sizeof(void *));
+    fn_table_count = 0;
+}
+
+void register_fnptr_var(char *name, int nparams, int is_void) {
+    if (nfnptr_vars >= MAX_FNPTR_VARS) return;
+    fnptr_vars[nfnptr_vars] = (struct FnPtrVar *)malloc(sizeof(struct FnPtrVar));
+    fnptr_vars[nfnptr_vars]->name = strdupn(name, 127);
+    fnptr_vars[nfnptr_vars]->nparams = nparams;
+    fnptr_vars[nfnptr_vars]->is_void = is_void;
+    nfnptr_vars++;
+}
+
+struct FnPtrVar *find_fnptr_var(char *name) {
+    int i;
+    for (i = 0; i < nfnptr_vars; i++) {
+        if (strcmp(fnptr_vars[i]->name, name) == 0) return fnptr_vars[i];
+    }
+    return (struct FnPtrVar *)0;
+}
+
+void fn_table_add(char *name) {
+    int i;
+    for (i = 0; i < fn_table_count; i++) {
+        if (strcmp(fn_table_names[i], name) == 0) return;
+    }
+    if (fn_table_count < MAX_FN_TABLE) {
+        fn_table_names[fn_table_count++] = name;
+    }
+}
+
+int fn_table_idx(char *name) {
+    int i;
+    for (i = 0; i < fn_table_count; i++) {
+        if (strcmp(fn_table_names[i], name) == 0) return i;
+    }
+    return -1;
+}
+
+int is_known_func(char *name) {
+    int i;
+    for (i = 0; i < nfunc_sigs; i++) {
+        if (strcmp(func_sigs[i]->name, name) == 0) return 1;
+    }
+    return 0;
+}
+
+/* ================================================================
  * Enum Constant Table
  * ================================================================ */
 
@@ -919,6 +991,9 @@ struct TypeAlias {
     char *alias;
     int resolved_kind; /* 0=int, 1=void, 2=char */
     int is_ptr;
+    int is_fnptr;      /* 1 if typedef for function pointer type */
+    int fnptr_nparams;
+    int fnptr_is_void;
 };
 
 struct TypeAlias **type_aliases;
@@ -927,6 +1002,9 @@ int last_type_is_ptr;
 int last_type_is_unsigned;
 int last_type_elem_size;  /* 1=char, 2=short, 4=int/long */
 int last_type_is_float;   /* 0=not float, 1=float(f32), 2=double(f64) */
+int last_type_is_fnptr;   /* 1 if resolved from fnptr typedef */
+int last_type_fnptr_nparams;
+int last_type_fnptr_is_void;
 
 void init_type_aliases(void) {
     type_aliases = (struct TypeAlias **)malloc(MAX_TYPE_ALIASES * sizeof(void *));
@@ -1244,9 +1322,19 @@ struct Node *parse_atom(void) {
         advance_tok();
         /* function call: ident '(' args ')' */
         if (at(TOK_LPAREN)) {
+            struct FnPtrVar *fpv;
+            fpv = find_fnptr_var(n->sval);
             advance_tok();
-            c = node_new(ND_CALL, n->nline, n->ncol);
-            c->sval = n->sval;
+            if (fpv != (struct FnPtrVar *)0) {
+                /* indirect call through function pointer variable */
+                c = node_new(ND_CALL_INDIRECT, n->nline, n->ncol);
+                c->c0 = n; /* callee expression (ND_IDENT for the fnptr var) */
+                c->ival = fpv->nparams;
+                c->ival3 = fpv->is_void;
+            } else {
+                c = node_new(ND_CALL, n->nline, n->ncol);
+                c->sval = n->sval;
+            }
             args = (struct NList *)malloc(sizeof(struct NList));
             args->items = (struct Node **)0;
             args->count = 0;
@@ -1262,6 +1350,12 @@ struct Node *parse_atom(void) {
             c->list = args->items;
             c->ival2 = args->count;
             return c;
+        }
+        /* function name used as a value (not called) → table index */
+        if (is_known_func(n->sval)) {
+            fn_table_add(n->sval);
+            n->kind = ND_INT_LIT;
+            n->ival = fn_table_idx(n->sval);
         }
         return n;
     }
@@ -1495,6 +1589,7 @@ struct Node *parse_var_decl(void) {
     int vd_elem_size;
     int vd_is_unsigned;
     int vd_is_float;
+    int vd_is_void;
     int is_ptr;
     int arr_size;
     int ei;
@@ -1506,6 +1601,7 @@ struct Node *parse_var_decl(void) {
     vd_elem_size = 4;
     vd_is_unsigned = 0;
     vd_is_float = 0;
+    vd_is_void = 0;
     is_ptr = 0;
     arr_size = 0;
     tai_vd = -1;
@@ -1564,6 +1660,7 @@ struct Node *parse_var_decl(void) {
         } else if (at(TOK_INT)) {
             advance_tok();
         } else if (at(TOK_VOID)) {
+            vd_is_void = 1;
             advance_tok();
         } else if (at(TOK_IDENT)) {
             tai_vd = find_type_alias(cur->text);
@@ -1573,6 +1670,23 @@ struct Node *parse_var_decl(void) {
             if (tai_vd >= 0 && type_aliases[tai_vd]->is_ptr) {
                 is_ptr = 1;
             }
+            if (tai_vd >= 0 && type_aliases[tai_vd]->is_fnptr) {
+                /* fnptr typedef: next token is the variable name */
+                advance_tok(); /* consume typedef name */
+                if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
+                n = node_new(ND_VAR_DECL, line, col);
+                n->sval = strdupn(cur->text, 127);
+                n->ival2 = 4;
+                n->ival3 = 0;
+                advance_tok();
+                register_fnptr_var(n->sval, type_aliases[tai_vd]->fnptr_nparams, type_aliases[tai_vd]->fnptr_is_void);
+                if (at(TOK_EQ)) {
+                    advance_tok();
+                    n->c0 = parse_expr();
+                }
+                expect(TOK_SEMI, "expected ';' after declaration");
+                return n;
+            }
             if (tai_vd >= 0 || !had_mod_vd) {
                 advance_tok();
             }
@@ -1580,6 +1694,68 @@ struct Node *parse_var_decl(void) {
     }
     while (at(TOK_STAR)) { is_ptr = 1; vd_is_float = 0; advance_tok(); }
     if (last_type_is_ptr) is_ptr = 1;
+    /* function pointer: type (*name)(params) or type (*name[N])(params) */
+    if (at(TOK_LPAREN)) {
+        struct Node *fp_sz;
+        int fp_nparams;
+        int fp_arr;
+        fp_nparams = 0;
+        fp_arr = 0;
+        fp_sz = (struct Node *)0;
+        advance_tok(); /* consume '(' */
+        while (at(TOK_STAR)) advance_tok(); /* consume '*' */
+        if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name in function pointer");
+        n = node_new(ND_VAR_DECL, line, col);
+        n->sval = strdupn(cur->text, 127);
+        n->ival2 = 4; /* pointer-sized */
+        n->ival3 = 0;
+        advance_tok();
+        /* optional array: (*name[N]) */
+        if (at(TOK_LBRACKET)) {
+            advance_tok();
+            fp_sz = parse_expr();
+            fp_arr = fp_sz->ival;
+            n->ival = fp_arr;
+            expect(TOK_RBRACKET, "expected ']'");
+        }
+        expect(TOK_RPAREN, "expected ')' after function pointer name");
+        /* parse parameter type list */
+        expect(TOK_LPAREN, "expected '(' for function pointer parameters");
+        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+            while (at(TOK_CONST)) advance_tok();
+            if (at(TOK_VOID)) {
+                advance_tok();
+                /* void with no stars = no params; void* = one param */
+                if (at(TOK_STAR)) {
+                    while (at(TOK_STAR)) advance_tok();
+                    if (at(TOK_IDENT)) advance_tok();
+                    fp_nparams++;
+                }
+            } else {
+                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {
+                    advance_tok();
+                    if (at(TOK_INT)) advance_tok();
+                }
+                if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_FLOAT) || at(TOK_DOUBLE) || at(TOK_IDENT)) {
+                    advance_tok();
+                }
+                while (at(TOK_STAR)) advance_tok();
+                if (at(TOK_IDENT)) advance_tok();
+                fp_nparams++;
+            }
+            if (at(TOK_COMMA)) advance_tok();
+        }
+        expect(TOK_RPAREN, "expected ')' after function pointer parameters");
+        register_fnptr_var(n->sval, fp_nparams, vd_is_void);
+        /* optional initializer */
+        if (at(TOK_EQ)) {
+            advance_tok();
+            n->c0 = parse_expr();
+        }
+        expect(TOK_SEMI, "expected ';' after function pointer declaration");
+        return n;
+    }
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     n = node_new(ND_VAR_DECL, line, col);
     n->sval = strdupn(cur->text, 127);
@@ -1894,12 +2070,20 @@ int parse_type(void) {
     last_type_is_unsigned = 0;
     last_type_elem_size = 4;
     last_type_is_float = 0;
+    last_type_is_fnptr = 0;
+    last_type_fnptr_nparams = 0;
+    last_type_fnptr_is_void = 0;
     while (at(TOK_CONST)) advance_tok();
     if (at(TOK_IDENT)) {
         taidx = find_type_alias(cur->text);
         if (taidx >= 0) {
             last_type_is_ptr = type_aliases[taidx]->is_ptr;
             if (type_aliases[taidx]->resolved_kind == 2) last_type_elem_size = 1;
+            if (type_aliases[taidx]->is_fnptr) {
+                last_type_is_fnptr = 1;
+                last_type_fnptr_nparams = type_aliases[taidx]->fnptr_nparams;
+                last_type_fnptr_is_void = type_aliases[taidx]->fnptr_is_void;
+            }
             advance_tok();
             return type_aliases[taidx]->resolved_kind;
         }
@@ -2024,11 +2208,50 @@ struct Node *parse_func(void) {
         } else {
             pty = parse_type();
             while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
-            if (at(TOK_IDENT)) {
+            /* function pointer parameter: type (*name)(params) */
+            if (at(TOK_LPAREN)) {
+                int fparam_np;
+                int fparam_void;
+                fparam_np = 0;
+                fparam_void = (pty == 1) ? 1 : 0; /* 1 = void return */
+                advance_tok(); /* consume '(' */
+                while (at(TOK_STAR)) advance_tok();
+                if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected fnptr param name");
                 pn = node_new(ND_IDENT, cur->line, cur->col);
                 pn->sval = strdupn(cur->text, 127);
-                pn->ival2 = last_type_elem_size;
+                pn->ival2 = 4;
+                pn->ival3 = 0;
+                advance_tok();
+                expect(TOK_RPAREN, "expected ')' in fnptr param");
+                expect(TOK_LPAREN, "expected '(' for fnptr param types");
+                while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+                    while (at(TOK_CONST)) advance_tok();
+                    if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np++; } }
+                    else {
+                        if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                        else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
+                        if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
+                        while (at(TOK_STAR)) advance_tok();
+                        if (at(TOK_IDENT)) advance_tok();
+                        fparam_np++;
+                    }
+                    if (at(TOK_COMMA)) advance_tok();
+                }
+                expect(TOK_RPAREN, "expected ')' after fnptr param types");
+                register_fnptr_var(pn->sval, fparam_np, fparam_void);
+                if (sig_idx >= 0) {
+                    func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = 0;
+                    func_sigs[sig_idx]->nparam++;
+                }
+                nlist_push(params, pn);
+            } else if (at(TOK_IDENT)) {
+                pn = node_new(ND_IDENT, cur->line, cur->col);
+                pn->sval = strdupn(cur->text, 127);
+                pn->ival2 = last_type_is_fnptr ? 4 : last_type_elem_size;
                 pn->ival3 = last_type_is_unsigned | (last_type_is_float << 4);
+                if (last_type_is_fnptr) {
+                    register_fnptr_var(pn->sval, last_type_fnptr_nparams, last_type_fnptr_is_void);
+                }
                 if (sig_idx >= 0) {
                     func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = last_type_is_float;
                     func_sigs[sig_idx]->nparam++;
@@ -2040,11 +2263,50 @@ struct Node *parse_func(void) {
                 advance_tok();
                 pty = parse_type();
                 while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
-                if (at(TOK_IDENT)) {
+                /* function pointer parameter in subsequent position */
+                if (at(TOK_LPAREN)) {
+                    int fparam_np2;
+                    int fparam_void2;
+                    fparam_np2 = 0;
+                    fparam_void2 = (pty == 1) ? 1 : 0;
+                    advance_tok();
+                    while (at(TOK_STAR)) advance_tok();
+                    if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected fnptr param name");
                     pn = node_new(ND_IDENT, cur->line, cur->col);
                     pn->sval = strdupn(cur->text, 127);
-                    pn->ival2 = last_type_elem_size;
+                    pn->ival2 = 4;
+                    pn->ival3 = 0;
+                    advance_tok();
+                    expect(TOK_RPAREN, "expected ')' in fnptr param");
+                    expect(TOK_LPAREN, "expected '(' for fnptr param types");
+                    while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+                        while (at(TOK_CONST)) advance_tok();
+                        if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np2++; } }
+                        else {
+                            if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                            else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
+                            if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
+                            while (at(TOK_STAR)) advance_tok();
+                            if (at(TOK_IDENT)) advance_tok();
+                            fparam_np2++;
+                        }
+                        if (at(TOK_COMMA)) advance_tok();
+                    }
+                    expect(TOK_RPAREN, "expected ')' after fnptr param types");
+                    register_fnptr_var(pn->sval, fparam_np2, fparam_void2);
+                    if (sig_idx >= 0) {
+                        func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = 0;
+                        func_sigs[sig_idx]->nparam++;
+                    }
+                    nlist_push(params, pn);
+                } else if (at(TOK_IDENT)) {
+                    pn = node_new(ND_IDENT, cur->line, cur->col);
+                    pn->sval = strdupn(cur->text, 127);
+                    pn->ival2 = last_type_is_fnptr ? 4 : last_type_elem_size;
                     pn->ival3 = last_type_is_unsigned | (last_type_is_float << 4);
+                    if (last_type_is_fnptr) {
+                        register_fnptr_var(pn->sval, last_type_fnptr_nparams, last_type_fnptr_is_void);
+                    }
                     if (sig_idx >= 0) {
                         func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = last_type_is_float;
                         func_sigs[sig_idx]->nparam++;
@@ -2177,6 +2439,67 @@ void parse_global_var(void) {
     }
     while (at(TOK_STAR)) { is_ptr = 1; gv_flt = 0; advance_tok(); }
     if (last_type_is_ptr) is_ptr = 1;
+    /* global function pointer: type (*name)(params) */
+    if (at(TOK_LPAREN)) {
+        int gfp_nparams;
+        int gfp_is_void;
+        char *gfp_name;
+        gfp_nparams = 0;
+        gfp_is_void = 0;
+        advance_tok(); /* consume '(' */
+        while (at(TOK_STAR)) advance_tok();
+        if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name in function pointer");
+        gfp_name = strdupn(cur->text, 127);
+        advance_tok();
+        expect(TOK_RPAREN, "expected ')' after function pointer name");
+        expect(TOK_LPAREN, "expected '(' for function pointer parameters");
+        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+            while (at(TOK_CONST)) advance_tok();
+            if (at(TOK_VOID)) {
+                advance_tok();
+                if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); gfp_nparams++; }
+            } else {
+                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {
+                    advance_tok(); if (at(TOK_INT)) advance_tok();
+                }
+                if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_FLOAT) || at(TOK_DOUBLE) || at(TOK_IDENT)) advance_tok();
+                while (at(TOK_STAR)) advance_tok();
+                if (at(TOK_IDENT)) advance_tok();
+                gfp_nparams++;
+            }
+            if (at(TOK_COMMA)) advance_tok();
+        }
+        expect(TOK_RPAREN, "expected ')' after function pointer parameters");
+        /* detect void return */
+        if (at(TOK_VOID)) gfp_is_void = 1;
+        register_fnptr_var(gfp_name, gfp_nparams, gfp_is_void);
+        /* register as global with i32 value */
+        if (nglobals >= MAX_GLOBALS) error(cur->line, cur->col, "too many globals");
+        globals_tbl[nglobals] = (struct GlobalVar *)malloc(sizeof(struct GlobalVar));
+        globals_tbl[nglobals]->name = gfp_name;
+        globals_tbl[nglobals]->init_val = 0;
+        globals_tbl[nglobals]->gv_elem_size = 4;
+        globals_tbl[nglobals]->gv_is_unsigned = 0;
+        globals_tbl[nglobals]->gv_is_float = 0;
+        globals_tbl[nglobals]->gv_float_init = (char *)0;
+        globals_tbl[nglobals]->gv_arr_len = 0;
+        globals_tbl[nglobals]->gv_arr_str_ids = (int *)0;
+        if (at(TOK_EQ)) {
+            advance_tok();
+            if (at(TOK_IDENT)) {
+                fn_table_add(cur->text);
+                globals_tbl[nglobals]->init_val = fn_table_idx(cur->text);
+                advance_tok();
+            } else if (at(TOK_INT_LIT)) {
+                globals_tbl[nglobals]->init_val = cur->int_val;
+                advance_tok();
+            }
+        }
+        nglobals++;
+        expect(TOK_SEMI, "expected ';' after global function pointer declaration");
+        return;
+    }
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     if (nglobals >= MAX_GLOBALS) error(cur->line, cur->col, "too many globals");
     globals_tbl[nglobals] = (struct GlobalVar *)malloc(sizeof(struct GlobalVar));
@@ -2186,7 +2509,66 @@ void parse_global_var(void) {
     globals_tbl[nglobals]->gv_is_unsigned = gv_uns;
     globals_tbl[nglobals]->gv_is_float = gv_flt;
     globals_tbl[nglobals]->gv_float_init = (char *)0;
+    globals_tbl[nglobals]->gv_arr_len = 0;
+    globals_tbl[nglobals]->gv_arr_str_ids = (int *)0;
     advance_tok();
+    /* array: name[] = { ... } or name[N] = { ... } */
+    if (at(TOK_LBRACKET)) {
+        int ga_size;
+        ga_size = 0;
+        advance_tok(); /* consume '[' */
+        if (at(TOK_INT_LIT)) {
+            ga_size = cur->int_val;
+            advance_tok();
+        }
+        expect(TOK_RBRACKET, "expected ']'");
+        if (at(TOK_EQ)) {
+            advance_tok();
+            expect(TOK_LBRACE, "expected '{'");
+            {
+                int *sa_ids;
+                int sa_count;
+                int sa_cap;
+                sa_count = 0;
+                sa_cap = 64;
+                sa_ids = (int *)malloc(sa_cap * sizeof(int));
+                while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+                    if (at(TOK_STR_LIT)) {
+                        sa_ids[sa_count++] = add_string(cur->text, cur->int_val);
+                        advance_tok();
+                    } else if (at(TOK_IDENT)) {
+                        /* function name or enum const in array init */
+                        int eci_arr;
+                        eci_arr = find_enum_const(cur->text);
+                        if (eci_arr >= 0) {
+                            sa_ids[sa_count++] = enum_consts[eci_arr]->val;
+                        } else if (is_known_func(cur->text)) {
+                            fn_table_add(cur->text);
+                            sa_ids[sa_count++] = fn_table_idx(cur->text);
+                        } else {
+                            sa_ids[sa_count++] = 0;
+                        }
+                        advance_tok();
+                    } else if (at(TOK_INT_LIT)) {
+                        sa_ids[sa_count++] = cur->int_val;
+                        advance_tok();
+                    } else {
+                        advance_tok(); /* skip unknown */
+                    }
+                    if (at(TOK_COMMA)) advance_tok();
+                }
+                expect(TOK_RBRACE, "expected '}'");
+                if (ga_size == 0) ga_size = sa_count;
+                globals_tbl[nglobals]->gv_arr_len = ga_size;
+                globals_tbl[nglobals]->gv_arr_str_ids = sa_ids;
+                /* pointer arrays have 4-byte elements */
+                if (is_ptr) globals_tbl[nglobals]->gv_elem_size = 4;
+            }
+        }
+        nglobals++;
+        expect(TOK_SEMI, "expected ';' after global array declaration");
+        return;
+    }
     if (at(TOK_EQ)) {
         advance_tok();
         if (at(TOK_FLOAT_LIT)) {
@@ -2305,6 +2687,47 @@ void parse_typedef(void) {
         error(cur->line, cur->col, "expected type in typedef");
     }
     while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+    /* function pointer typedef: typedef type (*Alias)(params) */
+    if (at(TOK_LPAREN)) {
+        int td_nparams;
+        int td_is_void;
+        td_nparams = 0;
+        td_is_void = (rk == 1) ? 1 : 0;
+        advance_tok(); /* consume '(' */
+        while (at(TOK_STAR)) advance_tok();
+        if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected alias name in function pointer typedef");
+        alias_name = strdupn(cur->text, 127);
+        advance_tok();
+        expect(TOK_RPAREN, "expected ')' in function pointer typedef");
+        expect(TOK_LPAREN, "expected '(' for function pointer typedef parameters");
+        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+            while (at(TOK_CONST)) advance_tok();
+            if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); td_nparams++; } }
+            else {
+                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
+                if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
+                while (at(TOK_STAR)) advance_tok();
+                if (at(TOK_IDENT)) advance_tok();
+                td_nparams++;
+            }
+            if (at(TOK_COMMA)) advance_tok();
+        }
+        expect(TOK_RPAREN, "expected ')' after function pointer typedef parameters");
+        expect(TOK_SEMI, "expected ';' after typedef");
+        if (ntype_aliases < MAX_TYPE_ALIASES) {
+            ta = (struct TypeAlias *)malloc(sizeof(struct TypeAlias));
+            ta->alias = alias_name;
+            ta->resolved_kind = rk;
+            ta->is_ptr = 1;
+            ta->is_fnptr = 1;
+            ta->fnptr_nparams = td_nparams;
+            ta->fnptr_is_void = td_is_void;
+            type_aliases[ntype_aliases] = ta;
+            ntype_aliases++;
+        }
+        return;
+    }
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected alias name in typedef");
     alias_name = strdupn(cur->text, 127);
     advance_tok();
@@ -2314,6 +2737,9 @@ void parse_typedef(void) {
         ta->alias = alias_name;
         ta->resolved_kind = rk;
         ta->is_ptr = is_ptr;
+        ta->is_fnptr = 0;
+        ta->fnptr_nparams = 0;
+        ta->fnptr_is_void = 0;
         type_aliases[ntype_aliases] = ta;
         ntype_aliases++;
     }
@@ -3430,6 +3856,28 @@ void gen_expr(struct Node *n) {
         printf("i32.const %d\n", str_table[n->ival]->offset);
         last_expr_is_float = 0;
         break;
+    case ND_CALL_INDIRECT: {
+        int ci_i;
+        int ci_np;
+        ci_np = n->ival; /* declared param count */
+        /* push arguments */
+        for (ci_i = 0; ci_i < n->ival2; ci_i++) {
+            gen_expr(n->list[ci_i]);
+        }
+        /* push table index (the callee expression) */
+        gen_expr(n->c0);
+        /* emit call_indirect with matching type signature */
+        emit_indent();
+        printf("call_indirect (type $__fntype_%d_%s)\n",
+               ci_np, n->ival3 ? "void" : "i32");
+        if (n->ival3) {
+            /* void function — push dummy i32 */
+            emit_indent();
+            printf("i32.const 0\n");
+        }
+        last_expr_is_float = 0;
+        break;
+    }
     case ND_MEMBER:
         off = resolve_field_offset(n->sval);
         if (off < 0) error(n->nline, n->ncol, "unknown struct field");
@@ -4124,6 +4572,51 @@ void gen_module(struct Node *prog) {
     printf("(memory (export \"memory\") 256)\n");
     emit_indent();
     printf("\n");
+
+    /* function pointer type declarations and table */
+    if (fn_table_count > 0) {
+        int fti;
+        int need_types[17]; /* need_types[nparams] = bitmask: bit0=i32 result, bit1=void */
+        for (fti = 0; fti < 17; fti++) need_types[fti] = 0;
+        /* scan fnptr_vars to collect needed type signatures */
+        for (fti = 0; fti < nfnptr_vars; fti++) {
+            int np;
+            int vd;
+            np = fnptr_vars[fti]->nparams;
+            vd = fnptr_vars[fti]->is_void;
+            if (np <= 16) {
+                need_types[np] = need_types[np] | (1 << vd);
+            }
+        }
+        /* emit type declarations */
+        for (fti = 0; fti <= 16; fti++) {
+            if (need_types[fti] & 1) {
+                int pi;
+                emit_indent();
+                printf("(type $__fntype_%d_i32 (func", fti);
+                for (pi = 0; pi < fti; pi++) printf(" (param i32)");
+                printf(" (result i32)))\n");
+            }
+            if (need_types[fti] & 2) {
+                int pi;
+                emit_indent();
+                printf("(type $__fntype_%d_void (func", fti);
+                for (pi = 0; pi < fti; pi++) printf(" (param i32)");
+                printf("))\n");
+            }
+        }
+        /* table and elem */
+        emit_indent();
+        printf("(table %d funcref)\n", fn_table_count);
+        emit_indent();
+        printf("(elem (i32.const 0)");
+        for (fti = 0; fti < fn_table_count; fti++) {
+            printf(" $%s", fn_table_names[fti]);
+        }
+        printf(")\n");
+        emit_indent();
+        printf("\n");
+    }
 
     /* static data section */
     for (i = 0; i < nstrings; i++) {
@@ -5323,17 +5816,70 @@ void gen_module(struct Node *prog) {
     emit_indent();
     printf("\n");
 
-    /* _start */
-    emit_indent();
-    printf("(func $_start (export \"_start\")\n");
-    indent_level++;
-    emit_indent();
-    printf("call $main\n");
-    emit_indent();
-    printf("call $__proc_exit\n");
-    indent_level--;
-    emit_indent();
-    printf(")\n");
+    /* _start — calls __init if needed, then main */
+    {
+        int need_init;
+        int gi2;
+        need_init = 0;
+        for (gi2 = 0; gi2 < nglobals; gi2++) {
+            if (globals_tbl[gi2]->gv_arr_len > 0 && globals_tbl[gi2]->gv_arr_str_ids != (int *)0) {
+                need_init = 1;
+            }
+        }
+        if (need_init) {
+            emit_indent();
+            printf("(func $__init\n");
+            indent_level++;
+            emit_indent();
+            printf("(local $__ptr i32)\n");
+            for (gi2 = 0; gi2 < nglobals; gi2++) {
+                if (globals_tbl[gi2]->gv_arr_len > 0 && globals_tbl[gi2]->gv_arr_str_ids != (int *)0) {
+                    int ai2;
+                    /* allocate arr_len * 4 bytes */
+                    emit_indent();
+                    printf("i32.const %d\n", globals_tbl[gi2]->gv_arr_len * 4);
+                    emit_indent();
+                    printf("call $malloc\n");
+                    emit_indent();
+                    printf("local.tee $__ptr\n");
+                    emit_indent();
+                    printf("global.set $%s\n", globals_tbl[gi2]->name);
+                    /* store each element */
+                    for (ai2 = 0; ai2 < globals_tbl[gi2]->gv_arr_len; ai2++) {
+                        emit_indent();
+                        printf("local.get $__ptr\n");
+                        if (ai2 > 0) {
+                            emit_indent();
+                            printf("i32.const %d\n", ai2 * 4);
+                            emit_indent();
+                            printf("i32.add\n");
+                        }
+                        emit_indent();
+                        printf("i32.const %d\n", str_table[globals_tbl[gi2]->gv_arr_str_ids[ai2]]->offset);
+                        emit_indent();
+                        printf("i32.store\n");
+                    }
+                }
+            }
+            indent_level--;
+            emit_indent();
+            printf(")\n");
+        }
+        emit_indent();
+        printf("(func $_start (export \"_start\")\n");
+        indent_level++;
+        if (need_init) {
+            emit_indent();
+            printf("call $__init\n");
+        }
+        emit_indent();
+        printf("call $main\n");
+        emit_indent();
+        printf("call $__proc_exit\n");
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+    }
 
     indent_level--;
     emit_indent();
@@ -6189,6 +6735,29 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         bv_push(o, 0x41); bv_i32(o, str_table[n->ival]->offset);
         bin_last_float = 0;
         break;
+    case ND_CALL_INDIRECT: {
+        int ci_i;
+        int ci_np;
+        int ci_type_idx;
+        ci_np = n->ival;
+        /* push arguments */
+        for (ci_i = 0; ci_i < n->ival2; ci_i++) {
+            gen_expr_bin(o, n->list[ci_i]);
+        }
+        /* push table index */
+        gen_expr_bin(o, n->c0);
+        /* call_indirect type_idx table_idx(0) */
+        ci_type_idx = bin_find_or_add_type(ci_np, n->ival3 ? 0 : 1);
+        bv_push(o, 0x11); /* call_indirect */
+        bv_u32(o, ci_type_idx);
+        bv_u32(o, 0); /* table index 0 */
+        if (n->ival3) {
+            /* void fn — push dummy i32 */
+            bv_push(o, 0x41); bv_i32(o, 0);
+        }
+        bin_last_float = 0;
+        break;
+    }
     case ND_MEMBER:
         off = resolve_field_offset(n->sval);
         if (off < 0) error(n->nline, n->ncol, "unknown struct field");
@@ -8548,6 +9117,16 @@ void gen_module_bin(struct Node *prog) {
     }
     bv_section(out, 3, sec);
 
+    /* Table section (id=4) — only if function pointers are used */
+    if (fn_table_count > 0) {
+        bv_reset(sec);
+        bv_u32(sec, 1); /* one table */
+        bv_push(sec, 0x70); /* funcref */
+        bv_push(sec, 0x00); /* limits: min only */
+        bv_u32(sec, fn_table_count);
+        bv_section(out, 4, sec);
+    }
+
     /* Memory section (id=5) */
     bv_reset(sec);
     bv_u32(sec, 1);
@@ -8590,6 +9169,20 @@ void gen_module_bin(struct Node *prog) {
     bv_push(sec, 0x00);
     bv_u32(sec, bin_find_func("_start"));
     bv_section(out, 7, sec);
+
+    /* Element section (id=9) — only if function pointers are used */
+    if (fn_table_count > 0) {
+        int eli;
+        bv_reset(sec);
+        bv_u32(sec, 1); /* one elem segment */
+        bv_u32(sec, 0); /* table index 0 */
+        bv_push(sec, 0x41); bv_i32(sec, 0); bv_push(sec, 0x0B); /* offset = i32.const 0; end */
+        bv_u32(sec, fn_table_count);
+        for (eli = 0; eli < fn_table_count; eli++) {
+            bv_u32(sec, bin_find_func(fn_table_names[eli]));
+        }
+        bv_section(out, 9, sec);
+    }
 
     /* Code section (id=10) */
     bv_reset(sec);
@@ -8640,7 +9233,44 @@ void gen_module_bin(struct Node *prog) {
     }
     /* _start body */
     bv_reset(fb);
-    bv_u32(fb, 0);
+    {
+        int need_init_bin;
+        int gi3;
+        need_init_bin = 0;
+        for (gi3 = 0; gi3 < nglobals; gi3++) {
+            if (globals_tbl[gi3]->gv_arr_len > 0 && globals_tbl[gi3]->gv_arr_str_ids != (int *)0) {
+                need_init_bin = 1;
+            }
+        }
+        if (need_init_bin) {
+            bv_u32(fb, 1); /* 1 local declaration group */
+            bv_u32(fb, 1); /* 1 local of type i32 */
+            bv_push(fb, 0x7F);
+            for (gi3 = 0; gi3 < nglobals; gi3++) {
+                if (globals_tbl[gi3]->gv_arr_len > 0 && globals_tbl[gi3]->gv_arr_str_ids != (int *)0) {
+                    int ai3;
+                    /* malloc(arr_len * 4) */
+                    bv_push(fb, 0x41); bv_i32(fb, globals_tbl[gi3]->gv_arr_len * 4);
+                    bv_push(fb, 0x10); bv_u32(fb, bin_find_func("malloc"));
+                    /* tee to local 0, then set global */
+                    bv_push(fb, 0x22); bv_u32(fb, 0); /* local.tee 0 */
+                    bv_push(fb, 0x24); bv_u32(fb, bin_global_idx(globals_tbl[gi3]->name));
+                    /* store each element */
+                    for (ai3 = 0; ai3 < globals_tbl[gi3]->gv_arr_len; ai3++) {
+                        bv_push(fb, 0x20); bv_u32(fb, 0); /* local.get 0 */
+                        if (ai3 > 0) {
+                            bv_push(fb, 0x41); bv_i32(fb, ai3 * 4);
+                            bv_push(fb, 0x6A); /* i32.add */
+                        }
+                        bv_push(fb, 0x41); bv_i32(fb, str_table[globals_tbl[gi3]->gv_arr_str_ids[ai3]]->offset);
+                        bv_push(fb, 0x36); bv_u32(fb, 2); bv_u32(fb, 0); /* i32.store align=2 offset=0 */
+                    }
+                }
+            }
+        } else {
+            bv_u32(fb, 0); /* no locals */
+        }
+    }
     bv_push(fb, 0x10); bv_u32(fb, bin_find_func("main"));
     bv_push(fb, 0x10); bv_u32(fb, 0);
     bv_push(fb, 0x0B);
@@ -8682,6 +9312,7 @@ int main(void) {
     init_structs();
     init_globals();
     init_func_sigs();
+    init_fnptr_registry();
     init_enum_consts();
     init_type_aliases();
     init_local_tracking();
