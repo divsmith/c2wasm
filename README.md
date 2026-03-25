@@ -53,11 +53,12 @@ c2wasm supports a carefully chosen subset of C89/C90:
 | Pointer ops | `*` (deref), `&` (address-of), `[]` (subscript), `.`, `->` |
 | Prefix | `++`, `--`, cast `(T)` |
 | Statements | `if`/`else`, `while`, `for`, `do`/`while`, `switch`/`case`, `return`, `break`, `continue` |
-| Functions | Recursion, forward declarations |
+| Functions | Recursion, forward declarations, function pointers (`call_indirect`) |
 | Memory | `malloc`, `free` (free-list allocator with coalescing), `calloc` |
 | Built-ins | `exit`, `putchar`, `getchar`, `printf` (`%d %s %c %x %f`), `puts` |
 | libc | `strlen`, `strcmp`, `strcpy`, `strcat`, `strchr`, `strstr`, `memcpy`, `memset`, `memmove`, `atoi`, `abs`, `rand`/`srand`, `isdigit`, `isalpha`, `toupper`, `tolower`, and more |
-| Preprocessor | `#define NAME integer-literal`, `enum`, `typedef` |
+| Preprocessor | `#define NAME integer-literal`, `enum`, `typedef` (structs and function pointer types) |
+| Initializers | Local/global array initializers, global `char *arr[] = {"..."}` string arrays |
 
 Integer types map to `i32`. Float types use `f64` in WASM (WAT mode). Unsigned types use appropriate unsigned WASM opcodes.
 
@@ -219,7 +220,7 @@ make serve
 
 ### Test Programs
 
-`tests/programs/` contains 39 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, and array initializers.
+`tests/programs/` contains 48 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, function pointers, and array initializers.
 
 ---
 
