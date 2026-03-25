@@ -7,11 +7,14 @@
     * Need a way to "revert" back when the compiler is broken.
     * Maybe an option to select running either the "reference" known good compiler binary or toggle to the one who's source code has been changed in the browser.
     * The "reference" compiler would be responsible for compiling the hacked version, which could then in turn be responsible for compiling the user's test or example code (hello world, etc) that then runs in the browser
-5. [ ] Real free() implementation
-6. [ ] More data types
+5. [x] Real free() implementation
+6. [x] More data types
 7. [ ] Full C89 compatibility
-8. [ ] libc available in browser demo
+8. [x] libc available in browser demo
 9. [ ] Remove WAT output from demo
 10. [ ] pull src and test directories out of compilers to project root
     * The demo should be an accessory to the main compiler, not an equivalent level
-11. [ ] debugger / 
+11. [ ] debugger / live code visualizer
+12. [ ] use wasm f64 if not already
+13. [ ] implement C features that would make the self-hosting compiler easier to implement itself, then iteratively do so
+14. [ ] break compiler up into components. maintain self-hosting requirement.
