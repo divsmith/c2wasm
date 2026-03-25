@@ -220,6 +220,330 @@
       '    return 0;\n' +
       '}\n',
 
+
+    floating_point:
+      '/* Demonstrates float and double arithmetic */\n' +
+      '\n' +
+      '/* Approximate pi using Leibniz series: pi/4 = 1 - 1/3 + 1/5 - 1/7 + ... */\n' +
+      'double approx_pi(int terms) {\n' +
+      '    double sum;\n' +
+      '    double sign;\n' +
+      '    double denom;\n' +
+      '    int i;\n' +
+      '    sum = 0.0;\n' +
+      '    sign = 1.0;\n' +
+      '    denom = 1.0;\n' +
+      '    for (i = 0; i < terms; i = i + 1) {\n' +
+      '        sum = sum + sign / denom;\n' +
+      '        sign = sign * -1.0;\n' +
+      '        denom = denom + 2.0;\n' +
+      '    }\n' +
+      '    return sum * 4.0;\n' +
+      '}\n' +
+      '\n' +
+      '/* Newton\'s method square root approximation */\n' +
+      'double my_sqrt(double n) {\n' +
+      '    double x;\n' +
+      '    double x1;\n' +
+      '    int i;\n' +
+      '    if (n <= 0.0) return 0.0;\n' +
+      '    x = n / 2.0;\n' +
+      '    for (i = 0; i < 20; i = i + 1) {\n' +
+      '        x1 = (x + n / x) / 2.0;\n' +
+      '        if (x1 < 0.0) x1 = x1 * -1.0;\n' +
+      '        x = x1;\n' +
+      '    }\n' +
+      '    return x;\n' +
+      '}\n' +
+      '\n' +
+      '/* Celsius to Fahrenheit */\n' +
+      'double c_to_f(double c) {\n' +
+      '    return c * 9.0 / 5.0 + 32.0;\n' +
+      '}\n' +
+      '\n' +
+      '/* Fahrenheit to Celsius */\n' +
+      'double f_to_c(double f) {\n' +
+      '    return (f - 32.0) * 5.0 / 9.0;\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    double pi;\n' +
+      '    double sq2;\n' +
+      '    double sq3;\n' +
+      '    int i;\n' +
+      '\n' +
+      '    /* Pi approximation */\n' +
+      '    printf("Pi approximations (Leibniz series):\\n");\n' +
+      '    pi = approx_pi(10);\n' +
+      '    printf("  10 terms:    %f\\n", pi);\n' +
+      '    pi = approx_pi(100);\n' +
+      '    printf("  100 terms:   %f\\n", pi);\n' +
+      '    pi = approx_pi(1000);\n' +
+      '    printf("  1000 terms:  %f\\n", pi);\n' +
+      '\n' +
+      '    /* Square roots */\n' +
+      '    printf("\\nSquare root (Newton\'s method):\\n");\n' +
+      '    sq2 = my_sqrt(2.0);\n' +
+      '    printf("  sqrt(2)  = %f\\n", sq2);\n' +
+      '    sq3 = my_sqrt(3.0);\n' +
+      '    printf("  sqrt(3)  = %f\\n", sq3);\n' +
+      '    printf("  sqrt(16) = %f\\n", my_sqrt(16.0));\n' +
+      '    printf("  sqrt(0)  = %f\\n", my_sqrt(0.0));\n' +
+      '\n' +
+      '    /* Temperature conversion */\n' +
+      '    printf("\\nTemperature conversions:\\n");\n' +
+      '    printf("  0 C  = %f F\\n", c_to_f(0.0));\n' +
+      '    printf("  100 C = %f F\\n", c_to_f(100.0));\n' +
+      '    printf("  98.6 F = %f C\\n", f_to_c(98.6));\n' +
+      '    printf("  -40 C = %f F (same as -40 F)\\n", c_to_f(-40.0));\n' +
+      '\n' +
+      '    /* Mixed int/float arithmetic */\n' +
+      '    printf("\\nMixed arithmetic:\\n");\n' +
+      '    printf("  5 / 2 (int) = %d\\n", 5 / 2);\n' +
+      '    printf("  5.0 / 2 (float) = %f\\n", 5.0 / 2);\n' +
+      '    printf("  (double)5 / 2 = %f\\n", (double)5 / 2);\n' +
+      '\n' +
+      '    /* Float comparisons */\n' +
+      '    printf("\\nFloat comparisons:\\n");\n' +
+      '    printf("  0.1 + 0.2 == 0.3: %d\\n", 0.1 + 0.2 == 0.3);\n' +
+      '    printf("  1.0 < 2.0: %d\\n", 1.0 < 2.0);\n' +
+      '    printf("  -1.5 < 0.0: %d\\n", -1.5 < 0.0);\n' +
+      '\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    integer_types:
+      '/* Demonstrates unsigned, short, and long integer types */\n' +
+      '\n' +
+      'int main() {\n' +
+      '    unsigned int u;\n' +
+      '    int s;\n' +
+      '    unsigned short us;\n' +
+      '    short ss;\n' +
+      '    long l;\n' +
+      '    unsigned int max_u;\n' +
+      '    unsigned int bits;\n' +
+      '    int i;\n' +
+      '\n' +
+      '    /* Unsigned vs signed: same bit pattern, different interpretation */\n' +
+      '    u = 4294967295; /* 0xFFFFFFFF = max unsigned */\n' +
+      '    s = -1;\n' +
+      '    printf("unsigned max: %d (as signed: %d)\\n", (int)u, s);\n' +
+      '    printf("unsigned > 0: %d\\n", u > 0);       /* 1: unsigned wraps, still > 0 */\n' +
+      '    printf("signed > 0: %d\\n", s > 0);         /* 0: signed -1 < 0 */\n' +
+      '\n' +
+      '    /* Unsigned comparisons */\n' +
+      '    printf("\\nUnsigned comparison:\\n");\n' +
+      '    max_u = 4294967295;\n' +
+      '    printf("  max_uint > 100: %d\\n", max_u > (unsigned int)100);\n' +
+      '\n' +
+      '    /* Short integer: 16-bit storage */\n' +
+      '    printf("\\nShort integers:\\n");\n' +
+      '    ss = 32767; /* max short */\n' +
+      '    printf("  max short: %d\\n", ss);\n' +
+      '    ss = ss + 1; /* overflow */\n' +
+      '    printf("  max short + 1: %d\\n", ss); /* wraps to -32768 */\n' +
+      '\n' +
+      '    us = 65535; /* max unsigned short */\n' +
+      '    printf("  max unsigned short: %d\\n", (int)us);\n' +
+      '    us = us + 1; /* wraps to 0 */\n' +
+      '    printf("  max unsigned short + 1: %d\\n", (int)us);\n' +
+      '\n' +
+      '    /* Bit manipulation with unsigned */\n' +
+      '    printf("\\nBit manipulation:\\n");\n' +
+      '    bits = 0;\n' +
+      '    for (i = 0; i < 8; i = i + 1) {\n' +
+      '        bits = bits | (1 << i);\n' +
+      '    }\n' +
+      '    printf("  bits set 0-7: %d (0x%x)\\n", (int)bits, (int)bits);\n' +
+      '    bits = bits >> 1;\n' +
+      '    printf("  logical right shift: %d (0x%x)\\n", (int)bits, (int)bits);\n' +
+      '\n' +
+      '    /* Long (same as int in c2wasm, but valid syntax) */\n' +
+      '    printf("\\nLong integers:\\n");\n' +
+      '    l = 2147483647; /* max int = max long in c2wasm */\n' +
+      '    printf("  max long: %d\\n", (int)l);\n' +
+      '\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    memory_pools:
+      '/* Demonstrates real free() with coalescing free-list allocator */\n' +
+      '\n' +
+      'struct Node {\n' +
+      '    int value;\n' +
+      '    struct Node *next;\n' +
+      '};\n' +
+      '\n' +
+      '/* Build a linked list of n nodes */\n' +
+      'struct Node *make_list(int n) {\n' +
+      '    struct Node *head;\n' +
+      '    struct Node *node;\n' +
+      '    int i;\n' +
+      '    head = (struct Node *)0;\n' +
+      '    for (i = 0; i < n; i = i + 1) {\n' +
+      '        node = (struct Node *)malloc(sizeof(struct Node));\n' +
+      '        node->value = i;\n' +
+      '        node->next = head;\n' +
+      '        head = node;\n' +
+      '    }\n' +
+      '    return head;\n' +
+      '}\n' +
+      '\n' +
+      '/* Free all nodes in a list */\n' +
+      'void free_list(struct Node *head) {\n' +
+      '    struct Node *next;\n' +
+      '    while (head != (struct Node *)0) {\n' +
+      '        next = head->next;\n' +
+      '        free(head);\n' +
+      '        head = next;\n' +
+      '    }\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    struct Node *list1;\n' +
+      '    struct Node *list2;\n' +
+      '    struct Node *p;\n' +
+      '    int *a;\n' +
+      '    int *b;\n' +
+      '\n' +
+      '    /* Allocate and free - memory should be reused */\n' +
+      '    a = (int *)malloc(64);\n' +
+      '    *a = 12345;\n' +
+      '    printf("First allocation at: %d\\n", (int)a);\n' +
+      '    free(a);\n' +
+      '\n' +
+      '    b = (int *)malloc(64);\n' +
+      '    printf("After free, reused at: %d\\n", (int)b);\n' +
+      '    if ((int)a == (int)b) {\n' +
+      '        printf("Memory was reused!\\n");\n' +
+      '    }\n' +
+      '    free(b);\n' +
+      '\n' +
+      '    /* Build and free a linked list */\n' +
+      '    printf("\\nBuilding list of 5 nodes...\\n");\n' +
+      '    list1 = make_list(5);\n' +
+      '    p = list1;\n' +
+      '    while (p != (struct Node *)0) {\n' +
+      '        printf("  node value: %d\\n", p->value);\n' +
+      '        p = p->next;\n' +
+      '    }\n' +
+      '    free_list(list1);\n' +
+      '    printf("List freed.\\n");\n' +
+      '\n' +
+      '    /* Build another list - should reuse memory */\n' +
+      '    printf("\\nBuilding second list of 5 nodes...\\n");\n' +
+      '    list2 = make_list(5);\n' +
+      '    printf("Second list built (memory reused from first).\\n");\n' +
+      '    free_list(list2);\n' +
+      '\n' +
+      '    printf("Done!\\n");\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    string_ops:
+      '/* Demonstrates libc string and ctype functions */\n' +
+      '\n' +
+      '/* Simple helper: count words in a string */\n' +
+      'int count_words(char *s) {\n' +
+      '    int count;\n' +
+      '    int in_word;\n' +
+      '    count = 0;\n' +
+      '    in_word = 0;\n' +
+      '    while (*s != \'\\0\') {\n' +
+      '        if (isspace(*s)) {\n' +
+      '            in_word = 0;\n' +
+      '        } else if (!in_word) {\n' +
+      '            in_word = 1;\n' +
+      '            count = count + 1;\n' +
+      '        }\n' +
+      '        s = s + 1;\n' +
+      '    }\n' +
+      '    return count;\n' +
+      '}\n' +
+      '\n' +
+      '/* Convert string to uppercase in place */\n' +
+      'void str_upper(char *s) {\n' +
+      '    while (*s != \'\\0\') {\n' +
+      '        *s = toupper(*s);\n' +
+      '        s = s + 1;\n' +
+      '    }\n' +
+      '}\n' +
+      '\n' +
+      '/* Check if string is all digits */\n' +
+      'int is_number(char *s) {\n' +
+      '    if (*s == \'\\0\') return 0;\n' +
+      '    while (*s != \'\\0\') {\n' +
+      '        if (!isdigit(*s)) return 0;\n' +
+      '        s = s + 1;\n' +
+      '    }\n' +
+      '    return 1;\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    char buf[64];\n' +
+      '    char *p;\n' +
+      '    int n;\n' +
+      '\n' +
+      '    /* strlen */\n' +
+      '    printf("strlen(\\"hello\\") = %d\\n", strlen("hello"));\n' +
+      '\n' +
+      '    /* strcpy + strcat */\n' +
+      '    strcpy(buf, "Hello");\n' +
+      '    strcat(buf, ", ");\n' +
+      '    strcat(buf, "world!");\n' +
+      '    printf("strcpy+strcat: %s\\n", buf);\n' +
+      '\n' +
+      '    /* strcmp */\n' +
+      '    printf("\\nComparing strings:\\n");\n' +
+      '    printf("  strcmp(\\"abc\\", \\"abc\\") = %d\\n", strcmp("abc", "abc"));\n' +
+      '    printf("  strcmp(\\"abc\\", \\"abd\\") = %d\\n", strcmp("abc", "abd"));\n' +
+      '    printf("  strcmp(\\"abd\\", \\"abc\\") = %d\\n", strcmp("abd", "abc"));\n' +
+      '\n' +
+      '    /* strchr and strstr */\n' +
+      '    p = strchr("hello world", \'o\');\n' +
+      '    if (p != (char *)0) {\n' +
+      '        printf("\\nstrchr found \'o\'\\n");\n' +
+      '    }\n' +
+      '    p = strstr("hello world", "world");\n' +
+      '    if (p != (char *)0) {\n' +
+      '        printf("strstr found \\"world\\"\\n");\n' +
+      '    }\n' +
+      '\n' +
+      '    /* ctype functions */\n' +
+      '    printf("\\nctype functions:\\n");\n' +
+      '    printf("  isdigit(\'5\'): %d\\n", isdigit(\'5\'));\n' +
+      '    printf("  isalpha(\'A\'): %d\\n", isalpha(\'A\'));\n' +
+      '    printf("  isspace(\' \'): %d\\n", isspace(\' \'));\n' +
+      '    printf("  toupper(\'a\'): %c\\n", toupper(\'a\'));\n' +
+      '    printf("  tolower(\'Z\'): %c\\n", tolower(\'Z\'));\n' +
+      '\n' +
+      '    /* Custom functions using libc */\n' +
+      '    printf("\\nWord count:\\n");\n' +
+      '    printf("  \\"hello world\\": %d words\\n", count_words("hello world"));\n' +
+      '    printf("  \\"  spaces  \\": %d words\\n", count_words("  spaces  "));\n' +
+      '    printf("  \\"one two three four\\": %d words\\n", count_words("one two three four"));\n' +
+      '\n' +
+      '    /* is_number */\n' +
+      '    printf("\\nNumber detection:\\n");\n' +
+      '    printf("  \\"12345\\" is number: %d\\n", is_number("12345"));\n' +
+      '    printf("  \\"12x45\\" is number: %d\\n", is_number("12x45"));\n' +
+      '\n' +
+      '    /* atoi */\n' +
+      '    printf("\\natoi:\\n");\n' +
+      '    n = atoi("42");\n' +
+      '    printf("  atoi(\\"42\\") = %d\\n", n);\n' +
+      '    n = atoi("-100");\n' +
+      '    printf("  atoi(\\"-100\\") = %d\\n", n);\n' +
+      '\n' +
+      '    /* str_upper */\n' +
+      '    strcpy(buf, "hello world");\n' +
+      '    str_upper(buf);\n' +
+      '    printf("\\nUPPERCASE: %s\\n", buf);\n' +
+      '\n' +
+      '    return 0;\n' +
+      '}\n',
+
     greet:
       '// Reads a name from stdin and prints a greeting.\n' +
       '// Type your name in the terminal below, then press Enter!\n' +
