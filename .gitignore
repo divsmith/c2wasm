@@ -5,3 +5,4 @@ build/
 *.wat
 demo/compiler.js
 demo/compiler.wasm
+demo/c2wasm.c

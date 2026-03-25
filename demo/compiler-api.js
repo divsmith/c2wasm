@@ -8,11 +8,13 @@
  * wires those to in-memory buffers so no filesystem is needed.
  */
 var CompilerAPI = (function () {
-  var compiledModule = null;
+  var referenceModule = null;
+  var customModule = null;
+  var useCustom = false;
   var loading = null;
 
   function init() {
-    if (compiledModule) return Promise.resolve();
+    if (referenceModule) return Promise.resolve();
     if (loading) return loading;
 
     loading = fetch('compiler.wasm')
@@ -24,7 +26,7 @@ var CompilerAPI = (function () {
         return WebAssembly.compile(bytes);
       })
       .then(function (mod) {
-        compiledModule = mod;
+        referenceModule = mod;
       });
 
     loading.catch(function () { loading = null; });
@@ -173,9 +175,10 @@ var CompilerAPI = (function () {
 
   function compile(cSource) {
     return init().then(function () {
+      var activeModule = useCustom ? customModule : referenceModule;
       var inputBytes = new TextEncoder().encode(cSource);
       var ctx = createWasiImports(inputBytes);
-      var instance = new WebAssembly.Instance(compiledModule, ctx.imports);
+      var instance = new WebAssembly.Instance(activeModule, ctx.imports);
       ctx.setMemory(instance.exports.memory);
 
       try {
@@ -202,9 +205,10 @@ var CompilerAPI = (function () {
    */
   function compileBinary(cSource) {
     return init().then(function () {
+      var activeModule = useCustom ? customModule : referenceModule;
       var inputBytes = new TextEncoder().encode(cSource);
       var ctx = createWasiImports(inputBytes, true);
-      var instance = new WebAssembly.Instance(compiledModule, ctx.imports);
+      var instance = new WebAssembly.Instance(activeModule, ctx.imports);
       ctx.setMemory(instance.exports.memory);
 
       try {
@@ -225,5 +229,71 @@ var CompilerAPI = (function () {
     });
   }
 
-  return { compile: compile, compileBinary: compileBinary, init: init };
+  /**
+   * Build a custom compiler from modified c2wasm.c source.
+   * Always uses the reference compiler to do the compilation.
+   * Applies binary_mode=1 substitution before compiling.
+   * Returns a Promise that resolves on success or rejects with compile errors.
+   */
+  function buildCompiler(cSource) {
+    return init().then(function () {
+      var re = /int\s+binary_mode\s*=\s*0\s*;/;
+      if (!re.test(cSource)) {
+        throw new Error('Could not find "int binary_mode = 0;" in source.\nDid you modify or remove this declaration?');
+      }
+      var modified = cSource.replace(re, 'int binary_mode = 1;');
+      var inputBytes = new TextEncoder().encode(modified);
+      var ctx = createWasiImports(inputBytes, true);
+      // Always use reference compiler to build the custom one
+      var instance = new WebAssembly.Instance(referenceModule, ctx.imports);
+      ctx.setMemory(instance.exports.memory);
+
+      try {
+        instance.exports._start();
+      } catch (e) {
+        if (!ctx.isExit(e)) throw e;
+        if (ctx.exitCode !== 0) {
+          throw new Error(ctx.stderr || 'Compiler exited with code ' + ctx.exitCode);
+        }
+      }
+
+      var bytes = ctx.stdoutBytes;
+      if (bytes.length === 0) {
+        throw new Error(ctx.stderr || 'Compiler produced no output');
+      }
+
+      return WebAssembly.compile(bytes).then(function (mod) {
+        customModule = mod;
+        useCustom = true;
+      });
+    });
+  }
+
+  function useReference() {
+    useCustom = false;
+  }
+
+  function useCustomCompiler() {
+    if (!customModule) throw new Error('No custom compiler has been built');
+    useCustom = true;
+  }
+
+  function getMode() {
+    return useCustom ? 'custom' : 'reference';
+  }
+
+  function hasCustomCompiler() {
+    return customModule !== null;
+  }
+
+  return {
+    compile: compile,
+    compileBinary: compileBinary,
+    buildCompiler: buildCompiler,
+    useReference: useReference,
+    useCustomCompiler: useCustomCompiler,
+    getMode: getMode,
+    hasCustomCompiler: hasCustomCompiler,
+    init: init
+  };
 })();

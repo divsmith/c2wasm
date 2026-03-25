@@ -34,6 +34,9 @@ jobs:
       - name: Build compiler.wasm
         run: make wasm
 
+      - name: Copy compiler source for live editing
+        run: cp src/c2wasm.c demo/c2wasm.c
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 

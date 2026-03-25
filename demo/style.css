@@ -305,6 +305,77 @@ main {
   color: #4ec9b0;
 }
 
+/* Build Compiler button */
+#build-compiler-btn {
+  background: #6a4c93;
+  color: #fff;
+  border: none;
+  padding: 5px 14px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+
+#build-compiler-btn:hover:not(:disabled) {
+  background: #7d5ba6;
+}
+
+#build-compiler-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#build-compiler-btn.success {
+  background: var(--success);
+}
+
+#build-compiler-btn.error {
+  background: var(--error);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Compiler mode indicator */
+.compiler-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.compiler-mode-label {
+  color: var(--text-secondary);
+}
+
+.compiler-mode-label.custom {
+  color: #c586c0;
+}
+
+#revert-compiler-btn {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+#revert-compiler-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .tagline { display: none; }

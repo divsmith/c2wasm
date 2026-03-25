@@ -569,7 +569,8 @@
 
   var STORAGE_KEYS = {
     FILES: 'c2wasm:files',
-    ACTIVE: 'c2wasm:active'
+    ACTIVE: 'c2wasm:active',
+    COMPILER_SOURCE: 'c2wasm:compiler-source'
   };
 
   function loadUserFiles() {
@@ -594,6 +595,51 @@
       var raw = localStorage.getItem(STORAGE_KEYS.ACTIVE);
       return raw ? JSON.parse(raw) : { type: 'example', id: 'hello' };
     } catch (e) { return { type: 'example', id: 'hello' }; }
+  }
+
+  // ── Compiler source helpers ──
+
+  var compilerSourceCache = null; // original fetched source
+  var compilerSourceLoading = null;
+
+  function fetchCompilerSource() {
+    if (compilerSourceCache) return Promise.resolve(compilerSourceCache);
+    if (compilerSourceLoading) return compilerSourceLoading;
+
+    compilerSourceLoading = fetch('./c2wasm.c')
+      .then(function (r) {
+        if (!r.ok) throw new Error('Could not load c2wasm.c (HTTP ' + r.status + ')');
+        return r.text();
+      })
+      .then(function (text) {
+        compilerSourceCache = text;
+        return text;
+      });
+
+    compilerSourceLoading.catch(function () { compilerSourceLoading = null; });
+    return compilerSourceLoading;
+  }
+
+  function loadCompilerSource() {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.COMPILER_SOURCE);
+    } catch (e) { return null; }
+  }
+
+  function saveCompilerSource(source) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.COMPILER_SOURCE, source);
+      return true;
+    } catch (e) {
+      console.warn('c2wasm: compiler source save failed', e);
+      return false;
+    }
+  }
+
+  function getCompilerEditorContent() {
+    var saved = loadCompilerSource();
+    if (saved !== null) return Promise.resolve(saved);
+    return fetchCompilerSource();
   }
 
   function setActiveFile(type, id) {
@@ -625,6 +671,10 @@
   var newFileBtn = document.getElementById('new-file-btn');
   var deleteFileBtn = document.getElementById('delete-file-btn');
   var runBtn = document.getElementById('run-btn');
+  var buildCompilerBtn = document.getElementById('build-compiler-btn');
+  var compilerModeEl = document.getElementById('compiler-mode');
+  var compilerModeLabel = document.getElementById('compiler-mode-label');
+  var revertCompilerBtn = document.getElementById('revert-compiler-btn');
   var statusEl = document.getElementById('status');
   var saveIndicator = document.getElementById('save-indicator');
   var consoleTabContent = document.getElementById('console-tab-content');
@@ -655,8 +705,44 @@
 
   function syncSelectToActive() {
     var active = getActiveFile();
-    fileSelect.value = active.type === 'user' ? 'user:' + active.id : active.id;
+    fileSelect.value = active.type === 'user' ? 'user:' + active.id
+      : active.type === 'compiler' ? 'compiler:' + active.id
+      : active.id;
     deleteFileBtn.style.display = active.type === 'user' ? '' : 'none';
+    updateCompilerUI();
+  }
+
+  function isCompilerFile() {
+    var active = getActiveFile();
+    return active.type === 'compiler';
+  }
+
+  function updateCompilerUI() {
+    var onCompiler = isCompilerFile();
+    // Toggle button visibility
+    if (onCompiler) {
+      runBtn.classList.add('hidden');
+      buildCompilerBtn.classList.remove('hidden');
+    } else {
+      runBtn.classList.remove('hidden');
+      buildCompilerBtn.classList.add('hidden');
+    }
+    // Compiler mode indicator
+    var mode = CompilerAPI.getMode();
+    if (mode === 'custom') {
+      compilerModeEl.classList.remove('hidden');
+      compilerModeLabel.textContent = 'Custom ✨';
+      compilerModeLabel.className = 'compiler-mode-label custom';
+      revertCompilerBtn.classList.remove('hidden');
+    } else if (CompilerAPI.hasCustomCompiler()) {
+      compilerModeEl.classList.remove('hidden');
+      compilerModeLabel.textContent = 'Reference';
+      compilerModeLabel.className = 'compiler-mode-label';
+      revertCompilerBtn.classList.remove('hidden');
+    } else {
+      compilerModeEl.classList.add('hidden');
+      revertCompilerBtn.classList.add('hidden');
+    }
   }
 
   function showSaveIndicator() {
@@ -684,6 +770,10 @@
     clearTimeout(autoSaveTimer);
     autoSaveTimer = null;
     var active = getActiveFile();
+    if (active.type === 'compiler' && editor) {
+      saveCompilerSource(editor.getValue());
+      return;
+    }
     if (active.type !== 'user' || !editor) return;
     var files = loadUserFiles();
     for (var i = 0; i < files.length; i++) {
@@ -701,6 +791,14 @@
     autoSaveTimer = setTimeout(function () {
       autoSaveTimer = null;
       var active = getActiveFile();
+      if (active.type === 'compiler' && editor) {
+        if (saveCompilerSource(editor.getValue())) {
+          showSaveIndicator();
+        } else {
+          showSaveError();
+        }
+        return;
+      }
       if (active.type !== 'user' || !editor) return;
       var files = loadUserFiles();
       for (var i = 0; i < files.length; i++) {
@@ -726,7 +824,10 @@
     flushPendingSave();
     var val = fileSelect.value;
     var type, id;
-    if (val.indexOf('user:') === 0) {
+    if (val.indexOf('compiler:') === 0) {
+      type = 'compiler';
+      id = val.slice(9);
+    } else if (val.indexOf('user:') === 0) {
       type = 'user';
       id = val.slice(5);
     } else {
@@ -735,6 +836,29 @@
     }
     setActiveFile(type, id);
     deleteFileBtn.style.display = type === 'user' ? '' : 'none';
+
+    if (type === 'compiler') {
+      // Load compiler source asynchronously
+      if (editor) {
+        editor.setValue('// Loading compiler source…');
+        editor.updateOptions({ readOnly: true });
+      }
+      getCompilerEditorContent().then(function (source) {
+        if (editor && isCompilerFile()) {
+          editor.setValue(source);
+          editor.updateOptions({ readOnly: false });
+          monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+        }
+      }).catch(function (err) {
+        if (editor && isCompilerFile()) {
+          editor.setValue('// Error loading compiler source: ' + (err.message || err));
+          editor.updateOptions({ readOnly: false });
+        }
+      });
+      updateCompilerUI();
+      return;
+    }
+
     var code = getFileContent(type, id);
     if (code === null) {
       // User file was deleted from another tab or storage; fall back gracefully
@@ -747,6 +871,7 @@
       editor.setValue(code);
       monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
     }
+    updateCompilerUI();
   });
 
   newFileBtn.addEventListener('click', function () {
@@ -802,6 +927,90 @@
       editor.setValue(EXAMPLES.hello);
       monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
     }
+    updateCompilerUI();
+  });
+
+  // ── Build Compiler / Revert ──
+
+  var buildIdleTimerId = null;
+
+  function setBuildButtonState(state) {
+    if (buildIdleTimerId) {
+      clearTimeout(buildIdleTimerId);
+      buildIdleTimerId = null;
+    }
+    buildCompilerBtn.classList.remove('success', 'error');
+    switch (state) {
+      case 'building':
+        buildCompilerBtn.textContent = '⏳ Building…';
+        buildCompilerBtn.disabled = true;
+        break;
+      case 'success':
+        buildCompilerBtn.textContent = '✓ Built';
+        buildCompilerBtn.disabled = false;
+        buildCompilerBtn.classList.add('success');
+        buildIdleTimerId = setTimeout(function () { setBuildButtonState('idle'); }, 2000);
+        break;
+      case 'error':
+        buildCompilerBtn.textContent = '✗ Failed';
+        buildCompilerBtn.disabled = false;
+        buildCompilerBtn.classList.add('error');
+        buildIdleTimerId = setTimeout(function () { setBuildButtonState('idle'); }, 2000);
+        break;
+      default:
+        buildCompilerBtn.textContent = '🔨 Build Compiler';
+        buildCompilerBtn.disabled = false;
+    }
+  }
+
+  buildCompilerBtn.addEventListener('click', function () {
+    if (!editor) return;
+    var source = editor.getValue();
+    clearOutput();
+    if (editor.getModel()) {
+      monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+    }
+
+    setBuildButtonState('building');
+    setStatus('Building custom compiler…');
+
+    CompilerAPI.buildCompiler(source)
+      .then(function () {
+        writeConsole('Custom compiler built successfully!\n', 'output-success');
+        writeConsole('Smoke test: compiling Hello World…\n', 'output-info');
+        return CompilerAPI.compileBinary('int main() { printf("Hello from custom compiler!\\n"); return 0; }');
+      })
+      .then(function (testBytes) {
+        if (!WebAssembly.validate(testBytes)) {
+          throw new Error('Smoke test failed: custom compiler produced invalid WASM binary');
+        }
+        writeConsole('Smoke test passed — ' + testBytes.length + ' bytes of valid WASM.\n', 'output-success');
+        writeConsole('\nYour custom compiler is now active. Switch to a program file to try it out.\n', 'output-info');
+        setBuildButtonState('success');
+        setStatus('Custom compiler active');
+        updateCompilerUI();
+      })
+      .catch(function (err) {
+        var msg = err.message || String(err);
+        var errors = parseErrors(msg);
+        if (errors.length > 0) {
+          setErrorMarkers(errors);
+        }
+        writeConsole('Build failed:\n' + msg, 'output-error');
+        // Ensure we're still on reference compiler
+        CompilerAPI.useReference();
+        setBuildButtonState('error');
+        setStatus('Build failed');
+        updateCompilerUI();
+      });
+  });
+
+  revertCompilerBtn.addEventListener('click', function () {
+    CompilerAPI.useReference();
+    updateCompilerUI();
+    setStatus('Reverted to reference compiler');
+    clearOutput();
+    writeConsole('Reverted to reference compiler.\n', 'output-info');
   });
 
   // ── Panel resize ──
@@ -847,7 +1056,12 @@
       // Restore last active file from localStorage
       var active = getActiveFile();
       var initialContent;
-      if (active.type === 'user') {
+      var loadCompilerAsync = false;
+      if (active.type === 'compiler') {
+        // Will load async after editor is created
+        initialContent = '// Loading compiler source…';
+        loadCompilerAsync = true;
+      } else if (active.type === 'user') {
         initialContent = getFileContent('user', active.id);
         if (initialContent === null) {
           // File was deleted; fall back to hello example
@@ -876,6 +1090,22 @@
 
       syncSelectToActive();
 
+      // Load compiler source async if that was the last active file
+      if (loadCompilerAsync) {
+        editor.updateOptions({ readOnly: true });
+        getCompilerEditorContent().then(function (source) {
+          if (editor && isCompilerFile()) {
+            editor.setValue(source);
+            editor.updateOptions({ readOnly: false });
+          }
+        }).catch(function (err) {
+          if (editor && isCompilerFile()) {
+            editor.setValue('// Error loading compiler source: ' + (err.message || err));
+            editor.updateOptions({ readOnly: false });
+          }
+        });
+      }
+
       editor.onDidChangeModelContent(function () {
         scheduleAutoSave();
       });
@@ -884,7 +1114,13 @@
         id: 'compile-run',
         label: 'Compile & Run',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
-        run: function () { compileAndRun(); }
+        run: function () {
+          if (isCompilerFile()) {
+            buildCompilerBtn.click();
+          } else {
+            compileAndRun();
+          }
+        }
       });
 
       setStatus('Ready — Ctrl+Enter to compile');

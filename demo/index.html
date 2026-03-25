@@ -47,12 +47,20 @@
         <option value="memory_pools">Memory &amp; free()</option>
         <option value="string_ops">String Ops</option>
       </optgroup>
+      <optgroup label="Compiler" id="compiler-files-group">
+        <option value="compiler:c2wasm">c2wasm.c</option>
+      </optgroup>
       <optgroup label="My Files" id="user-files-group"></optgroup>
     </select>
     <button id="new-file-btn" title="New file">＋ New</button>
     <button id="delete-file-btn" title="Delete this file">✕ Delete</button>
     <button id="run-btn" title="Ctrl+Enter">▶ Compile &amp; Run</button>
+    <button id="build-compiler-btn" class="hidden" title="Build custom compiler from source">🔨 Build Compiler</button>
     <span id="save-indicator" class="save-indicator"></span>
+    <span id="compiler-mode" class="compiler-mode hidden">
+      <span class="compiler-mode-label" id="compiler-mode-label">Reference</span>
+      <button id="revert-compiler-btn" class="hidden" title="Revert to reference compiler">↩ Revert</button>
+    </span>
     <span id="status"></span>
   </div>
 

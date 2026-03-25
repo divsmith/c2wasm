@@ -75,7 +75,8 @@ wasm-emcc: $(SRC)
 
 wasm: wasm-wasi
 
-serve:
+serve: $(SRC)
+	cp $(SRC) $(DEMO)/c2wasm.c
 	cd $(DEMO) && python3 server.py
 
 clean:
