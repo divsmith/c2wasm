@@ -1578,7 +1578,7 @@ struct Node *parse_var_decl(void) {
             }
         }
     }
-    while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+    while (at(TOK_STAR)) { is_ptr = 1; vd_is_float = 0; advance_tok(); }
     if (last_type_is_ptr) is_ptr = 1;
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     n = node_new(ND_VAR_DECL, line, col);
@@ -2787,20 +2787,31 @@ void gen_expr(struct Node *n) {
                 else { printf("i32.shr_s\n"); }
             }
             emit_indent();
-            printf("local.set $__atmp\n");
-            gen_expr(tgt->c0);
-            emit_indent();
-            printf("local.get $__atmp\n");
-            emit_indent();
-            if (esz == 1) {
-                printf("i32.store8\n");
-            } else if (esz == 2) {
-                printf("i32.store16\n");
+            if (last_expr_is_float) {
+                printf("local.set $__ftmp\n");
+                gen_expr(tgt->c0);
+                emit_indent();
+                printf("local.get $__ftmp\n");
+                emit_indent();
+                printf("f64.store\n");
+                emit_indent();
+                printf("local.get $__ftmp\n");
             } else {
-                printf("i32.store\n");
+                printf("local.set $__atmp\n");
+                gen_expr(tgt->c0);
+                emit_indent();
+                printf("local.get $__atmp\n");
+                emit_indent();
+                if (esz == 1) {
+                    printf("i32.store8\n");
+                } else if (esz == 2) {
+                    printf("i32.store16\n");
+                } else {
+                    printf("i32.store\n");
+                }
+                emit_indent();
+                printf("local.get $__atmp\n");
             }
-            emit_indent();
-            printf("local.get $__atmp\n");
         } else if (tgt->kind == ND_MEMBER) {
             off = resolve_field_offset(tgt->sval);
             if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
@@ -3009,14 +3020,20 @@ void gen_expr(struct Node *n) {
         } else if (n->ival == TOK_STAR) {
             esz = expr_elem_size(n->c0);
             gen_expr(n->c0);
-            last_expr_is_float = 0;
-            emit_indent();
-            if (esz == 1) {
-                printf("i32.load8_u\n");
-            } else if (esz == 2) {
-                printf("i32.load16_s\n");
+            if (esz == 8) {
+                emit_indent();
+                printf("f64.load\n");
+                last_expr_is_float = 2;
             } else {
-                printf("i32.load\n");
+                last_expr_is_float = 0;
+                emit_indent();
+                if (esz == 1) {
+                    printf("i32.load8_u\n");
+                } else if (esz == 2) {
+                    printf("i32.load16_s\n");
+                } else {
+                    printf("i32.load\n");
+                }
             }
         } else if (n->ival == TOK_AMP) {
             error(n->nline, n->ncol, "cannot take address of this expression");
@@ -5423,7 +5440,7 @@ struct BinTypeEntry {
     int nparams;
     int has_result;
     int result_is_float;
-    int param_is_float[16];
+    int *param_is_float;  /* malloc'd array of per-param float flags */
 };
 
 struct BinTypeEntry **bin_types;
@@ -5451,6 +5468,7 @@ int bin_find_or_add_type_f(int nparams, int *pif, int has_result, int rif) {
     bin_types[bin_ntypes]->nparams = nparams;
     bin_types[bin_ntypes]->has_result = has_result;
     bin_types[bin_ntypes]->result_is_float = rif;
+    bin_types[bin_ntypes]->param_is_float = (int *)malloc(16 * sizeof(int));
     for (j = 0; j < nparams && j < 16; j++) {
         bin_types[bin_ntypes]->param_is_float[j] = pif[j];
     }
@@ -5681,7 +5699,8 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                     bv_push(o, 0x20); bv_u32(o, find_local(name));
                 }
                 gen_expr_bin(o, n->c1);
-                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* f64.convert_i32_s */
+                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
+                else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
                 if (tgt_float) { bv_push(o, 0xA0); } else { bv_push(o, 0x6A); }
             } else if (n->ival == TOK_MINUS_EQ) {
                 if (is_global) {
@@ -5690,7 +5709,8 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
                     bv_push(o, 0x20); bv_u32(o, find_local(name));
                 }
                 gen_expr_bin(o, n->c1);
-                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* f64.convert_i32_s */
+                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
+                else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
                 if (tgt_float) { bv_push(o, 0xA1); } else { bv_push(o, 0x6B); }
             } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                        n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
@@ -6338,6 +6358,7 @@ void gen_stmt_bin(struct ByteVec *o, struct Node *n) {
     int lbl;
     int i;
     int bsz;
+    int decl_float;
 
     switch (n->kind) {
     case ND_RETURN:
@@ -6353,7 +6374,13 @@ void gen_stmt_bin(struct ByteVec *o, struct Node *n) {
             bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
             bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
         } else if (n->c0 != (struct Node *)0) {
+            decl_float = var_is_float(n->sval);
             gen_expr_bin(o, n->c0);
+            if (decl_float && !bin_last_float) {
+                bv_push(o, 0xB7); /* f64.convert_i32_s */
+            } else if (!decl_float && bin_last_float) {
+                bv_push(o, 0xAA); /* i32.trunc_f64_s */
+            }
             bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
         }
         break;
@@ -8368,6 +8395,12 @@ void gen_module_bin(struct Node *prog) {
     int i;
     int j;
     int nlocal_funcs;
+    int pif1[1];
+    int pif2[16];
+    int fi2;
+    int j2;
+    int ret_flt;
+    int nparams2;
 
     out = bv_new(65536);
     sec = bv_new(32768);
@@ -8427,17 +8460,9 @@ void gen_module_bin(struct Node *prog) {
     bin_add_func("memmove", 3, 1);
     bin_add_func("memchr", 3, 1);
     bin_add_func("strtol", 3, 1);
-    {
-        int pif1[16];
-        pif1[0] = 2; /* f64 param */
-        bin_add_func_f("__print_float", 1, pif1, 0, 0);
-    }
+    pif1[0] = 1; /* f64 param */
+    bin_add_func_f("__print_float", 1, pif1, 0, 0);
     for (i = 0; i < prog->ival2; i++) {
-        int fi2;
-        int pif2[16];
-        int j2;
-        int ret_flt;
-        int nparams2;
         fi2 = find_funcsig(prog->list[i]->sval);
         nparams2 = prog->list[i]->ival2;
         ret_flt = 0;
