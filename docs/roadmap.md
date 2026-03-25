@@ -18,3 +18,5 @@
 12. [ ] use wasm f64 if not already
 13. [ ] implement C features that would make the self-hosting compiler easier to implement itself, then iteratively do so
 14. [ ] break compiler up into components. maintain self-hosting requirement.
+15. [ ] build out full compiler toolchain, i.e. source -> wat, and wat -> wasm, instead of separate source -> wat and source -> wasm / binary modes
+16. [ ] Add a linker, separate out the libc methods within the compiler to a real version of libc that's linked and included
