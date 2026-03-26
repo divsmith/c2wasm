@@ -105,7 +105,7 @@ The compiler has two output modes:
 - **Compiler → WASM**: compiled with [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) to a standalone 229 KB `.wasm` file (no JavaScript runtime bundled)
 - **Stdin/stdout redirection**: a minimal WASI shim (`compiler-api.js`) feeds C source as stdin bytes and captures output from stdout
 - **Direct binary output**: the browser compiler emits WASM binary directly — no `wabt.js` assembler needed
-- **Execution**: `WebAssembly.instantiate` with a WASI shim; `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; programs using `getchar` read from the stdin input box in the demo UI
+- **Execution**: `WebAssembly.instantiate` with a WASI shim (`wasm-worker.js`); `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; `path_open`/`fd_close` are stubbed as ENOENT (no filesystem in browser); programs using `getchar` read from the stdin input box in the demo UI
 
 ### Key Design Decisions
 
