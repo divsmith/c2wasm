@@ -2622,12 +2622,12 @@ void gen_expr(struct Node *n) {
     case ND_IDENT: {
         int vf;
         vf = var_is_float(n->sval);
-        if (find_global(n->sval) >= 0) {
-            emit_indent();
-            printf("global.get $%s\n", n->sval);
-        } else {
+        if (find_local(n->sval) >= 0) {
             emit_indent();
             printf("local.get $%s\n", n->sval);
+        } else {
+            emit_indent();
+            printf("global.get $%s\n", n->sval);
         }
         last_expr_is_float = vf;
         break;
@@ -2637,7 +2637,7 @@ void gen_expr(struct Node *n) {
         if (tgt->kind == ND_IDENT) {
             int tgt_float;
             name = tgt->sval;
-            is_global = (find_global(name) >= 0);
+            is_global = (find_global(name) >= 0 && find_local(name) < 0);
             tgt_float = var_is_float(name);
             if (n->ival == TOK_EQ) {
                 gen_expr(n->c1);
@@ -3504,7 +3504,7 @@ void gen_expr(struct Node *n) {
         tgt2 = n->c0;
         if (tgt2->kind == ND_IDENT) {
             pname = tgt2->sval;
-            pis_global = (find_global(pname) >= 0);
+            pis_global = (find_global(pname) >= 0 && find_local(pname) < 0);
             if (pis_global) {
                 emit_indent(); printf("global.get $%s\n", pname);
                 emit_indent(); printf("local.set $__atmp\n");
@@ -5437,10 +5437,10 @@ void bv_section(struct ByteVec *out, int id, struct ByteVec *content) {
 #define MAX_TYPE_PARAMS 16
 
 struct BinTypeEntry {
-    int nparams;
-    int has_result;
+    int bt_nparams;
+    int bt_has_result;
     int result_is_float;
-    int *param_is_float;  /* malloc'd array of per-param float flags */
+    int *bt_pif;  /* malloc'd array of per-param float flags */
 };
 
 struct BinTypeEntry **bin_types;
@@ -5451,12 +5451,12 @@ int bin_find_or_add_type_f(int nparams, int *pif, int has_result, int rif) {
     int j;
     int match;
     for (i = 0; i < bin_ntypes; i++) {
-        if (bin_types[i]->nparams != nparams) continue;
-        if (bin_types[i]->has_result != has_result) continue;
+        if (bin_types[i]->bt_nparams != nparams) continue;
+        if (bin_types[i]->bt_has_result != has_result) continue;
         if (bin_types[i]->result_is_float != rif) continue;
         match = 1;
         for (j = 0; j < nparams && j < 16; j++) {
-            if (bin_types[i]->param_is_float[j] != pif[j]) { match = 0; break; }
+            if (bin_types[i]->bt_pif[j] != pif[j]) { match = 0; break; }
         }
         if (match) return i;
     }
@@ -5465,12 +5465,12 @@ int bin_find_or_add_type_f(int nparams, int *pif, int has_result, int rif) {
         exit(1);
     }
     bin_types[bin_ntypes] = (struct BinTypeEntry *)malloc(sizeof(struct BinTypeEntry));
-    bin_types[bin_ntypes]->nparams = nparams;
-    bin_types[bin_ntypes]->has_result = has_result;
+    bin_types[bin_ntypes]->bt_nparams = nparams;
+    bin_types[bin_ntypes]->bt_has_result = has_result;
     bin_types[bin_ntypes]->result_is_float = rif;
-    bin_types[bin_ntypes]->param_is_float = (int *)malloc(16 * sizeof(int));
+    bin_types[bin_ntypes]->bt_pif = (int *)malloc(16 * sizeof(int));
     for (j = 0; j < nparams && j < 16; j++) {
-        bin_types[bin_ntypes]->param_is_float[j] = pif[j];
+        bin_types[bin_ntypes]->bt_pif[j] = pif[j];
     }
     bin_ntypes++;
     return bin_ntypes - 1;
@@ -5666,10 +5666,10 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         }
         break;
     case ND_IDENT:
-        if (find_global(n->sval) >= 0) {
-            bv_push(o, 0x23); bv_u32(o, bin_global_idx(n->sval));
-        } else {
+        if (find_local(n->sval) >= 0) {
             bv_push(o, 0x20); bv_u32(o, find_local(n->sval));
+        } else {
+            bv_push(o, 0x23); bv_u32(o, bin_global_idx(n->sval));
         }
         bin_last_float = var_is_float(n->sval);
         break;
@@ -5680,7 +5680,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
             int ftmp_li;
             int atmp_li;
             name = tgt->sval;
-            is_global = (find_global(name) >= 0);
+            is_global = (find_global(name) >= 0 && find_local(name) < 0);
             tgt_float = var_is_float(name);
             if (n->ival == TOK_EQ) {
                 gen_expr_bin(o, n->c1);
@@ -6261,7 +6261,7 @@ void gen_expr_bin(struct ByteVec *o, struct Node *n) {
         tgt2 = n->c0;
         if (tgt2->kind == ND_IDENT) {
             pname = tgt2->sval;
-            pis_global = (find_global(pname) >= 0);
+            pis_global = (find_global(pname) >= 0 && find_local(pname) < 0);
             if (pis_global) {
                 bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
                 bv_push(o, 0x21); bv_u32(o, atmp);
@@ -8514,15 +8514,15 @@ void gen_module_bin(struct Node *prog) {
     bv_u32(sec, bin_ntypes);
     for (i = 0; i < bin_ntypes; i++) {
         bv_push(sec, 0x60);
-        bv_u32(sec, bin_types[i]->nparams);
-        for (j = 0; j < bin_types[i]->nparams; j++) {
-            if (j < 16 && bin_types[i]->param_is_float[j]) {
+        bv_u32(sec, bin_types[i]->bt_nparams);
+        for (j = 0; j < bin_types[i]->bt_nparams; j++) {
+            if (j < 16 && bin_types[i]->bt_pif[j]) {
                 bv_push(sec, 0x7C); /* f64 */
             } else {
                 bv_push(sec, 0x7F); /* i32 */
             }
         }
-        if (bin_types[i]->has_result) {
+        if (bin_types[i]->bt_has_result) {
             bv_u32(sec, 1);
             if (bin_types[i]->result_is_float) {
                 bv_push(sec, 0x7C); /* f64 */
