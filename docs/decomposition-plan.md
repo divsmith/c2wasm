@@ -1,8 +1,20 @@
 # Plan: Decompose c2wasm.c — #include Support + Unified Pipeline + Multi-File Split
 
+## Status
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 1: #include Support | ✅ Complete | `#include "file"` preprocessing, file I/O builtins, include-once, tests 49–50 |
+| Phase 2: Multi-File Decomposition | ⬜ Not started | Depends on Phase 1 |
+| Phase 3: Output Abstraction | ⬜ Not started | |
+| Phase 4: WAT Assembler | ⬜ Not started | |
+| Phase 5: Remove Binary Codegen | ⬜ Not started | Depends on Phase 4 |
+| Phase 6: Simplification | ⬜ Not started | |
+| Phase 7: Documentation & CI | ⬜ Not started | |
+
 ## Problem
 
-`src/c2wasm.c` is 9,595 lines — a single monolithic file containing the entire compiler: lexer, parser, type system, WAT codegen, and a *duplicate* binary WASM emitter. This makes the codebase hard to navigate, reason about, and maintain. Roadmap item #14 calls for splitting it into logical components while maintaining the self-hosting requirement.
+`src/c2wasm.c` is 9,807 lines — a single monolithic file containing the entire compiler: lexer, parser, type system, WAT codegen, and a *duplicate* binary WASM emitter. This makes the codebase hard to navigate, reason about, and maintain. Roadmap item #14 calls for splitting it into logical components while maintaining the self-hosting requirement.
 
 ## Approach
 
@@ -44,59 +56,23 @@ Three enablers, then the decomposition:
 
 ---
 
-## Phase 1: #include Support
+## Phase 1: #include Support ✅
 
-**Goal:** Enable `#include "file.h"` in the compiler's preprocessor so the compiler can compile multi-file projects, including itself.
+**Status: Complete** — committed as `1f69c42`, verified with 50/50 tests + bootstrap.
 
-### 1a. File I/O Builtins
+**What was implemented:**
+- `IncludeStack` struct with push/pop for lexer state (src, src_len, lex_pos, lex_line, lex_col)
+- Include-once tracking via filename array (MAX_INCLUDES=64)
+- Preprocessor in `next_token` handles `#include "file"`, silently skips `#include <file>`
+- `__open_file`/`__read_file`/`__close_file` builtins: WAT codegen emits WASI path_open/fd_read/fd_close helpers
+- `src/file_io.c`: Native implementations using fopen/fread/fclose (linked for GCC and wasi-sdk builds)
+- Makefile updated: all build targets (native, binary, wasm-wasi, wasm-wat, wasm-emcc) link `file_io.c`
+- Test runner (`tests/run_tests.sh`) runs from programs/ dir for relative include paths
+- Tests: `49_include.c` (basic), `50_multi_include.c` (multi-include + include-once)
 
-The compiler needs to read files from disk. Currently it only reads stdin. We add:
+**Limits:** MAX_INCLUDE_DEPTH=32, MAX_INCLUDES=64, MAX_INCLUDE_SRC=65536 (64KB per file)
 
-**WASI imports** (in gen_module WAT output):
-```wat
-(import "wasi_snapshot_preview1" "path_open" (func $__path_open ...))
-(import "wasi_snapshot_preview1" "fd_close" (func $__fd_close (param i32) (result i32)))
-```
-
-**Builtin helper functions** in the WAT codegen (like putchar, malloc):
-- `$__open_file (param $path i32) (param $path_len i32) (result i32)` — wraps `path_open`, returns fd
-- `$__read_file (param $fd i32) (param $buf i32) (param $max_len i32) (result i32)` — wraps `fd_read`, returns bytes read
-- `$__close_file (param $fd i32)` — wraps `fd_close`
-
-These are exposed to C code as: `int __open_file(char *path, int len)`, `int __read_file(int fd, char *buf, int max_len)`, `void __close_file(int fd)`.
-
-For the native GCC build: implement these as thin wrappers around `fopen`/`fread`/`fclose` (the native build links against system libc, so they just work as regular extern functions).
-
-### 1b. #include Preprocessing
-
-Extend the preprocessor (currently at line ~439 in next_token):
-
-```
-#include "filename.h"    — search relative to current file's directory
-```
-
-**Implementation:**
-- **Source stack**: Push current `src`/`src_len`/`lex_pos`/`lex_line`/`lex_col` onto a stack, load the included file, continue lexing. Pop when EOF reached.
-- **Include-once**: Track included filenames in a list. Skip if already seen. (Equivalent to `#pragma once` — avoids need for `#ifndef`/`#endif` guards for now.)
-- **Include path**: Initially just relative to the source file. Can add `-I` flag later.
-- **Stack depth limit**: Prevent infinite recursion (e.g., max 32 levels).
-
-**Changes to compiler source:**
-- Add `struct IncludeStack` with saved lexer state (~20 lines)
-- Add include tracking array (~15 lines)
-- Extend preprocessor dispatch in `next_token` to handle `#include` (~60 lines)
-- Add file reading logic (~40 lines)
-- Total: ~135 lines
-
-### 1c. Test Programs
-
-- `47_include.c` + `47_include.h` — test basic #include with shared declarations
-- `48_multi_include.c` + helper headers — test multiple includes, include-once behavior
-- Verify in both native and WASM (wasmtime with `--dir=.`)
-
-### 1d. Binary Codegen File I/O
-
-Since the bootstrap uses WAT mode only, we defer adding file I/O builtins to the binary codegen. Binary mode will still work for single-file programs. Tests using #include get `SKIP_BINARY` markers. The binary codegen is removed entirely in Phase 3 anyway.
+**Known limitation:** Paths resolve relative to CWD, not the including file's directory.
 
 ---
 

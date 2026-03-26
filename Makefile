@@ -52,7 +52,7 @@ wasm-wasi: $(SRC)
 	fi
 	mkdir -p $(DEMO)
 	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | \
-		$(WASI_SDK)/bin/clang -x c - -O2 -o $(DEMO)/compiler.wasm \
+		$(WASI_SDK)/bin/clang -x c - $(FILE_IO) -O2 -o $(DEMO)/compiler.wasm \
 		--sysroot=$(WASI_SDK)/share/wasi-sysroot
 
 wasm-wat: $(SRC)
@@ -61,12 +61,12 @@ wasm-wat: $(SRC)
 		exit 1; \
 	fi
 	mkdir -p $(DEMO)
-	$(WASI_SDK)/bin/clang $(SRC) -O2 -o $(DEMO)/compiler.wasm \
+	$(WASI_SDK)/bin/clang $(SRC) $(FILE_IO) -O2 -o $(DEMO)/compiler.wasm \
 		--sysroot=$(WASI_SDK)/share/wasi-sysroot
 
 wasm-emcc: $(SRC)
 	mkdir -p $(DEMO)
-	emcc $(SRC) -O2 -o $(DEMO)/compiler.js \
+	emcc $(SRC) $(FILE_IO) -O2 -o $(DEMO)/compiler.js \
 		-s MODULARIZE=1 \
 		-s EXPORT_NAME=C2WasmModule \
 		-s EXPORTED_RUNTIME_METHODS='["callMain","FS"]' \
