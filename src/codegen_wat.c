@@ -1648,20 +1648,20 @@ void emit_wat_string(char *data, int len) {
     for (i = 0; i < len; i++) {
         c = data[i] & 255;
         if (c >= 32 && c < 127 && c != '"' && c != '\\') {
-            putchar(c);
+            out_c(c);
         } else {
-            putchar('\\');
+            out_c('\\');
             hi = (c >> 4) & 15;
             lo = c & 15;
             if (hi >= 10) {
-                putchar('a' + hi - 10);
+                out_c('a' + hi - 10);
             } else {
-                putchar('0' + hi);
+                out_c('0' + hi);
             }
             if (lo >= 10) {
-                putchar('a' + lo - 10);
+                out_c('a' + lo - 10);
             } else {
-                putchar('0' + lo);
+                out_c('0' + lo);
             }
         }
     }

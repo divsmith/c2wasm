@@ -28,7 +28,10 @@ int main(void) {
 
     prog = parse_program();
     if (binary_mode) {
-        gen_module_bin(prog);
+        wat_output = bv_new(65536);
+        indent_level = 0;
+        gen_module(prog);
+        assemble_wat(wat_output);
     } else {
         indent_level = 0;
         gen_module(prog);
