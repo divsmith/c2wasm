@@ -5,7 +5,7 @@ int indent_level;
 void emit_indent(void) {
     int i;
     for (i = 0; i < indent_level; i++) {
-        printf("  ");
+        out("  ");
     }
 }
 
@@ -25,13 +25,13 @@ GenStmtFn *gen_stmt_tbl;
 
 void gen_expr_int_lit(struct Node *n) {
     emit_indent();
-    printf("i32.const %d\n", n->ival);
+    out("i32.const "); out_d(n->ival); out("\n");
     last_expr_is_float = 0;
 }
 
 void gen_expr_float_lit(struct Node *n) {
     emit_indent();
-    printf("f64.const %s\n", n->sval);
+    out("f64.const "); out(n->sval); out("\n");
     last_expr_is_float = 2;
 }
 
@@ -40,7 +40,7 @@ void gen_expr_cast(struct Node *n) {
     if (n->ival >= 1 && !last_expr_is_float) {
         /* cast to float/double, expr is int */
         emit_indent();
-        printf("f64.convert_i32_s\n");
+        out("f64.convert_i32_s\n");
         last_expr_is_float = 2;
     } else if (n->ival >= 1 && last_expr_is_float) {
         /* cast to float/double, already float — no-op */
@@ -48,7 +48,7 @@ void gen_expr_cast(struct Node *n) {
     } else if (n->ival == 0 && last_expr_is_float) {
         /* cast to int, expr is float */
         emit_indent();
-        printf("i32.trunc_f64_s\n");
+        out("i32.trunc_f64_s\n");
         last_expr_is_float = 0;
     }
     /* cast to int when already int — no-op */
@@ -59,10 +59,10 @@ void gen_expr_ident(struct Node *n) {
     vf = var_is_float(n->sval);
     if (find_global(n->sval) >= 0) {
         emit_indent();
-        printf("global.get $%s\n", n->sval);
+        out("global.get $"); out(n->sval); out("\n");
     } else {
         emit_indent();
-        printf("local.get $%s\n", n->sval);
+        out("local.get $"); out(n->sval); out("\n");
     }
     last_expr_is_float = vf;
 }
@@ -85,53 +85,53 @@ void gen_expr_assign(struct Node *n) {
             /* insert float/int conversion if needed */
             if (tgt_float && !last_expr_is_float) {
                 emit_indent();
-                printf("f64.convert_i32_s\n");
+                out("f64.convert_i32_s\n");
                 last_expr_is_float = 2;
             } else if (!tgt_float && last_expr_is_float) {
                 emit_indent();
-                printf("i32.trunc_f64_s\n");
+                out("i32.trunc_f64_s\n");
                 last_expr_is_float = 0;
             }
         } else if (n->ival == TOK_PLUS_EQ) {
             emit_indent();
             if (is_global) {
-                printf("global.get $%s\n", name);
+                out("global.get $"); out(name); out("\n");
             } else {
-                printf("local.get $%s\n", name);
+                out("local.get $"); out(name); out("\n");
             }
             gen_expr(n->c1);
             if (tgt_float) {
                 if (!last_expr_is_float) {
                     emit_indent();
-                    printf("f64.convert_i32_s\n");
+                    out("f64.convert_i32_s\n");
                 }
                 emit_indent();
-                printf("f64.add\n");
+                out("f64.add\n");
                 last_expr_is_float = 2;
             } else {
                 emit_indent();
-                printf("i32.add\n");
+                out("i32.add\n");
                 last_expr_is_float = 0;
             }
         } else if (n->ival == TOK_MINUS_EQ) {
             emit_indent();
             if (is_global) {
-                printf("global.get $%s\n", name);
+                out("global.get $"); out(name); out("\n");
             } else {
-                printf("local.get $%s\n", name);
+                out("local.get $"); out(name); out("\n");
             }
             gen_expr(n->c1);
             if (tgt_float) {
                 if (!last_expr_is_float) {
                     emit_indent();
-                    printf("f64.convert_i32_s\n");
+                    out("f64.convert_i32_s\n");
                 }
                 emit_indent();
-                printf("f64.sub\n");
+                out("f64.sub\n");
                 last_expr_is_float = 2;
             } else {
                 emit_indent();
-                printf("i32.sub\n");
+                out("i32.sub\n");
                 last_expr_is_float = 0;
             }
         } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
@@ -139,42 +139,42 @@ void gen_expr_assign(struct Node *n) {
                    n->ival == TOK_RSHIFT_EQ) {
             emit_indent();
             if (is_global) {
-                printf("global.get $%s\n", name);
+                out("global.get $"); out(name); out("\n");
             } else {
-                printf("local.get $%s\n", name);
+                out("local.get $"); out(name); out("\n");
             }
             gen_expr(n->c1);
             emit_indent();
-            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-            else { printf("i32.shr_s\n"); }
+            if (n->ival == TOK_PIPE_EQ) { out("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { out("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { out("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { out("i32.shl\n"); }
+            else { out("i32.shr_s\n"); }
             last_expr_is_float = 0;
         }
         if (is_global) {
             if (tgt_float) {
                 emit_indent();
-                printf("local.set $__ftmp\n");
+                out("local.set $__ftmp\n");
                 emit_indent();
-                printf("local.get $__ftmp\n");
+                out("local.get $__ftmp\n");
                 emit_indent();
-                printf("global.set $%s\n", name);
+                out("global.set $"); out(name); out("\n");
                 emit_indent();
-                printf("local.get $__ftmp\n");
+                out("local.get $__ftmp\n");
             } else {
                 emit_indent();
-                printf("local.set $__atmp\n");
+                out("local.set $__atmp\n");
                 emit_indent();
-                printf("local.get $__atmp\n");
+                out("local.get $__atmp\n");
                 emit_indent();
-                printf("global.set $%s\n", name);
+                out("global.set $"); out(name); out("\n");
                 emit_indent();
-                printf("local.get $__atmp\n");
+                out("local.get $__atmp\n");
             }
         } else {
             emit_indent();
-            printf("local.tee $%s\n", name);
+            out("local.tee $"); out(name); out("\n");
         }
         last_expr_is_float = tgt_float;
     } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
@@ -185,73 +185,73 @@ void gen_expr_assign(struct Node *n) {
             gen_expr(tgt->c0);
             emit_indent();
             if (esz == 1) {
-                printf("i32.load8_u\n");
+                out("i32.load8_u\n");
             } else if (esz == 2) {
-                printf("i32.load16_s\n");
+                out("i32.load16_s\n");
             } else {
-                printf("i32.load\n");
+                out("i32.load\n");
             }
             gen_expr(n->c1);
             emit_indent();
-            printf("i32.add\n");
+            out("i32.add\n");
         } else if (n->ival == TOK_MINUS_EQ) {
             gen_expr(tgt->c0);
             emit_indent();
             if (esz == 1) {
-                printf("i32.load8_u\n");
+                out("i32.load8_u\n");
             } else if (esz == 2) {
-                printf("i32.load16_s\n");
+                out("i32.load16_s\n");
             } else {
-                printf("i32.load\n");
+                out("i32.load\n");
             }
             gen_expr(n->c1);
             emit_indent();
-            printf("i32.sub\n");
+            out("i32.sub\n");
         } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                    n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                    n->ival == TOK_RSHIFT_EQ) {
             gen_expr(tgt->c0);
             emit_indent();
             if (esz == 1) {
-                printf("i32.load8_u\n");
+                out("i32.load8_u\n");
             } else if (esz == 2) {
-                printf("i32.load16_s\n");
+                out("i32.load16_s\n");
             } else {
-                printf("i32.load\n");
+                out("i32.load\n");
             }
             gen_expr(n->c1);
             emit_indent();
-            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-            else { printf("i32.shr_s\n"); }
+            if (n->ival == TOK_PIPE_EQ) { out("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { out("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { out("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { out("i32.shl\n"); }
+            else { out("i32.shr_s\n"); }
         }
         emit_indent();
         if (last_expr_is_float) {
-            printf("local.set $__ftmp\n");
+            out("local.set $__ftmp\n");
             gen_expr(tgt->c0);
             emit_indent();
-            printf("local.get $__ftmp\n");
+            out("local.get $__ftmp\n");
             emit_indent();
-            printf("f64.store\n");
+            out("f64.store\n");
             emit_indent();
-            printf("local.get $__ftmp\n");
+            out("local.get $__ftmp\n");
         } else {
-            printf("local.set $__atmp\n");
+            out("local.set $__atmp\n");
             gen_expr(tgt->c0);
             emit_indent();
-            printf("local.get $__atmp\n");
+            out("local.get $__atmp\n");
             emit_indent();
             if (esz == 1) {
-                printf("i32.store8\n");
+                out("i32.store8\n");
             } else if (esz == 2) {
-                printf("i32.store16\n");
+                out("i32.store16\n");
             } else {
-                printf("i32.store\n");
+                out("i32.store\n");
             }
             emit_indent();
-            printf("local.get $__atmp\n");
+            out("local.get $__atmp\n");
         }
     } else if (tgt->kind == ND_MEMBER) {
         off = resolve_field_offset(tgt->sval);
@@ -262,63 +262,63 @@ void gen_expr_assign(struct Node *n) {
             gen_expr(tgt->c0);
             if (off > 0) {
                 emit_indent();
-                printf("i32.const %d\n", off);
+                out("i32.const "); out_d(off); out("\n");
                 emit_indent();
-                printf("i32.add\n");
+                out("i32.add\n");
             }
             emit_indent();
-            printf("i32.load\n");
+            out("i32.load\n");
             gen_expr(n->c1);
             emit_indent();
-            printf("i32.add\n");
+            out("i32.add\n");
         } else if (n->ival == TOK_MINUS_EQ) {
             gen_expr(tgt->c0);
             if (off > 0) {
                 emit_indent();
-                printf("i32.const %d\n", off);
+                out("i32.const "); out_d(off); out("\n");
                 emit_indent();
-                printf("i32.add\n");
+                out("i32.add\n");
             }
             emit_indent();
-            printf("i32.load\n");
+            out("i32.load\n");
             gen_expr(n->c1);
             emit_indent();
-            printf("i32.sub\n");
+            out("i32.sub\n");
         } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                    n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                    n->ival == TOK_RSHIFT_EQ) {
             gen_expr(tgt->c0);
             if (off > 0) {
                 emit_indent();
-                printf("i32.const %d\n", off);
+                out("i32.const "); out_d(off); out("\n");
                 emit_indent();
-                printf("i32.add\n");
+                out("i32.add\n");
             }
             emit_indent();
-            printf("i32.load\n");
+            out("i32.load\n");
             gen_expr(n->c1);
             emit_indent();
-            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-            else { printf("i32.shr_s\n"); }
+            if (n->ival == TOK_PIPE_EQ) { out("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { out("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { out("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { out("i32.shl\n"); }
+            else { out("i32.shr_s\n"); }
         }
         emit_indent();
-        printf("local.set $__atmp\n");
+        out("local.set $__atmp\n");
         gen_expr(tgt->c0);
         if (off > 0) {
             emit_indent();
-            printf("i32.const %d\n", off);
+            out("i32.const "); out_d(off); out("\n");
             emit_indent();
-            printf("i32.add\n");
+            out("i32.add\n");
         }
         emit_indent();
-        printf("local.get $__atmp\n");
+        out("local.get $__atmp\n");
         emit_indent();
-        printf("i32.store\n");
+        out("i32.store\n");
         emit_indent();
-        printf("local.get $__atmp\n");
+        out("local.get $__atmp\n");
     } else if (tgt->kind == ND_SUBSCRIPT) {
         esz = expr_elem_size(tgt->c0);
         if (n->ival == TOK_EQ) {
@@ -328,45 +328,45 @@ void gen_expr_assign(struct Node *n) {
             gen_expr(tgt->c1);
             if (esz > 1) {
                 emit_indent();
-                printf("i32.const %d\n", esz);
+                out("i32.const "); out_d(esz); out("\n");
                 emit_indent();
-                printf("i32.mul\n");
+                out("i32.mul\n");
             }
             emit_indent();
-            printf("i32.add\n");
+            out("i32.add\n");
             emit_indent();
             if (esz == 1) {
-                printf("i32.load8_u\n");
+                out("i32.load8_u\n");
             } else if (esz == 2) {
-                printf("i32.load16_s\n");
+                out("i32.load16_s\n");
             } else {
-                printf("i32.load\n");
+                out("i32.load\n");
             }
             gen_expr(n->c1);
             emit_indent();
-            printf("i32.add\n");
+            out("i32.add\n");
         } else if (n->ival == TOK_MINUS_EQ) {
             gen_expr(tgt->c0);
             gen_expr(tgt->c1);
             if (esz > 1) {
                 emit_indent();
-                printf("i32.const %d\n", esz);
+                out("i32.const "); out_d(esz); out("\n");
                 emit_indent();
-                printf("i32.mul\n");
+                out("i32.mul\n");
             }
             emit_indent();
-            printf("i32.add\n");
+            out("i32.add\n");
             emit_indent();
             if (esz == 1) {
-                printf("i32.load8_u\n");
+                out("i32.load8_u\n");
             } else if (esz == 2) {
-                printf("i32.load16_s\n");
+                out("i32.load16_s\n");
             } else {
-                printf("i32.load\n");
+                out("i32.load\n");
             }
             gen_expr(n->c1);
             emit_indent();
-            printf("i32.sub\n");
+            out("i32.sub\n");
         } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                    n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                    n->ival == TOK_RSHIFT_EQ) {
@@ -374,52 +374,52 @@ void gen_expr_assign(struct Node *n) {
             gen_expr(tgt->c1);
             if (esz > 1) {
                 emit_indent();
-                printf("i32.const %d\n", esz);
+                out("i32.const "); out_d(esz); out("\n");
                 emit_indent();
-                printf("i32.mul\n");
+                out("i32.mul\n");
             }
             emit_indent();
-            printf("i32.add\n");
+            out("i32.add\n");
             emit_indent();
             if (esz == 1) {
-                printf("i32.load8_u\n");
+                out("i32.load8_u\n");
             } else if (esz == 2) {
-                printf("i32.load16_s\n");
+                out("i32.load16_s\n");
             } else {
-                printf("i32.load\n");
+                out("i32.load\n");
             }
             gen_expr(n->c1);
             emit_indent();
-            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-            else { printf("i32.shr_s\n"); }
+            if (n->ival == TOK_PIPE_EQ) { out("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { out("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { out("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { out("i32.shl\n"); }
+            else { out("i32.shr_s\n"); }
         }
         emit_indent();
-        printf("local.set $__atmp\n");
+        out("local.set $__atmp\n");
         gen_expr(tgt->c0);
         gen_expr(tgt->c1);
         if (esz > 1) {
             emit_indent();
-            printf("i32.const %d\n", esz);
+            out("i32.const "); out_d(esz); out("\n");
             emit_indent();
-            printf("i32.mul\n");
+            out("i32.mul\n");
         }
         emit_indent();
-        printf("i32.add\n");
+        out("i32.add\n");
         emit_indent();
-        printf("local.get $__atmp\n");
+        out("local.get $__atmp\n");
         emit_indent();
         if (esz == 1) {
-            printf("i32.store8\n");
+            out("i32.store8\n");
         } else if (esz == 2) {
-            printf("i32.store16\n");
+            out("i32.store16\n");
         } else {
-            printf("i32.store\n");
+            out("i32.store\n");
         }
         emit_indent();
-        printf("local.get $__atmp\n");
+        out("local.get $__atmp\n");
     }
 }
 
@@ -430,53 +430,53 @@ void gen_expr_unary(struct Node *n) {
         gen_expr(n->c0);
         if (last_expr_is_float) {
             emit_indent();
-            printf("f64.neg\n");
+            out("f64.neg\n");
         } else {
             /* save value, push 0, push value, sub */
             emit_indent();
-            printf("local.set $__atmp\n");
+            out("local.set $__atmp\n");
             emit_indent();
-            printf("i32.const 0\n");
+            out("i32.const 0\n");
             emit_indent();
-            printf("local.get $__atmp\n");
+            out("local.get $__atmp\n");
             emit_indent();
-            printf("i32.sub\n");
+            out("i32.sub\n");
         }
     } else if (n->ival == TOK_BANG) {
         gen_expr(n->c0);
         if (last_expr_is_float) {
             emit_indent();
-            printf("f64.const 0\n");
+            out("f64.const 0\n");
             emit_indent();
-            printf("f64.eq\n");
+            out("f64.eq\n");
             last_expr_is_float = 0;
         } else {
             emit_indent();
-            printf("i32.eqz\n");
+            out("i32.eqz\n");
         }
     } else if (n->ival == TOK_TILDE) {
         emit_indent();
-        printf("i32.const -1\n");
+        out("i32.const -1\n");
         gen_expr(n->c0);
         emit_indent();
-        printf("i32.xor\n");
+        out("i32.xor\n");
         last_expr_is_float = 0;
     } else if (n->ival == TOK_STAR) {
         esz = expr_elem_size(n->c0);
         gen_expr(n->c0);
         if (esz == 8) {
             emit_indent();
-            printf("f64.load\n");
+            out("f64.load\n");
             last_expr_is_float = 2;
         } else {
             last_expr_is_float = 0;
             emit_indent();
             if (esz == 1) {
-                printf("i32.load8_u\n");
+                out("i32.load8_u\n");
             } else if (esz == 2) {
-                printf("i32.load16_s\n");
+                out("i32.load16_s\n");
             } else {
-                printf("i32.load\n");
+                out("i32.load\n");
             }
         }
     } else if (n->ival == TOK_AMP) {
@@ -499,48 +499,48 @@ void gen_expr_binary(struct Node *n) {
         if (left_float && !right_float) {
             /* stack: [f64, i32] — convert top (right) from i32 to f64 */
             emit_indent();
-            printf("f64.convert_i32_s\n");
+            out("f64.convert_i32_s\n");
         } else if (!left_float && right_float) {
             /* stack: [i32, f64] — need to swap and convert left */
             emit_indent();
-            printf("local.set $__ftmp\n");
+            out("local.set $__ftmp\n");
             emit_indent();
-            printf("f64.convert_i32_s\n");
+            out("f64.convert_i32_s\n");
             emit_indent();
-            printf("local.get $__ftmp\n");
+            out("local.get $__ftmp\n");
         }
     }
     if (op_float) {
         emit_indent();
         if (n->ival == TOK_PLUS) {
-            printf("f64.add\n");
+            out("f64.add\n");
             last_expr_is_float = 2;
         } else if (n->ival == TOK_MINUS) {
-            printf("f64.sub\n");
+            out("f64.sub\n");
             last_expr_is_float = 2;
         } else if (n->ival == TOK_STAR) {
-            printf("f64.mul\n");
+            out("f64.mul\n");
             last_expr_is_float = 2;
         } else if (n->ival == TOK_SLASH) {
-            printf("f64.div\n");
+            out("f64.div\n");
             last_expr_is_float = 2;
         } else if (n->ival == TOK_EQ_EQ) {
-            printf("f64.eq\n");
+            out("f64.eq\n");
             last_expr_is_float = 0;
         } else if (n->ival == TOK_BANG_EQ) {
-            printf("f64.ne\n");
+            out("f64.ne\n");
             last_expr_is_float = 0;
         } else if (n->ival == TOK_LT) {
-            printf("f64.lt\n");
+            out("f64.lt\n");
             last_expr_is_float = 0;
         } else if (n->ival == TOK_GT) {
-            printf("f64.gt\n");
+            out("f64.gt\n");
             last_expr_is_float = 0;
         } else if (n->ival == TOK_LT_EQ) {
-            printf("f64.le\n");
+            out("f64.le\n");
             last_expr_is_float = 0;
         } else if (n->ival == TOK_GT_EQ) {
-            printf("f64.ge\n");
+            out("f64.ge\n");
             last_expr_is_float = 0;
         } else {
             error(n->nline, n->ncol, "unsupported float binary operator");
@@ -548,41 +548,41 @@ void gen_expr_binary(struct Node *n) {
     } else {
         emit_indent();
         if (n->ival == TOK_PLUS) {
-            printf("i32.add\n");
+            out("i32.add\n");
         } else if (n->ival == TOK_MINUS) {
-            printf("i32.sub\n");
+            out("i32.sub\n");
         } else if (n->ival == TOK_STAR) {
-            printf("i32.mul\n");
+            out("i32.mul\n");
         } else if (n->ival == TOK_SLASH) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.div_u\n"); } else { printf("i32.div_s\n"); }
+            if (expr_is_unsigned(n->c0)) { out("i32.div_u\n"); } else { out("i32.div_s\n"); }
         } else if (n->ival == TOK_PERCENT) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.rem_u\n"); } else { printf("i32.rem_s\n"); }
+            if (expr_is_unsigned(n->c0)) { out("i32.rem_u\n"); } else { out("i32.rem_s\n"); }
         } else if (n->ival == TOK_EQ_EQ) {
-            printf("i32.eq\n");
+            out("i32.eq\n");
         } else if (n->ival == TOK_BANG_EQ) {
-            printf("i32.ne\n");
+            out("i32.ne\n");
         } else if (n->ival == TOK_LT) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.lt_u\n"); } else { printf("i32.lt_s\n"); }
+            if (expr_is_unsigned(n->c0)) { out("i32.lt_u\n"); } else { out("i32.lt_s\n"); }
         } else if (n->ival == TOK_GT) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.gt_u\n"); } else { printf("i32.gt_s\n"); }
+            if (expr_is_unsigned(n->c0)) { out("i32.gt_u\n"); } else { out("i32.gt_s\n"); }
         } else if (n->ival == TOK_LT_EQ) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.le_u\n"); } else { printf("i32.le_s\n"); }
+            if (expr_is_unsigned(n->c0)) { out("i32.le_u\n"); } else { out("i32.le_s\n"); }
         } else if (n->ival == TOK_GT_EQ) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.ge_u\n"); } else { printf("i32.ge_s\n"); }
+            if (expr_is_unsigned(n->c0)) { out("i32.ge_u\n"); } else { out("i32.ge_s\n"); }
         } else if (n->ival == TOK_AMP_AMP) {
-            printf("i32.and\n");
+            out("i32.and\n");
         } else if (n->ival == TOK_PIPE_PIPE) {
-            printf("i32.or\n");
+            out("i32.or\n");
         } else if (n->ival == TOK_AMP) {
-            printf("i32.and\n");
+            out("i32.and\n");
         } else if (n->ival == TOK_PIPE) {
-            printf("i32.or\n");
+            out("i32.or\n");
         } else if (n->ival == TOK_LSHIFT) {
-            printf("i32.shl\n");
+            out("i32.shl\n");
         } else if (n->ival == TOK_RSHIFT) {
-            if (expr_is_unsigned(n->c0)) { printf("i32.shr_u\n"); } else { printf("i32.shr_s\n"); }
+            if (expr_is_unsigned(n->c0)) { out("i32.shr_u\n"); } else { out("i32.shr_s\n"); }
         } else if (n->ival == TOK_CARET) {
-            printf("i32.xor\n");
+            out("i32.xor\n");
         } else {
             error(n->nline, n->ncol, "unsupported binary operator");
         }
@@ -614,280 +614,280 @@ void gen_expr_call(struct Node *n) {
                     gen_expr(n->list[ai]);
                     ai++;
                     emit_indent();
-                    printf("call $__print_int\n");
+                    out("call $__print_int\n");
                 } else if (fmt[fi] == 's') {
                     if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
                     gen_expr(n->list[ai]);
                     ai++;
                     emit_indent();
-                    printf("call $__print_str\n");
+                    out("call $__print_str\n");
                 } else if (fmt[fi] == 'c') {
                     if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
                     gen_expr(n->list[ai]);
                     ai++;
                     emit_indent();
-                    printf("call $putchar\n");
+                    out("call $putchar\n");
                     emit_indent();
-                    printf("drop\n");
+                    out("drop\n");
                 } else if (fmt[fi] == 'x') {
                     if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
                     gen_expr(n->list[ai]);
                     ai++;
                     emit_indent();
-                    printf("call $__print_hex\n");
+                    out("call $__print_hex\n");
                 } else if (fmt[fi] == 'f') {
                     if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
                     gen_expr(n->list[ai]);
                     if (!last_expr_is_float) {
                         emit_indent();
-                        printf("f64.convert_i32_s\n");
+                        out("f64.convert_i32_s\n");
                     }
                     ai++;
                     emit_indent();
-                    printf("call $__print_float\n");
+                    out("call $__print_float\n");
                 } else if (fmt[fi] == '%') {
                     emit_indent();
-                    printf("i32.const 37\n");
+                    out("i32.const 37\n");
                     emit_indent();
-                    printf("call $putchar\n");
+                    out("call $putchar\n");
                     emit_indent();
-                    printf("drop\n");
+                    out("drop\n");
                 } else {
                     error(n->nline, n->ncol, "unsupported printf format");
                 }
             } else {
                 emit_indent();
-                printf("i32.const %d\n", fmt[fi] & 255);
+                out("i32.const "); out_d(fmt[fi] & 255); out("\n");
                 emit_indent();
-                printf("call $putchar\n");
+                out("call $putchar\n");
                 emit_indent();
-                printf("drop\n");
+                out("drop\n");
             }
         }
         emit_indent();
-        printf("i32.const 0\n");
+        out("i32.const 0\n");
         last_expr_is_float = 0;
     } else if (strcmp(n->sval, "putchar") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $putchar\n");
+        out("call $putchar\n");
     } else if (strcmp(n->sval, "getchar") == 0) {
         emit_indent();
-        printf("call $getchar\n");
+        out("call $getchar\n");
     } else if (strcmp(n->sval, "exit") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $__proc_exit\n");
+        out("call $__proc_exit\n");
         emit_indent();
-        printf("i32.const 0\n");
+        out("i32.const 0\n");
     } else if (strcmp(n->sval, "malloc") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $malloc\n");
+        out("call $malloc\n");
     } else if (strcmp(n->sval, "free") == 0) {
         if (n->ival2 > 0) {
             gen_expr(n->list[0]);
         } else {
             emit_indent();
-            printf("i32.const 0\n");
+            out("i32.const 0\n");
         }
         emit_indent();
-        printf("call $free\n");
+        out("call $free\n");
         emit_indent();
-        printf("i32.const 0\n");
+        out("i32.const 0\n");
     } else if (strcmp(n->sval, "strlen") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $strlen\n");
+        out("call $strlen\n");
     } else if (strcmp(n->sval, "strcmp") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         emit_indent();
-        printf("call $strcmp\n");
+        out("call $strcmp\n");
     } else if (strcmp(n->sval, "strncpy") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $strncpy\n");
+        out("call $strncpy\n");
     } else if (strcmp(n->sval, "memcpy") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $memcpy\n");
+        out("call $memcpy\n");
     } else if (strcmp(n->sval, "memset") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $memset\n");
+        out("call $memset\n");
     } else if (strcmp(n->sval, "memcmp") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $memcmp\n");
+        out("call $memcmp\n");
     /* --- new libc builtins --- */
     } else if (strcmp(n->sval, "isdigit") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $isdigit\n");
+        out("call $isdigit\n");
     } else if (strcmp(n->sval, "isalpha") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $isalpha\n");
+        out("call $isalpha\n");
     } else if (strcmp(n->sval, "isalnum") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $isalnum\n");
+        out("call $isalnum\n");
     } else if (strcmp(n->sval, "isspace") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $isspace\n");
+        out("call $isspace\n");
     } else if (strcmp(n->sval, "isupper") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $isupper\n");
+        out("call $isupper\n");
     } else if (strcmp(n->sval, "islower") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $islower\n");
+        out("call $islower\n");
     } else if (strcmp(n->sval, "isprint") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $isprint\n");
+        out("call $isprint\n");
     } else if (strcmp(n->sval, "ispunct") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $ispunct\n");
+        out("call $ispunct\n");
     } else if (strcmp(n->sval, "isxdigit") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $isxdigit\n");
+        out("call $isxdigit\n");
     } else if (strcmp(n->sval, "toupper") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $toupper\n");
+        out("call $toupper\n");
     } else if (strcmp(n->sval, "tolower") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $tolower\n");
+        out("call $tolower\n");
     } else if (strcmp(n->sval, "abs") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $abs\n");
+        out("call $abs\n");
     } else if (strcmp(n->sval, "atoi") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $atoi\n");
+        out("call $atoi\n");
     } else if (strcmp(n->sval, "puts") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $puts\n");
+        out("call $puts\n");
     } else if (strcmp(n->sval, "srand") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $srand\n");
+        out("call $srand\n");
         emit_indent();
-        printf("i32.const 0\n");
+        out("i32.const 0\n");
     } else if (strcmp(n->sval, "rand") == 0) {
         emit_indent();
-        printf("call $rand\n");
+        out("call $rand\n");
     } else if (strcmp(n->sval, "strcpy") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         emit_indent();
-        printf("call $strcpy\n");
+        out("call $strcpy\n");
     } else if (strcmp(n->sval, "strcat") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         emit_indent();
-        printf("call $strcat\n");
+        out("call $strcat\n");
     } else if (strcmp(n->sval, "strchr") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         emit_indent();
-        printf("call $strchr\n");
+        out("call $strchr\n");
     } else if (strcmp(n->sval, "strrchr") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         emit_indent();
-        printf("call $strrchr\n");
+        out("call $strrchr\n");
     } else if (strcmp(n->sval, "strstr") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         emit_indent();
-        printf("call $strstr\n");
+        out("call $strstr\n");
     } else if (strcmp(n->sval, "calloc") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         emit_indent();
-        printf("call $calloc\n");
+        out("call $calloc\n");
     } else if (strcmp(n->sval, "strncmp") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $strncmp\n");
+        out("call $strncmp\n");
     } else if (strcmp(n->sval, "strncat") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $strncat\n");
+        out("call $strncat\n");
     } else if (strcmp(n->sval, "memmove") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $memmove\n");
+        out("call $memmove\n");
     } else if (strcmp(n->sval, "memchr") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $memchr\n");
+        out("call $memchr\n");
     } else if (strcmp(n->sval, "strtol") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $strtol\n");
+        out("call $strtol\n");
     } else if (strcmp(n->sval, "__open_file") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         emit_indent();
-        printf("call $__open_file\n");
+        out("call $__open_file\n");
     } else if (strcmp(n->sval, "__read_file") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
         gen_expr(n->list[2]);
         emit_indent();
-        printf("call $__read_file\n");
+        out("call $__read_file\n");
     } else if (strcmp(n->sval, "__close_file") == 0) {
         gen_expr(n->list[0]);
         emit_indent();
-        printf("call $__close_file\n");
+        out("call $__close_file\n");
         emit_indent();
-        printf("i32.const 0\n");
+        out("i32.const 0\n");
     } else {
         for (i = 0; i < n->ival2; i++) {
             gen_expr(n->list[i]);
             /* convert param if needed */
             if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
                 emit_indent();
-                printf("f64.convert_i32_s\n");
+                out("f64.convert_i32_s\n");
             } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
                 emit_indent();
-                printf("i32.trunc_f64_s\n");
+                out("i32.trunc_f64_s\n");
             }
         }
         emit_indent();
-        printf("call $%s\n", n->sval);
+        out("call $"); out(n->sval); out("\n");
         if (func_is_void(n->sval)) {
             emit_indent();
-            printf("i32.const 0\n");
+            out("i32.const 0\n");
             last_expr_is_float = 0;
         } else {
             last_expr_is_float = func_ret_is_float(n->sval);
@@ -897,7 +897,7 @@ void gen_expr_call(struct Node *n) {
 
 void gen_expr_str_lit(struct Node *n) {
     emit_indent();
-    printf("i32.const %d\n", str_table[n->ival]->offset);
+    out("i32.const "); out_d(str_table[n->ival]->offset); out("\n");
     last_expr_is_float = 0;
 }
 
@@ -913,12 +913,11 @@ void gen_expr_call_indirect(struct Node *n) {
     gen_expr(n->c0);
     /* emit call_indirect with matching type signature */
     emit_indent();
-    printf("call_indirect (type $__fntype_%d_%s)\n",
-           ci_np, n->ival3 ? "void" : "i32");
+    out("call_indirect (type $__fntype_"); out_d(ci_np); out("_"); out(n->ival3 ? "void" : "i32"); out(")\n");
     if (n->ival3) {
         /* void function — push dummy i32 */
         emit_indent();
-        printf("i32.const 0\n");
+        out("i32.const 0\n");
     }
     last_expr_is_float = 0;
 }
@@ -931,12 +930,12 @@ void gen_expr_member(struct Node *n) {
     gen_expr(n->c0);
     if (off > 0) {
         emit_indent();
-        printf("i32.const %d\n", off);
+        out("i32.const "); out_d(off); out("\n");
         emit_indent();
-        printf("i32.add\n");
+        out("i32.add\n");
     }
     emit_indent();
-    printf("i32.load\n");
+    out("i32.load\n");
 }
 
 void gen_expr_sizeof(struct Node *n) {
@@ -966,7 +965,7 @@ void gen_expr_sizeof(struct Node *n) {
         sz = 4;
     }
     emit_indent();
-    printf("i32.const %d\n", sz);
+    out("i32.const "); out_d(sz); out("\n");
 }
 
 void gen_expr_subscript(struct Node *n) {
@@ -977,19 +976,19 @@ void gen_expr_subscript(struct Node *n) {
     gen_expr(n->c1);
     if (esz > 1) {
         emit_indent();
-        printf("i32.const %d\n", esz);
+        out("i32.const "); out_d(esz); out("\n");
         emit_indent();
-        printf("i32.mul\n");
+        out("i32.mul\n");
     }
     emit_indent();
-    printf("i32.add\n");
+    out("i32.add\n");
     emit_indent();
     if (esz == 1) {
-        printf("i32.load8_u\n");
+        out("i32.load8_u\n");
     } else if (esz == 2) {
-        printf("i32.load16_s\n");
+        out("i32.load16_s\n");
     } else {
-        printf("i32.load\n");
+        out("i32.load\n");
     }
 }
 
@@ -1004,21 +1003,21 @@ void gen_expr_post_inc_dec(struct Node *n) {
         pname = tgt2->sval;
         pis_global = (find_global(pname) >= 0);
         if (pis_global) {
-            emit_indent(); printf("global.get $%s\n", pname);
-            emit_indent(); printf("local.set $__atmp\n");
-            emit_indent(); printf("global.get $%s\n", pname);
-            emit_indent(); printf("i32.const 1\n");
+            emit_indent(); out("global.get $"); out(pname); out("\n");
+            emit_indent(); out("local.set $__atmp\n");
+            emit_indent(); out("global.get $"); out(pname); out("\n");
+            emit_indent(); out("i32.const 1\n");
             emit_indent();
-            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-            emit_indent(); printf("global.set $%s\n", pname);
-            emit_indent(); printf("local.get $__atmp\n");
+            if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
+            emit_indent(); out("global.set $"); out(pname); out("\n");
+            emit_indent(); out("local.get $__atmp\n");
         } else {
-            emit_indent(); printf("local.get $%s\n", pname);
-            emit_indent(); printf("local.get $%s\n", pname);
-            emit_indent(); printf("i32.const 1\n");
+            emit_indent(); out("local.get $"); out(pname); out("\n");
+            emit_indent(); out("local.get $"); out(pname); out("\n");
+            emit_indent(); out("i32.const 1\n");
             emit_indent();
-            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-            emit_indent(); printf("local.set $%s\n", pname);
+            if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
+            emit_indent(); out("local.set $"); out(pname); out("\n");
         }
     } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
         /* NOTE: tgt2->c0 evaluated 3x (save old val, store addr, reload).
@@ -1026,59 +1025,59 @@ void gen_expr_post_inc_dec(struct Node *n) {
         pesz = expr_elem_size(tgt2->c0);
         gen_expr(tgt2->c0);
         emit_indent();
-        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-        emit_indent(); printf("local.set $__atmp\n");
+        if (pesz == 1) { out("i32.load8_u\n"); } else if (pesz == 2) { out("i32.load16_s\n"); } else { out("i32.load\n"); }
+        emit_indent(); out("local.set $__atmp\n");
         gen_expr(tgt2->c0);
         gen_expr(tgt2->c0);
         emit_indent();
-        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-        emit_indent(); printf("i32.const 1\n");
+        if (pesz == 1) { out("i32.load8_u\n"); } else if (pesz == 2) { out("i32.load16_s\n"); } else { out("i32.load\n"); }
+        emit_indent(); out("i32.const 1\n");
         emit_indent();
-        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+        if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
         emit_indent();
-        if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
-        emit_indent(); printf("local.get $__atmp\n");
+        if (pesz == 1) { out("i32.store8\n"); } else if (pesz == 2) { out("i32.store16\n"); } else { out("i32.store\n"); }
+        emit_indent(); out("local.get $__atmp\n");
     } else if (tgt2->kind == ND_SUBSCRIPT) {
         /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
            Correct only when the array and index expressions have no side effects. */
         pesz = expr_elem_size(tgt2->c0);
         gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-        emit_indent(); printf("i32.add\n");
+        if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
+        emit_indent(); out("i32.add\n");
         emit_indent();
-        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-        emit_indent(); printf("local.set $__atmp\n");
+        if (pesz == 1) { out("i32.load8_u\n"); } else if (pesz == 2) { out("i32.load16_s\n"); } else { out("i32.load\n"); }
+        emit_indent(); out("local.set $__atmp\n");
         gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-        emit_indent(); printf("i32.add\n");
+        if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
+        emit_indent(); out("i32.add\n");
         gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-        emit_indent(); printf("i32.add\n");
+        if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
+        emit_indent(); out("i32.add\n");
         emit_indent();
-        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-        emit_indent(); printf("i32.const 1\n");
+        if (pesz == 1) { out("i32.load8_u\n"); } else if (pesz == 2) { out("i32.load16_s\n"); } else { out("i32.load\n"); }
+        emit_indent(); out("i32.const 1\n");
         emit_indent();
-        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+        if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
         emit_indent();
-        if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
-        emit_indent(); printf("local.get $__atmp\n");
+        if (pesz == 1) { out("i32.store8\n"); } else if (pesz == 2) { out("i32.store16\n"); } else { out("i32.store\n"); }
+        emit_indent(); out("local.get $__atmp\n");
     } else if (tgt2->kind == ND_MEMBER) {
         poff = resolve_field_offset(tgt2->sval);
         if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
         gen_expr(tgt2->c0);
-        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
-        emit_indent(); printf("i32.load\n");
-        emit_indent(); printf("local.set $__atmp\n");
+        if (poff > 0) { emit_indent(); out("i32.const "); out_d(poff); out("\n"); emit_indent(); out("i32.add\n"); }
+        emit_indent(); out("i32.load\n");
+        emit_indent(); out("local.set $__atmp\n");
         gen_expr(tgt2->c0);
-        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+        if (poff > 0) { emit_indent(); out("i32.const "); out_d(poff); out("\n"); emit_indent(); out("i32.add\n"); }
         gen_expr(tgt2->c0);
-        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
-        emit_indent(); printf("i32.load\n");
-        emit_indent(); printf("i32.const 1\n");
+        if (poff > 0) { emit_indent(); out("i32.const "); out_d(poff); out("\n"); emit_indent(); out("i32.add\n"); }
+        emit_indent(); out("i32.load\n");
+        emit_indent(); out("i32.const 1\n");
         emit_indent();
-        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-        emit_indent(); printf("i32.store\n");
-        emit_indent(); printf("local.get $__atmp\n");
+        if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
+        emit_indent(); out("i32.store\n");
+        emit_indent(); out("local.get $__atmp\n");
     } else {
         error(n->nline, n->ncol, "unsupported post-inc/dec target");
     }
@@ -1088,25 +1087,25 @@ void gen_expr_ternary(struct Node *n) {
     gen_expr(n->c0);
     /* both branches produce i32; compiler is uniformly i32 throughout */
     emit_indent();
-    printf("(if (result i32)\n");
+    out("(if (result i32)\n");
     indent_level++;
     emit_indent();
-    printf("(then\n");
+    out("(then\n");
     indent_level++;
     gen_expr(n->c1);
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("(else\n");
+    out("(else\n");
     indent_level++;
     gen_expr(n->c2);
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
 }
 
 void gen_expr(struct Node *n) {
@@ -1137,7 +1136,7 @@ void gen_stmt_return(struct Node *n) {
         gen_expr(n->c0);
     }
     emit_indent();
-    printf("return\n");
+    out("return\n");
 }
 
 void gen_stmt_var_decl(struct Node *n) {
@@ -1148,30 +1147,30 @@ void gen_stmt_var_decl(struct Node *n) {
         /* Array: allocate n->ival elements of elem_size bytes */
         bsz = n->ival * n->ival2;
         emit_indent();
-        printf("i32.const %d\n", bsz);
+        out("i32.const "); out_d(bsz); out("\n");
         emit_indent();
-        printf("call $malloc\n");
+        out("call $malloc\n");
         emit_indent();
-        printf("local.set $%s\n", n->sval);
+        out("local.set $"); out(n->sval); out("\n");
     } else if (n->c0 != (struct Node *)0) {
         gen_expr(n->c0);
         /* type conversion if needed */
         if (vd_is_flt && !last_expr_is_float) {
             emit_indent();
-            printf("f64.convert_i32_s\n");
+            out("f64.convert_i32_s\n");
         } else if (!vd_is_flt && last_expr_is_float) {
             emit_indent();
-            printf("i32.trunc_f64_s\n");
+            out("i32.trunc_f64_s\n");
         }
         emit_indent();
-        printf("local.set $%s\n", n->sval);
+        out("local.set $"); out(n->sval); out("\n");
     }
 }
 
 void gen_stmt_expr_stmt(struct Node *n) {
     gen_expr(n->c0);
     emit_indent();
-    printf("drop\n");
+    out("drop\n");
 }
 
 void gen_stmt_if(struct Node *n) {
@@ -1179,45 +1178,45 @@ void gen_stmt_if(struct Node *n) {
     if (last_expr_is_float) {
         /* convert float condition to boolean: f64 != 0.0 */
         emit_indent();
-        printf("f64.const 0\n");
+        out("f64.const 0\n");
         emit_indent();
-        printf("f64.ne\n");
+        out("f64.ne\n");
     }
     if (n->c2 != (struct Node *)0) {
         emit_indent();
-        printf("(if\n");
+        out("(if\n");
         indent_level++;
         emit_indent();
-        printf("(then\n");
+        out("(then\n");
         indent_level++;
         gen_body(n->c1);
         indent_level--;
         emit_indent();
-        printf(")\n");
+        out(")\n");
         emit_indent();
-        printf("(else\n");
+        out("(else\n");
         indent_level++;
         gen_body(n->c2);
         indent_level--;
         emit_indent();
-        printf(")\n");
+        out(")\n");
         indent_level--;
         emit_indent();
-        printf(")\n");
+        out(")\n");
     } else {
         emit_indent();
-        printf("(if\n");
+        out("(if\n");
         indent_level++;
         emit_indent();
-        printf("(then\n");
+        out("(then\n");
         indent_level++;
         gen_body(n->c1);
         indent_level--;
         emit_indent();
-        printf(")\n");
+        out(")\n");
         indent_level--;
         emit_indent();
-        printf(")\n");
+        out(")\n");
     }
 }
 
@@ -1230,37 +1229,37 @@ void gen_stmt_while(struct Node *n) {
     cont_lbl[loop_sp] = lbl;
     loop_sp++;
     emit_indent();
-    printf("(block $brk_%d\n", lbl);
+    out("(block $brk_"); out_d(lbl); out("\n");
     indent_level++;
     emit_indent();
-    printf("(loop $lp_%d\n", lbl);
+    out("(loop $lp_"); out_d(lbl); out("\n");
     indent_level++;
     gen_expr(n->c0);
     if (last_expr_is_float) {
         emit_indent();
-        printf("f64.const 0\n");
+        out("f64.const 0\n");
         emit_indent();
-        printf("f64.ne\n");
+        out("f64.ne\n");
     }
     emit_indent();
-    printf("i32.eqz\n");
+    out("i32.eqz\n");
     emit_indent();
-    printf("br_if $brk_%d\n", lbl);
+    out("br_if $brk_"); out_d(lbl); out("\n");
     emit_indent();
-    printf("(block $cont_%d\n", lbl);
+    out("(block $cont_"); out_d(lbl); out("\n");
     indent_level++;
     gen_body(n->c1);
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("br $lp_%d\n", lbl);
+    out("br $lp_"); out_d(lbl); out("\n");
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     loop_sp--;
 }
 
@@ -1276,44 +1275,44 @@ void gen_stmt_for(struct Node *n) {
     cont_lbl[loop_sp] = lbl;
     loop_sp++;
     emit_indent();
-    printf("(block $brk_%d\n", lbl);
+    out("(block $brk_"); out_d(lbl); out("\n");
     indent_level++;
     emit_indent();
-    printf("(loop $lp_%d\n", lbl);
+    out("(loop $lp_"); out_d(lbl); out("\n");
     indent_level++;
     if (n->c1 != (struct Node *)0) {
         gen_expr(n->c1);
         if (last_expr_is_float) {
             emit_indent();
-            printf("f64.const 0\n");
+            out("f64.const 0\n");
             emit_indent();
-            printf("f64.ne\n");
+            out("f64.ne\n");
         }
         emit_indent();
-        printf("i32.eqz\n");
+        out("i32.eqz\n");
         emit_indent();
-        printf("br_if $brk_%d\n", lbl);
+        out("br_if $brk_"); out_d(lbl); out("\n");
     }
     emit_indent();
-    printf("(block $cont_%d\n", lbl);
+    out("(block $cont_"); out_d(lbl); out("\n");
     indent_level++;
     gen_body(n->c3);
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     if (n->c2 != (struct Node *)0) {
         gen_expr(n->c2);
         emit_indent();
-        printf("drop\n");
+        out("drop\n");
     }
     emit_indent();
-    printf("br $lp_%d\n", lbl);
+    out("br $lp_"); out_d(lbl); out("\n");
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     loop_sp--;
 }
 
@@ -1326,47 +1325,47 @@ void gen_stmt_do_while(struct Node *n) {
     cont_lbl[loop_sp] = lbl;
     loop_sp++;
     emit_indent();
-    printf("(block $brk_%d\n", lbl);
+    out("(block $brk_"); out_d(lbl); out("\n");
     indent_level++;
     emit_indent();
-    printf("(loop $lp_%d\n", lbl);
+    out("(loop $lp_"); out_d(lbl); out("\n");
     indent_level++;
     emit_indent();
-    printf("(block $cont_%d\n", lbl);
+    out("(block $cont_"); out_d(lbl); out("\n");
     indent_level++;
     gen_body(n->c0);
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     gen_expr(n->c1);
     if (last_expr_is_float) {
         emit_indent();
-        printf("f64.const 0\n");
+        out("f64.const 0\n");
         emit_indent();
-        printf("f64.ne\n");
+        out("f64.ne\n");
     }
     emit_indent();
-    printf("br_if $lp_%d\n", lbl);
+    out("br_if $lp_"); out_d(lbl); out("\n");
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
     loop_sp--;
 }
 
 void gen_stmt_break(struct Node *n) {
     if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
     emit_indent();
-    printf("br $brk_%d\n", brk_lbl[loop_sp - 1]);
+    out("br $brk_"); out_d(brk_lbl[loop_sp - 1]); out("\n");
 }
 
 void gen_stmt_continue(struct Node *n) {
     if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
     if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
     emit_indent();
-    printf("br $cont_%d\n", cont_lbl[loop_sp - 1]);
+    out("br $cont_"); out_d(cont_lbl[loop_sp - 1]); out("\n");
 }
 
 void gen_stmt_block(struct Node *n) {
@@ -1429,43 +1428,43 @@ void gen_stmt_switch(struct Node *n) {
     /* save switch value */
     gen_expr(n->c0);
     emit_indent();
-    printf("local.set $__stmp\n");
+    out("local.set $__stmp\n");
 
     /* outer break block */
     emit_indent();
-    printf("(block $brk_%d\n", sw_lbl);
+    out("(block $brk_"); out_d(sw_lbl); out("\n");
     indent_level++;
 
     /* default target block (outermost) */
     emit_indent();
-    printf("(block $sw%d_dflt\n", sw_lbl);
+    out("(block $sw"); out_d(sw_lbl); out("_dflt\n");
     indent_level++;
 
     /* open case blocks in reverse order: first case = innermost */
     for (k = nc - 1; k >= 0; k--) {
         emit_indent();
-        printf("(block $sw%d_c%d\n", sw_lbl, k);
+        out("(block $sw"); out_d(sw_lbl); out("_c"); out_d(k); out("\n");
         indent_level++;
     }
 
     /* dispatch: compare and branch for each case */
     for (k = 0; k < nc; k++) {
-        emit_indent(); printf("local.get $__stmp\n");
-        emit_indent(); printf("i32.const %d\n", case_vals[k]);
-        emit_indent(); printf("i32.eq\n");
-        emit_indent(); printf("br_if $sw%d_c%d\n", sw_lbl, k);
+        emit_indent(); out("local.get $__stmp\n");
+        emit_indent(); out("i32.const "); out_d(case_vals[k]); out("\n");
+        emit_indent(); out("i32.eq\n");
+        emit_indent(); out("br_if $sw"); out_d(sw_lbl); out("_c"); out_d(k); out("\n");
     }
     emit_indent();
     if (has_dflt) {
-        printf("br $sw%d_dflt\n", sw_lbl);
+        out("br $sw"); out_d(sw_lbl); out("_dflt\n");
     } else {
-        printf("br $brk_%d\n", sw_lbl);
+        out("br $brk_"); out_d(sw_lbl); out("\n");
     }
 
     /* close case blocks in forward order and emit case bodies */
     for (k = 0; k < nc; k++) {
         indent_level--;
-        emit_indent(); printf(")\n");
+        emit_indent(); out(")\n");
         if (k + 1 < nc) {
             next_start = case_start[k + 1];
         } else if (has_dflt) {
@@ -1482,7 +1481,7 @@ void gen_stmt_switch(struct Node *n) {
 
     /* close default target block */
     indent_level--;
-    emit_indent(); printf(")\n");
+    emit_indent(); out(")\n");
 
     /* emit default body */
     if (has_dflt) {
@@ -1495,7 +1494,7 @@ void gen_stmt_switch(struct Node *n) {
 
     /* close break block */
     indent_level--;
-    emit_indent(); printf(")\n");
+    emit_indent(); out(")\n");
 
     loop_sp--;
 }
@@ -1582,22 +1581,22 @@ void gen_func(struct Node *n) {
     nparam_locals = nlocals;
     collect_locals(n->c0);
 
-    printf("  (func $%s", n->sval);
+    out("  (func $"); out(n->sval);
     for (i = 0; i < n->ival2; i++) {
         if (local_vars[i]->lv_is_float) {
-            printf(" (param $%s f64)", n->list[i]->sval);
+            out(" (param $"); out(n->list[i]->sval); out(" f64)");
         } else {
-            printf(" (param $%s i32)", n->list[i]->sval);
+            out(" (param $"); out(n->list[i]->sval); out(" i32)");
         }
     }
     if (n->ival == 1) {
         /* void */
     } else if (ret_float) {
-        printf(" (result f64)");
+        out(" (result f64)");
     } else {
-        printf(" (result i32)");
+        out(" (result i32)");
     }
-    printf("\n");
+    out("\n");
 
     indent_level = 2;
     /* emit only non-param locals */
@@ -1605,10 +1604,10 @@ void gen_func(struct Node *n) {
     for (i = nparam_locals; i < nlocals; i++) {
         emit_indent();
         if (local_vars[i]->lv_is_float) {
-            printf("(local $%s f64)\n", local_vars[i]->name);
+            out("(local $"); out(local_vars[i]->name); out(" f64)\n");
             has_any_float = 1;
         } else {
-            printf("(local $%s i32)\n", local_vars[i]->name);
+            out("(local $"); out(local_vars[i]->name); out(" i32)\n");
         }
     }
     /* check params for float too */
@@ -1616,11 +1615,11 @@ void gen_func(struct Node *n) {
         if (local_vars[i]->lv_is_float) has_any_float = 1;
     }
     emit_indent();
-    printf("(local $__atmp i32)\n");
+    out("(local $__atmp i32)\n");
     emit_indent();
-    printf("(local $__stmp i32)\n");
+    out("(local $__stmp i32)\n");
     emit_indent();
-    printf("(local $__ftmp f64)\n");
+    out("(local $__ftmp f64)\n");
     body = n->c0;
     for (i = 0; i < body->ival2; i++) {
         gen_stmt(body->list[i]);
@@ -1628,15 +1627,15 @@ void gen_func(struct Node *n) {
     if (n->ival != 1) {
         if (ret_float) {
             emit_indent();
-            printf("f64.const 0\n");
+            out("f64.const 0\n");
         } else {
             emit_indent();
-            printf("i32.const 0\n");
+            out("i32.const 0\n");
         }
     }
     indent_level = 1;
     emit_indent();
-    printf(")\n");
+    out(")\n");
 }
 
 /* --- WAT escape helper --- */
@@ -1675,28 +1674,28 @@ void gen_module(struct Node *prog) {
     int gi;
 
     emit_indent();
-    printf("(module\n");
+    out("(module\n");
     indent_level++;
 
     /* WASI imports */
     emit_indent();
-    printf("(import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__proc_exit (param i32)))\n");
+    out("(import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__proc_exit (param i32)))\n");
     emit_indent();
-    printf("(import \"wasi_snapshot_preview1\" \"fd_write\" (func $__fd_write (param i32 i32 i32 i32) (result i32)))\n");
+    out("(import \"wasi_snapshot_preview1\" \"fd_write\" (func $__fd_write (param i32 i32 i32 i32) (result i32)))\n");
     emit_indent();
-    printf("(import \"wasi_snapshot_preview1\" \"fd_read\" (func $__fd_read (param i32 i32 i32 i32) (result i32)))\n");
+    out("(import \"wasi_snapshot_preview1\" \"fd_read\" (func $__fd_read (param i32 i32 i32 i32) (result i32)))\n");
     emit_indent();
-    printf("(import \"wasi_snapshot_preview1\" \"path_open\" (func $__path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))\n");
+    out("(import \"wasi_snapshot_preview1\" \"path_open\" (func $__path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))\n");
     emit_indent();
-    printf("(import \"wasi_snapshot_preview1\" \"fd_close\" (func $__fd_close (param i32) (result i32)))\n");
+    out("(import \"wasi_snapshot_preview1\" \"fd_close\" (func $__fd_close (param i32) (result i32)))\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* memory */
     emit_indent();
-    printf("(memory (export \"memory\") 256)\n");
+    out("(memory (export \"memory\") 512)\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* function pointer type declarations and table */
     if (fn_table_count > 0) {
@@ -1718,1284 +1717,1281 @@ void gen_module(struct Node *prog) {
             if (need_types[fti] & 1) {
                 int pi;
                 emit_indent();
-                printf("(type $__fntype_%d_i32 (func", fti);
-                for (pi = 0; pi < fti; pi++) printf(" (param i32)");
-                printf(" (result i32)))\n");
+                out("(type $__fntype_"); out_d(fti); out("_i32 (func");
+                for (pi = 0; pi < fti; pi++) out(" (param i32)");
+                out(" (result i32)))\n");
             }
             if (need_types[fti] & 2) {
                 int pi;
                 emit_indent();
-                printf("(type $__fntype_%d_void (func", fti);
-                for (pi = 0; pi < fti; pi++) printf(" (param i32)");
-                printf("))\n");
+                out("(type $__fntype_"); out_d(fti); out("_void (func");
+                for (pi = 0; pi < fti; pi++) out(" (param i32)");
+                out("))\n");
             }
         }
         /* table and elem */
         emit_indent();
-        printf("(table %d funcref)\n", fn_table_count);
+        out("(table "); out_d(fn_table_count); out(" funcref)\n");
         emit_indent();
-        printf("(elem (i32.const 0)");
+        out("(elem (i32.const 0)");
         for (fti = 0; fti < fn_table_count; fti++) {
-            printf(" $%s", fn_table_names[fti]);
+            out(" $"); out(fn_table_names[fti]);
         }
-        printf(")\n");
+        out(")\n");
         emit_indent();
-        printf("\n");
+        out("\n");
     }
 
     /* static data section */
     for (i = 0; i < nstrings; i++) {
-        printf("  (data (i32.const %d) \"", str_table[i]->offset);
+        out("  (data (i32.const "); out_d(str_table[i]->offset); out(") \"");
         emit_wat_string(str_table[i]->data, str_table[i]->len);
-        printf("\\00\")\n");
+        out("\\00\")\n");
     }
     if (nstrings > 0) {
         emit_indent();
-        printf("\n");
+        out("\n");
     }
 
     /* heap pointer */
     emit_indent();
-    printf("(global $__heap_ptr (mut i32) (i32.const %d))\n", data_ptr);
+    out("(global $__heap_ptr (mut i32) (i32.const "); out_d(data_ptr); out("))\n");
     emit_indent();
-    printf("(global $__free_list (mut i32) (i32.const 0))\n");
+    out("(global $__free_list (mut i32) (i32.const 0))\n");
     emit_indent();
-    printf("(global $__rand_seed (mut i32) (i32.const 1))\n");
+    out("(global $__rand_seed (mut i32) (i32.const 1))\n");
 
     /* user global variables */
     for (gi = 0; gi < nglobals; gi++) {
         emit_indent();
         if (globals_tbl[gi]->gv_is_float) {
             if (globals_tbl[gi]->gv_float_init != (char *)0) {
-                printf("(global $%s (mut f64) (f64.const %s))\n",
-                       globals_tbl[gi]->name, globals_tbl[gi]->gv_float_init);
+                out("(global $"); out(globals_tbl[gi]->name); out(" (mut f64) (f64.const "); out(globals_tbl[gi]->gv_float_init); out("))\n");
             } else {
-                printf("(global $%s (mut f64) (f64.const %d))\n",
-                       globals_tbl[gi]->name, globals_tbl[gi]->init_val);
+                out("(global $"); out(globals_tbl[gi]->name); out(" (mut f64) (f64.const "); out_d(globals_tbl[gi]->init_val); out("))\n");
             }
         } else {
-            printf("(global $%s (mut i32) (i32.const %d))\n",
-                   globals_tbl[gi]->name, globals_tbl[gi]->init_val);
+            out("(global $"); out(globals_tbl[gi]->name); out(" (mut i32) (i32.const "); out_d(globals_tbl[gi]->init_val); out("))\n");
         }
     }
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* Runtime helper functions */
     emit_indent();
-    printf("(func $putchar (param $ch i32) (result i32)\n");
+    out("(func $putchar (param $ch i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.store8 (i32.const 0) (local.get $ch))\n");
+    out("  (i32.store8 (i32.const 0) (local.get $ch))\n");
     emit_indent();
-    printf("  (i32.store (i32.const 4) (i32.const 0))\n");
+    out("  (i32.store (i32.const 4) (i32.const 0))\n");
     emit_indent();
-    printf("  (i32.store (i32.const 8) (i32.const 1))\n");
+    out("  (i32.store (i32.const 8) (i32.const 1))\n");
     emit_indent();
-    printf("  (drop (call $__fd_write (i32.const 1) (i32.const 4) (i32.const 1) (i32.const 12)))\n");
+    out("  (drop (call $__fd_write (i32.const 1) (i32.const 4) (i32.const 1) (i32.const 12)))\n");
     emit_indent();
-    printf("  (local.get $ch)\n");
+    out("  (local.get $ch)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $getchar (result i32)\n");
+    out("(func $getchar (result i32)\n");
     emit_indent();
-    printf("  (i32.store (i32.const 4) (i32.const 0))\n");
+    out("  (i32.store (i32.const 4) (i32.const 0))\n");
     emit_indent();
-    printf("  (i32.store (i32.const 8) (i32.const 1))\n");
+    out("  (i32.store (i32.const 8) (i32.const 1))\n");
     emit_indent();
-    printf("  (drop (call $__fd_read (i32.const 0) (i32.const 4) (i32.const 1) (i32.const 12)))\n");
+    out("  (drop (call $__fd_read (i32.const 0) (i32.const 4) (i32.const 1) (i32.const 12)))\n");
     emit_indent();
-    printf("  (if (result i32) (i32.eqz (i32.load (i32.const 12)))\n");
+    out("  (if (result i32) (i32.eqz (i32.load (i32.const 12)))\n");
     emit_indent();
-    printf("    (then (i32.const -1))\n");
+    out("    (then (i32.const -1))\n");
     emit_indent();
-    printf("    (else (i32.load8_u (i32.const 0)))\n");
+    out("    (else (i32.load8_u (i32.const 0)))\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $__print_int (param $n i32)\n");
+    out("(func $__print_int (param $n i32)\n");
     emit_indent();
-    printf("  (local $buf i32)\n");
+    out("  (local $buf i32)\n");
     emit_indent();
-    printf("  (local $len i32)\n");
+    out("  (local $len i32)\n");
     emit_indent();
-    printf("  (if (i32.lt_s (local.get $n) (i32.const 0))\n");
+    out("  (if (i32.lt_s (local.get $n) (i32.const 0))\n");
     emit_indent();
-    printf("    (then\n");
+    out("    (then\n");
     emit_indent();
-    printf("      (drop (call $putchar (i32.const 45)))\n");
+    out("      (drop (call $putchar (i32.const 45)))\n");
     emit_indent();
-    printf("      (local.set $n (i32.sub (i32.const 0) (local.get $n)))\n");
+    out("      (local.set $n (i32.sub (i32.const 0) (local.get $n)))\n");
     emit_indent();
-    printf("    )\n");
+    out("    )\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf("  (if (i32.eqz (local.get $n))\n");
+    out("  (if (i32.eqz (local.get $n))\n");
     emit_indent();
-    printf("    (then (drop (call $putchar (i32.const 48))) (return))\n");
+    out("    (then (drop (call $putchar (i32.const 48))) (return))\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf("  (local.set $buf (i32.const 48))\n");
+    out("  (local.set $buf (i32.const 48))\n");
     emit_indent();
-    printf("  (local.set $len (i32.const 0))\n");
+    out("  (local.set $len (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $digit\n");
+    out("  (block $done (loop $digit\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $n)))\n");
+    out("    (br_if $done (i32.eqz (local.get $n)))\n");
     emit_indent();
-    printf("    (local.set $buf (i32.sub (local.get $buf) (i32.const 1)))\n");
+    out("    (local.set $buf (i32.sub (local.get $buf) (i32.const 1)))\n");
     emit_indent();
-    printf("    (i32.store8 (local.get $buf) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10))))\n");
+    out("    (i32.store8 (local.get $buf) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10))))\n");
     emit_indent();
-    printf("    (local.set $n (i32.div_u (local.get $n) (i32.const 10)))\n");
+    out("    (local.set $n (i32.div_u (local.get $n) (i32.const 10)))\n");
     emit_indent();
-    printf("    (local.set $len (i32.add (local.get $len) (i32.const 1)))\n");
+    out("    (local.set $len (i32.add (local.get $len) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $digit)\n");
+    out("    (br $digit)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("  (block $pd (loop $pl\n");
+    out("  (block $pd (loop $pl\n");
     emit_indent();
-    printf("    (br_if $pd (i32.eqz (local.get $len)))\n");
+    out("    (br_if $pd (i32.eqz (local.get $len)))\n");
     emit_indent();
-    printf("    (drop (call $putchar (i32.load8_u (local.get $buf))))\n");
+    out("    (drop (call $putchar (i32.load8_u (local.get $buf))))\n");
     emit_indent();
-    printf("    (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\n");
+    out("    (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $len (i32.sub (local.get $len) (i32.const 1)))\n");
+    out("    (local.set $len (i32.sub (local.get $len) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $pl)\n");
+    out("    (br $pl)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $__print_str (param $ptr i32)\n");
+    out("(func $__print_str (param $ptr i32)\n");
     emit_indent();
-    printf("  (local $ch i32)\n");
+    out("  (local $ch i32)\n");
     emit_indent();
-    printf("  (block $done (loop $next\n");
+    out("  (block $done (loop $next\n");
     emit_indent();
-    printf("    (local.set $ch (i32.load8_u (local.get $ptr)))\n");
+    out("    (local.set $ch (i32.load8_u (local.get $ptr)))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $ch)))\n");
+    out("    (br_if $done (i32.eqz (local.get $ch)))\n");
     emit_indent();
-    printf("    (drop (call $putchar (local.get $ch)))\n");
+    out("    (drop (call $putchar (local.get $ch)))\n");
     emit_indent();
-    printf("    (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))\n");
+    out("    (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $next)\n");
+    out("    (br $next)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $__print_hex (param $n i32)\n");
+    out("(func $__print_hex (param $n i32)\n");
     emit_indent();
-    printf("  (local $buf i32)\n");
+    out("  (local $buf i32)\n");
     emit_indent();
-    printf("  (local $len i32)\n");
+    out("  (local $len i32)\n");
     emit_indent();
-    printf("  (local $d i32)\n");
+    out("  (local $d i32)\n");
     emit_indent();
-    printf("  (if (i32.eqz (local.get $n))\n");
+    out("  (if (i32.eqz (local.get $n))\n");
     emit_indent();
-    printf("    (then (drop (call $putchar (i32.const 48))) (return))\n");
+    out("    (then (drop (call $putchar (i32.const 48))) (return))\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf("  (local.set $buf (i32.const 48))\n");
+    out("  (local.set $buf (i32.const 48))\n");
     emit_indent();
-    printf("  (local.set $len (i32.const 0))\n");
+    out("  (local.set $len (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $digit\n");
+    out("  (block $done (loop $digit\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $n)))\n");
+    out("    (br_if $done (i32.eqz (local.get $n)))\n");
     emit_indent();
-    printf("    (local.set $buf (i32.sub (local.get $buf) (i32.const 1)))\n");
+    out("    (local.set $buf (i32.sub (local.get $buf) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $d (i32.and (local.get $n) (i32.const 15)))\n");
+    out("    (local.set $d (i32.and (local.get $n) (i32.const 15)))\n");
     emit_indent();
-    printf("    (if (i32.lt_u (local.get $d) (i32.const 10))\n");
+    out("    (if (i32.lt_u (local.get $d) (i32.const 10))\n");
     emit_indent();
-    printf("      (then (i32.store8 (local.get $buf) (i32.add (i32.const 48) (local.get $d))))\n");
+    out("      (then (i32.store8 (local.get $buf) (i32.add (i32.const 48) (local.get $d))))\n");
     emit_indent();
-    printf("      (else (i32.store8 (local.get $buf) (i32.add (i32.const 87) (local.get $d))))\n");
+    out("      (else (i32.store8 (local.get $buf) (i32.add (i32.const 87) (local.get $d))))\n");
     emit_indent();
-    printf("    )\n");
+    out("    )\n");
     emit_indent();
-    printf("    (local.set $n (i32.shr_u (local.get $n) (i32.const 4)))\n");
+    out("    (local.set $n (i32.shr_u (local.get $n) (i32.const 4)))\n");
     emit_indent();
-    printf("    (local.set $len (i32.add (local.get $len) (i32.const 1)))\n");
+    out("    (local.set $len (i32.add (local.get $len) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $digit)\n");
+    out("    (br $digit)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("  (block $pd (loop $pl\n");
+    out("  (block $pd (loop $pl\n");
     emit_indent();
-    printf("    (br_if $pd (i32.eqz (local.get $len)))\n");
+    out("    (br_if $pd (i32.eqz (local.get $len)))\n");
     emit_indent();
-    printf("    (drop (call $putchar (i32.load8_u (local.get $buf))))\n");
+    out("    (drop (call $putchar (i32.load8_u (local.get $buf))))\n");
     emit_indent();
-    printf("    (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\n");
+    out("    (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $len (i32.sub (local.get $len) (i32.const 1)))\n");
+    out("    (local.set $len (i32.sub (local.get $len) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $pl)\n");
+    out("    (br $pl)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* __print_float: prints f64 with 6 decimal places */
     emit_indent();
-    printf("(func $__print_float (param $v f64)\n");
+    out("(func $__print_float (param $v f64)\n");
     emit_indent();
-    printf("  (local $int_part i32)\n");
+    out("  (local $int_part i32)\n");
     emit_indent();
-    printf("  (local $frac_part i32)\n");
+    out("  (local $frac_part i32)\n");
     emit_indent();
-    printf("  (local $frac f64)\n");
+    out("  (local $frac f64)\n");
     emit_indent();
-    printf("  (local $i i32)\n");
+    out("  (local $i i32)\n");
     emit_indent();
-    printf("  ;; handle negative\n");
+    out("  ;; handle negative\n");
     emit_indent();
-    printf("  (if (f64.lt (local.get $v) (f64.const 0))\n");
+    out("  (if (f64.lt (local.get $v) (f64.const 0))\n");
     emit_indent();
-    printf("    (then\n");
+    out("    (then\n");
     emit_indent();
-    printf("      (drop (call $putchar (i32.const 45)))\n");
+    out("      (drop (call $putchar (i32.const 45)))\n");
     emit_indent();
-    printf("      (local.set $v (f64.neg (local.get $v)))\n");
+    out("      (local.set $v (f64.neg (local.get $v)))\n");
     emit_indent();
-    printf("    )\n");
+    out("    )\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf("  ;; integer part\n");
+    out("  ;; integer part\n");
     emit_indent();
-    printf("  (local.set $int_part (i32.trunc_f64_s (local.get $v)))\n");
+    out("  (local.set $int_part (i32.trunc_f64_s (local.get $v)))\n");
     emit_indent();
-    printf("  (call $__print_int (local.get $int_part))\n");
+    out("  (call $__print_int (local.get $int_part))\n");
     emit_indent();
-    printf("  ;; dot\n");
+    out("  ;; dot\n");
     emit_indent();
-    printf("  (drop (call $putchar (i32.const 46)))\n");
+    out("  (drop (call $putchar (i32.const 46)))\n");
     emit_indent();
-    printf("  ;; fractional part: 6 digits\n");
+    out("  ;; fractional part: 6 digits\n");
     emit_indent();
-    printf("  (local.set $frac (f64.sub (local.get $v) (f64.convert_i32_s (local.get $int_part))))\n");
+    out("  (local.set $frac (f64.sub (local.get $v) (f64.convert_i32_s (local.get $int_part))))\n");
     emit_indent();
-    printf("  (local.set $frac (f64.mul (local.get $frac) (f64.const 1000000)))\n");
+    out("  (local.set $frac (f64.mul (local.get $frac) (f64.const 1000000)))\n");
     emit_indent();
-    printf("  (local.set $frac (f64.add (local.get $frac) (f64.const 0.5)))\n");
+    out("  (local.set $frac (f64.add (local.get $frac) (f64.const 0.5)))\n");
     emit_indent();
-    printf("  (local.set $frac_part (i32.trunc_f64_s (local.get $frac)))\n");
+    out("  (local.set $frac_part (i32.trunc_f64_s (local.get $frac)))\n");
     emit_indent();
-    printf("  ;; print with leading zeros (6 digits)\n");
+    out("  ;; print with leading zeros (6 digits)\n");
     emit_indent();
-    printf("  (local.set $i (i32.const 100000))\n");
+    out("  (local.set $i (i32.const 100000))\n");
     emit_indent();
-    printf("  (block $done (loop $lp\n");
+    out("  (block $done (loop $lp\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $i)))\n");
+    out("    (br_if $done (i32.eqz (local.get $i)))\n");
     emit_indent();
-    printf("    (drop (call $putchar (i32.add (i32.const 48) (i32.div_u (local.get $frac_part) (local.get $i)))))\n");
+    out("    (drop (call $putchar (i32.add (i32.const 48) (i32.div_u (local.get $frac_part) (local.get $i)))))\n");
     emit_indent();
-    printf("    (local.set $frac_part (i32.rem_u (local.get $frac_part) (local.get $i)))\n");
+    out("    (local.set $frac_part (i32.rem_u (local.get $frac_part) (local.get $i)))\n");
     emit_indent();
-    printf("    (local.set $i (i32.div_u (local.get $i) (i32.const 10)))\n");
+    out("    (local.set $i (i32.div_u (local.get $i) (i32.const 10)))\n");
     emit_indent();
-    printf("    (br $lp)\n");
+    out("    (br $lp)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     emit_indent();
-    printf("(func $malloc (param $size i32) (result i32)\n");
+    out("(func $malloc (param $size i32) (result i32)\n");
     emit_indent();
-    printf("  (local $total i32)\n");
+    out("  (local $total i32)\n");
     emit_indent();
-    printf("  (local $cur i32)\n");
+    out("  (local $cur i32)\n");
     emit_indent();
-    printf("  (local $prev i32)\n");
+    out("  (local $prev i32)\n");
     emit_indent();
-    printf("  (local $rest i32)\n");
+    out("  (local $rest i32)\n");
     emit_indent();
-    printf("  (local $ptr i32)\n");
+    out("  (local $ptr i32)\n");
     emit_indent();
-    printf("  (local.set $total\n");
+    out("  (local.set $total\n");
     emit_indent();
-    printf("    (i32.and (i32.add (local.get $size) (i32.const 15)) (i32.const -8)))\n");
+    out("    (i32.and (i32.add (local.get $size) (i32.const 15)) (i32.const -8)))\n");
     emit_indent();
-    printf("  (local.set $prev (i32.const 0))\n");
+    out("  (local.set $prev (i32.const 0))\n");
     emit_indent();
-    printf("  (local.set $cur (global.get $__free_list))\n");
+    out("  (local.set $cur (global.get $__free_list))\n");
     emit_indent();
-    printf("  (block $done\n");
+    out("  (block $done\n");
     emit_indent();
-    printf("    (loop $search\n");
+    out("    (loop $search\n");
     emit_indent();
-    printf("      (br_if $done (i32.eqz (local.get $cur)))\n");
+    out("      (br_if $done (i32.eqz (local.get $cur)))\n");
     emit_indent();
-    printf("      (if (i32.ge_u (i32.load (local.get $cur)) (local.get $total))\n");
+    out("      (if (i32.ge_u (i32.load (local.get $cur)) (local.get $total))\n");
     emit_indent();
-    printf("        (then\n");
+    out("        (then\n");
     emit_indent();
-    printf("          (if (i32.ge_u (i32.load (local.get $cur)) (i32.add (local.get $total) (i32.const 16)))\n");
+    out("          (if (i32.ge_u (i32.load (local.get $cur)) (i32.add (local.get $total) (i32.const 16)))\n");
     emit_indent();
-    printf("            (then\n");
+    out("            (then\n");
     emit_indent();
-    printf("              (local.set $rest (i32.add (local.get $cur) (local.get $total)))\n");
+    out("              (local.set $rest (i32.add (local.get $cur) (local.get $total)))\n");
     emit_indent();
-    printf("              (i32.store (local.get $rest)\n");
+    out("              (i32.store (local.get $rest)\n");
     emit_indent();
-    printf("                (i32.sub (i32.load (local.get $cur)) (local.get $total)))\n");
+    out("                (i32.sub (i32.load (local.get $cur)) (local.get $total)))\n");
     emit_indent();
-    printf("              (i32.store offset=4 (local.get $rest)\n");
+    out("              (i32.store offset=4 (local.get $rest)\n");
     emit_indent();
-    printf("                (i32.load offset=4 (local.get $cur)))\n");
+    out("                (i32.load offset=4 (local.get $cur)))\n");
     emit_indent();
-    printf("              (i32.store (local.get $cur) (local.get $total))\n");
+    out("              (i32.store (local.get $cur) (local.get $total))\n");
     emit_indent();
-    printf("              (if (local.get $prev)\n");
+    out("              (if (local.get $prev)\n");
     emit_indent();
-    printf("                (then\n");
+    out("                (then\n");
     emit_indent();
-    printf("                  (i32.store offset=4 (local.get $prev) (local.get $rest)))\n");
+    out("                  (i32.store offset=4 (local.get $prev) (local.get $rest)))\n");
     emit_indent();
-    printf("                (else\n");
+    out("                (else\n");
     emit_indent();
-    printf("                  (global.set $__free_list (local.get $rest))))\n");
+    out("                  (global.set $__free_list (local.get $rest))))\n");
     emit_indent();
-    printf("            )\n");
+    out("            )\n");
     emit_indent();
-    printf("            (else\n");
+    out("            (else\n");
     emit_indent();
-    printf("              (if (local.get $prev)\n");
+    out("              (if (local.get $prev)\n");
     emit_indent();
-    printf("                (then\n");
+    out("                (then\n");
     emit_indent();
-    printf("                  (i32.store offset=4 (local.get $prev)\n");
+    out("                  (i32.store offset=4 (local.get $prev)\n");
     emit_indent();
-    printf("                    (i32.load offset=4 (local.get $cur))))\n");
+    out("                    (i32.load offset=4 (local.get $cur))))\n");
     emit_indent();
-    printf("                (else\n");
+    out("                (else\n");
     emit_indent();
-    printf("                  (global.set $__free_list\n");
+    out("                  (global.set $__free_list\n");
     emit_indent();
-    printf("                    (i32.load offset=4 (local.get $cur)))))\n");
+    out("                    (i32.load offset=4 (local.get $cur)))))\n");
     emit_indent();
-    printf("          ))\n");
+    out("          ))\n");
     emit_indent();
-    printf("          (return (i32.add (local.get $cur) (i32.const 8)))\n");
+    out("          (return (i32.add (local.get $cur) (i32.const 8)))\n");
     emit_indent();
-    printf("        )\n");
+    out("        )\n");
     emit_indent();
-    printf("      )\n");
+    out("      )\n");
     emit_indent();
-    printf("      (local.set $prev (local.get $cur))\n");
+    out("      (local.set $prev (local.get $cur))\n");
     emit_indent();
-    printf("      (local.set $cur (i32.load offset=4 (local.get $cur)))\n");
+    out("      (local.set $cur (i32.load offset=4 (local.get $cur)))\n");
     emit_indent();
-    printf("      (br $search)\n");
+    out("      (br $search)\n");
     emit_indent();
-    printf("    )\n");
+    out("    )\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf("  (local.set $ptr (global.get $__heap_ptr))\n");
+    out("  (local.set $ptr (global.get $__heap_ptr))\n");
     emit_indent();
-    printf("  (i32.store (local.get $ptr) (local.get $total))\n");
+    out("  (i32.store (local.get $ptr) (local.get $total))\n");
     emit_indent();
-    printf("  (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $total)))\n");
+    out("  (global.set $__heap_ptr (i32.add (local.get $ptr) (local.get $total)))\n");
     emit_indent();
-    printf("  (i32.add (local.get $ptr) (i32.const 8))\n");
+    out("  (i32.add (local.get $ptr) (i32.const 8))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $free (param $ptr i32)\n");
+    out("(func $free (param $ptr i32)\n");
     emit_indent();
-    printf("  (local $block i32)\n");
+    out("  (local $block i32)\n");
     emit_indent();
-    printf("  (local $cur i32)\n");
+    out("  (local $cur i32)\n");
     emit_indent();
-    printf("  (local $prev i32)\n");
+    out("  (local $prev i32)\n");
     emit_indent();
-    printf("  (local $next_blk i32)\n");
+    out("  (local $next_blk i32)\n");
     emit_indent();
-    printf("  (if (i32.eqz (local.get $ptr)) (then (return)))\n");
+    out("  (if (i32.eqz (local.get $ptr)) (then (return)))\n");
     emit_indent();
-    printf("  (local.set $block (i32.sub (local.get $ptr) (i32.const 8)))\n");
+    out("  (local.set $block (i32.sub (local.get $ptr) (i32.const 8)))\n");
     emit_indent();
-    printf("  (local.set $prev (i32.const 0))\n");
+    out("  (local.set $prev (i32.const 0))\n");
     emit_indent();
-    printf("  (local.set $cur (global.get $__free_list))\n");
+    out("  (local.set $cur (global.get $__free_list))\n");
     emit_indent();
-    printf("  (block $found\n");
+    out("  (block $found\n");
     emit_indent();
-    printf("    (loop $scan\n");
+    out("    (loop $scan\n");
     emit_indent();
-    printf("      (br_if $found (i32.eqz (local.get $cur)))\n");
+    out("      (br_if $found (i32.eqz (local.get $cur)))\n");
     emit_indent();
-    printf("      (br_if $found (i32.gt_u (local.get $cur) (local.get $block)))\n");
+    out("      (br_if $found (i32.gt_u (local.get $cur) (local.get $block)))\n");
     emit_indent();
-    printf("      (local.set $prev (local.get $cur))\n");
+    out("      (local.set $prev (local.get $cur))\n");
     emit_indent();
-    printf("      (local.set $cur (i32.load offset=4 (local.get $cur)))\n");
+    out("      (local.set $cur (i32.load offset=4 (local.get $cur)))\n");
     emit_indent();
-    printf("      (br $scan)\n");
+    out("      (br $scan)\n");
     emit_indent();
-    printf("    )\n");
+    out("    )\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf("  (i32.store offset=4 (local.get $block) (local.get $cur))\n");
+    out("  (i32.store offset=4 (local.get $block) (local.get $cur))\n");
     emit_indent();
-    printf("  (if (local.get $prev)\n");
+    out("  (if (local.get $prev)\n");
     emit_indent();
-    printf("    (then (i32.store offset=4 (local.get $prev) (local.get $block)))\n");
+    out("    (then (i32.store offset=4 (local.get $prev) (local.get $block)))\n");
     emit_indent();
-    printf("    (else (global.set $__free_list (local.get $block)))\n");
+    out("    (else (global.set $__free_list (local.get $block)))\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf("  (if (i32.and\n");
+    out("  (if (i32.and\n");
     emit_indent();
-    printf("        (i32.ne (local.get $cur) (i32.const 0))\n");
+    out("        (i32.ne (local.get $cur) (i32.const 0))\n");
     emit_indent();
-    printf("        (i32.eq (i32.add (local.get $block) (i32.load (local.get $block)))\n");
+    out("        (i32.eq (i32.add (local.get $block) (i32.load (local.get $block)))\n");
     emit_indent();
-    printf("                (local.get $cur)))\n");
+    out("                (local.get $cur)))\n");
     emit_indent();
-    printf("    (then\n");
+    out("    (then\n");
     emit_indent();
-    printf("      (i32.store (local.get $block)\n");
+    out("      (i32.store (local.get $block)\n");
     emit_indent();
-    printf("        (i32.add (i32.load (local.get $block)) (i32.load (local.get $cur))))\n");
+    out("        (i32.add (i32.load (local.get $block)) (i32.load (local.get $cur))))\n");
     emit_indent();
-    printf("      (i32.store offset=4 (local.get $block)\n");
+    out("      (i32.store offset=4 (local.get $block)\n");
     emit_indent();
-    printf("        (i32.load offset=4 (local.get $cur)))\n");
+    out("        (i32.load offset=4 (local.get $cur)))\n");
     emit_indent();
-    printf("    )\n");
+    out("    )\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf("  (if (i32.and\n");
+    out("  (if (i32.and\n");
     emit_indent();
-    printf("        (i32.ne (local.get $prev) (i32.const 0))\n");
+    out("        (i32.ne (local.get $prev) (i32.const 0))\n");
     emit_indent();
-    printf("        (i32.eq (i32.add (local.get $prev) (i32.load (local.get $prev)))\n");
+    out("        (i32.eq (i32.add (local.get $prev) (i32.load (local.get $prev)))\n");
     emit_indent();
-    printf("                (local.get $block)))\n");
+    out("                (local.get $block)))\n");
     emit_indent();
-    printf("    (then\n");
+    out("    (then\n");
     emit_indent();
-    printf("      (i32.store (local.get $prev)\n");
+    out("      (i32.store (local.get $prev)\n");
     emit_indent();
-    printf("        (i32.add (i32.load (local.get $prev)) (i32.load (local.get $block))))\n");
+    out("        (i32.add (i32.load (local.get $prev)) (i32.load (local.get $block))))\n");
     emit_indent();
-    printf("      (i32.store offset=4 (local.get $prev)\n");
+    out("      (i32.store offset=4 (local.get $prev)\n");
     emit_indent();
-    printf("        (i32.load offset=4 (local.get $block)))\n");
+    out("        (i32.load offset=4 (local.get $block)))\n");
     emit_indent();
-    printf("    )\n");
+    out("    )\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $strlen (param $s i32) (result i32)\n");
+    out("(func $strlen (param $s i32) (result i32)\n");
     emit_indent();
-    printf("  (local $n i32)\n");
+    out("  (local $n i32)\n");
     emit_indent();
-    printf("  (local.set $n (i32.const 0))\n");
+    out("  (local.set $n (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $next\n");
+    out("  (block $done (loop $next\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $s) (local.get $n)))))\n");
+    out("    (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $s) (local.get $n)))))\n");
     emit_indent();
-    printf("    (local.set $n (i32.add (local.get $n) (i32.const 1)))\n");
+    out("    (local.set $n (i32.add (local.get $n) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $next)\n");
+    out("    (br $next)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("  (local.get $n)\n");
+    out("  (local.get $n)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $strcmp (param $a i32) (param $b i32) (result i32)\n");
+    out("(func $strcmp (param $a i32) (param $b i32) (result i32)\n");
     emit_indent();
-    printf("  (local $ca i32) (local $cb i32)\n");
+    out("  (local $ca i32) (local $cb i32)\n");
     emit_indent();
-    printf("  (block $done (loop $next\n");
+    out("  (block $done (loop $next\n");
     emit_indent();
-    printf("    (local.set $ca (i32.load8_u (local.get $a)))\n");
+    out("    (local.set $ca (i32.load8_u (local.get $a)))\n");
     emit_indent();
-    printf("    (local.set $cb (i32.load8_u (local.get $b)))\n");
+    out("    (local.set $cb (i32.load8_u (local.get $b)))\n");
     emit_indent();
-    printf("    (br_if $done (i32.ne (local.get $ca) (local.get $cb)))\n");
+    out("    (br_if $done (i32.ne (local.get $ca) (local.get $cb)))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $ca)))\n");
+    out("    (br_if $done (i32.eqz (local.get $ca)))\n");
     emit_indent();
-    printf("    (local.set $a (i32.add (local.get $a) (i32.const 1)))\n");
+    out("    (local.set $a (i32.add (local.get $a) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $b (i32.add (local.get $b) (i32.const 1)))\n");
+    out("    (local.set $b (i32.add (local.get $b) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $next)\n");
+    out("    (br $next)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("  (i32.sub (local.get $ca) (local.get $cb))\n");
+    out("  (i32.sub (local.get $ca) (local.get $cb))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $strncpy (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
+    out("(func $strncpy (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (local $i i32)\n");
+    out("  (local $i i32)\n");
     emit_indent();
-    printf("  (local.set $i (i32.const 0))\n");
+    out("  (local.set $i (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $next\n");
+    out("  (block $done (loop $next\n");
     emit_indent();
-    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    out("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
     emit_indent();
-    printf("    (i32.store8 (i32.add (local.get $dst) (local.get $i))\n");
+    out("    (i32.store8 (i32.add (local.get $dst) (local.get $i))\n");
     emit_indent();
-    printf("      (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n");
+    out("      (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $src) (local.get $i)))))\n");
+    out("    (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $src) (local.get $i)))))\n");
     emit_indent();
-    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $next)\n");
+    out("    (br $next)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("  (local.get $dst)\n");
+    out("  (local.get $dst)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $memcpy (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
+    out("(func $memcpy (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (local $i i32)\n");
+    out("  (local $i i32)\n");
     emit_indent();
-    printf("  (local.set $i (i32.const 0))\n");
+    out("  (local.set $i (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $next\n");
+    out("  (block $done (loop $next\n");
     emit_indent();
-    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    out("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
     emit_indent();
-    printf("    (i32.store8 (i32.add (local.get $dst) (local.get $i))\n");
+    out("    (i32.store8 (i32.add (local.get $dst) (local.get $i))\n");
     emit_indent();
-    printf("      (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n");
+    out("      (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n");
     emit_indent();
-    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $next)\n");
+    out("    (br $next)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("  (local.get $dst)\n");
+    out("  (local.get $dst)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $memset (param $dst i32) (param $val i32) (param $n i32) (result i32)\n");
+    out("(func $memset (param $dst i32) (param $val i32) (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (local $i i32)\n");
+    out("  (local $i i32)\n");
     emit_indent();
-    printf("  (local.set $i (i32.const 0))\n");
+    out("  (local.set $i (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $next\n");
+    out("  (block $done (loop $next\n");
     emit_indent();
-    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    out("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
     emit_indent();
-    printf("    (i32.store8 (i32.add (local.get $dst) (local.get $i)) (local.get $val))\n");
+    out("    (i32.store8 (i32.add (local.get $dst) (local.get $i)) (local.get $val))\n");
     emit_indent();
-    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $next)\n");
+    out("    (br $next)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("  (local.get $dst)\n");
+    out("  (local.get $dst)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
 
     emit_indent();
-    printf("(func $memcmp (param $a i32) (param $b i32) (param $n i32) (result i32)\n");
+    out("(func $memcmp (param $a i32) (param $b i32) (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (local $i i32) (local $ca i32) (local $cb i32)\n");
+    out("  (local $i i32) (local $ca i32) (local $cb i32)\n");
     emit_indent();
-    printf("  (local.set $i (i32.const 0))\n");
+    out("  (local.set $i (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $next\n");
+    out("  (block $done (loop $next\n");
     emit_indent();
-    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    out("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
     emit_indent();
-    printf("    (local.set $ca (i32.load8_u (i32.add (local.get $a) (local.get $i))))\n");
+    out("    (local.set $ca (i32.load8_u (i32.add (local.get $a) (local.get $i))))\n");
     emit_indent();
-    printf("    (local.set $cb (i32.load8_u (i32.add (local.get $b) (local.get $i))))\n");
+    out("    (local.set $cb (i32.load8_u (i32.add (local.get $b) (local.get $i))))\n");
     emit_indent();
-    printf("    (if (i32.ne (local.get $ca) (local.get $cb))\n");
+    out("    (if (i32.ne (local.get $ca) (local.get $cb))\n");
     emit_indent();
-    printf("      (then (return (i32.sub (local.get $ca) (local.get $cb))))\n");
+    out("      (then (return (i32.sub (local.get $ca) (local.get $cb))))\n");
     emit_indent();
-    printf("    )\n");
+    out("    )\n");
     emit_indent();
-    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $next)\n");
+    out("    (br $next)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("  (i32.const 0)\n");
+    out("  (i32.const 0)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* --- new libc helper functions --- */
 
     /* isdigit */
     emit_indent();
-    printf("(func $isdigit (param $c i32) (result i32)\n");
+    out("(func $isdigit (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.and\n");
+    out("  (i32.and\n");
     emit_indent();
-    printf("    (i32.ge_u (local.get $c) (i32.const 48))\n");
+    out("    (i32.ge_u (local.get $c) (i32.const 48))\n");
     emit_indent();
-    printf("    (i32.le_u (local.get $c) (i32.const 57)))\n");
+    out("    (i32.le_u (local.get $c) (i32.const 57)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* isalpha */
     emit_indent();
-    printf("(func $isalpha (param $c i32) (result i32)\n");
+    out("(func $isalpha (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.or\n");
+    out("  (i32.or\n");
     emit_indent();
-    printf("    (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 90)))\n");
+    out("    (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 90)))\n");
     emit_indent();
-    printf("    (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 122))))\n");
+    out("    (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 122))))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* isalnum */
     emit_indent();
-    printf("(func $isalnum (param $c i32) (result i32)\n");
+    out("(func $isalnum (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.or (call $isdigit (local.get $c)) (call $isalpha (local.get $c)))\n");
+    out("  (i32.or (call $isdigit (local.get $c)) (call $isalpha (local.get $c)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* isspace */
     emit_indent();
-    printf("(func $isspace (param $c i32) (result i32)\n");
+    out("(func $isspace (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.or\n");
+    out("  (i32.or\n");
     emit_indent();
-    printf("    (i32.or\n");
+    out("    (i32.or\n");
     emit_indent();
-    printf("      (i32.eq (local.get $c) (i32.const 32))\n");
+    out("      (i32.eq (local.get $c) (i32.const 32))\n");
     emit_indent();
-    printf("      (i32.eq (local.get $c) (i32.const 9)))\n");
+    out("      (i32.eq (local.get $c) (i32.const 9)))\n");
     emit_indent();
-    printf("    (i32.or\n");
+    out("    (i32.or\n");
     emit_indent();
-    printf("      (i32.eq (local.get $c) (i32.const 10))\n");
+    out("      (i32.eq (local.get $c) (i32.const 10))\n");
     emit_indent();
-    printf("      (i32.or\n");
+    out("      (i32.or\n");
     emit_indent();
-    printf("        (i32.eq (local.get $c) (i32.const 13))\n");
+    out("        (i32.eq (local.get $c) (i32.const 13))\n");
     emit_indent();
-    printf("        (i32.eq (local.get $c) (i32.const 12)))))\n");
+    out("        (i32.eq (local.get $c) (i32.const 12)))))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* isupper */
     emit_indent();
-    printf("(func $isupper (param $c i32) (result i32)\n");
+    out("(func $isupper (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 90)))\n");
+    out("  (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 90)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* islower */
     emit_indent();
-    printf("(func $islower (param $c i32) (result i32)\n");
+    out("(func $islower (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 122)))\n");
+    out("  (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 122)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* isprint */
     emit_indent();
-    printf("(func $isprint (param $c i32) (result i32)\n");
+    out("(func $isprint (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.and (i32.ge_u (local.get $c) (i32.const 32)) (i32.le_u (local.get $c) (i32.const 126)))\n");
+    out("  (i32.and (i32.ge_u (local.get $c) (i32.const 32)) (i32.le_u (local.get $c) (i32.const 126)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* ispunct */
     emit_indent();
-    printf("(func $ispunct (param $c i32) (result i32)\n");
+    out("(func $ispunct (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.and (call $isprint (local.get $c))\n");
+    out("  (i32.and (call $isprint (local.get $c))\n");
     emit_indent();
-    printf("    (i32.and (i32.eqz (call $isalnum (local.get $c)))\n");
+    out("    (i32.and (i32.eqz (call $isalnum (local.get $c)))\n");
     emit_indent();
-    printf("             (i32.ne (local.get $c) (i32.const 32))))\n");
+    out("             (i32.ne (local.get $c) (i32.const 32))))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* isxdigit */
     emit_indent();
-    printf("(func $isxdigit (param $c i32) (result i32)\n");
+    out("(func $isxdigit (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.or (call $isdigit (local.get $c))\n");
+    out("  (i32.or (call $isdigit (local.get $c))\n");
     emit_indent();
-    printf("    (i32.or\n");
+    out("    (i32.or\n");
     emit_indent();
-    printf("      (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 70)))\n");
+    out("      (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 70)))\n");
     emit_indent();
-    printf("      (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 102)))))\n");
+    out("      (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 102)))))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* toupper */
     emit_indent();
-    printf("(func $toupper (param $c i32) (result i32)\n");
+    out("(func $toupper (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (if (result i32) (call $islower (local.get $c))\n");
+    out("  (if (result i32) (call $islower (local.get $c))\n");
     emit_indent();
-    printf("    (then (i32.sub (local.get $c) (i32.const 32)))\n");
+    out("    (then (i32.sub (local.get $c) (i32.const 32)))\n");
     emit_indent();
-    printf("    (else (local.get $c)))\n");
+    out("    (else (local.get $c)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* tolower */
     emit_indent();
-    printf("(func $tolower (param $c i32) (result i32)\n");
+    out("(func $tolower (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (if (result i32) (call $isupper (local.get $c))\n");
+    out("  (if (result i32) (call $isupper (local.get $c))\n");
     emit_indent();
-    printf("    (then (i32.add (local.get $c) (i32.const 32)))\n");
+    out("    (then (i32.add (local.get $c) (i32.const 32)))\n");
     emit_indent();
-    printf("    (else (local.get $c)))\n");
+    out("    (else (local.get $c)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* abs */
     emit_indent();
-    printf("(func $abs (param $n i32) (result i32)\n");
+    out("(func $abs (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (if (result i32) (i32.lt_s (local.get $n) (i32.const 0))\n");
+    out("  (if (result i32) (i32.lt_s (local.get $n) (i32.const 0))\n");
     emit_indent();
-    printf("    (then (i32.sub (i32.const 0) (local.get $n)))\n");
+    out("    (then (i32.sub (i32.const 0) (local.get $n)))\n");
     emit_indent();
-    printf("    (else (local.get $n)))\n");
+    out("    (else (local.get $n)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* atoi */
     emit_indent();
-    printf("(func $atoi (param $s i32) (result i32)\n");
+    out("(func $atoi (param $s i32) (result i32)\n");
     emit_indent();
-    printf("  (local $n i32) (local $neg i32) (local $c i32)\n");
+    out("  (local $n i32) (local $neg i32) (local $c i32)\n");
     emit_indent();
-    printf("  (local.set $n (i32.const 0))\n");
+    out("  (local.set $n (i32.const 0))\n");
     emit_indent();
-    printf("  (local.set $neg (i32.const 0))\n");
+    out("  (local.set $neg (i32.const 0))\n");
     emit_indent();
-    printf("  (block $dsp (loop $sp\n");
+    out("  (block $dsp (loop $sp\n");
     emit_indent();
-    printf("    (local.set $c (i32.load8_u (local.get $s)))\n");
+    out("    (local.set $c (i32.load8_u (local.get $s)))\n");
     emit_indent();
-    printf("    (br_if $dsp (i32.ne (local.get $c) (i32.const 32)))\n");
+    out("    (br_if $dsp (i32.ne (local.get $c) (i32.const 32)))\n");
     emit_indent();
-    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    out("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $sp)))\n");
+    out("    (br $sp)))\n");
     emit_indent();
-    printf("  (local.set $c (i32.load8_u (local.get $s)))\n");
+    out("  (local.set $c (i32.load8_u (local.get $s)))\n");
     emit_indent();
-    printf("  (if (i32.eq (local.get $c) (i32.const 45))\n");
+    out("  (if (i32.eq (local.get $c) (i32.const 45))\n");
     emit_indent();
-    printf("    (then (local.set $neg (i32.const 1))\n");
+    out("    (then (local.set $neg (i32.const 1))\n");
     emit_indent();
-    printf("           (local.set $s (i32.add (local.get $s) (i32.const 1)))))\n");
+    out("           (local.set $s (i32.add (local.get $s) (i32.const 1)))))\n");
     emit_indent();
-    printf("  (if (i32.eq (local.get $c) (i32.const 43))\n");
+    out("  (if (i32.eq (local.get $c) (i32.const 43))\n");
     emit_indent();
-    printf("    (then (local.set $s (i32.add (local.get $s) (i32.const 1)))))\n");
+    out("    (then (local.set $s (i32.add (local.get $s) (i32.const 1)))))\n");
     emit_indent();
-    printf("  (block $done (loop $dig\n");
+    out("  (block $done (loop $dig\n");
     emit_indent();
-    printf("    (local.set $c (i32.load8_u (local.get $s)))\n");
+    out("    (local.set $c (i32.load8_u (local.get $s)))\n");
     emit_indent();
-    printf("    (br_if $done (i32.or (i32.lt_u (local.get $c) (i32.const 48)) (i32.gt_u (local.get $c) (i32.const 57))))\n");
+    out("    (br_if $done (i32.or (i32.lt_u (local.get $c) (i32.const 48)) (i32.gt_u (local.get $c) (i32.const 57))))\n");
     emit_indent();
-    printf("    (local.set $n (i32.add (i32.mul (local.get $n) (i32.const 10)) (i32.sub (local.get $c) (i32.const 48))))\n");
+    out("    (local.set $n (i32.add (i32.mul (local.get $n) (i32.const 10)) (i32.sub (local.get $c) (i32.const 48))))\n");
     emit_indent();
-    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    out("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $dig)))\n");
+    out("    (br $dig)))\n");
     emit_indent();
-    printf("  (if (result i32) (local.get $neg) (then (i32.sub (i32.const 0) (local.get $n))) (else (local.get $n)))\n");
+    out("  (if (result i32) (local.get $neg) (then (i32.sub (i32.const 0) (local.get $n))) (else (local.get $n)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* srand */
     emit_indent();
-    printf("(func $srand (param $seed i32)\n");
+    out("(func $srand (param $seed i32)\n");
     emit_indent();
-    printf("  (global.set $__rand_seed (local.get $seed))\n");
+    out("  (global.set $__rand_seed (local.get $seed))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* rand */
     emit_indent();
-    printf("(func $rand (result i32)\n");
+    out("(func $rand (result i32)\n");
     emit_indent();
-    printf("  (global.set $__rand_seed\n");
+    out("  (global.set $__rand_seed\n");
     emit_indent();
-    printf("    (i32.add (i32.mul (global.get $__rand_seed) (i32.const 1103515245)) (i32.const 12345)))\n");
+    out("    (i32.add (i32.mul (global.get $__rand_seed) (i32.const 1103515245)) (i32.const 12345)))\n");
     emit_indent();
-    printf("  (i32.and (i32.shr_u (global.get $__rand_seed) (i32.const 16)) (i32.const 32767))\n");
+    out("  (i32.and (i32.shr_u (global.get $__rand_seed) (i32.const 16)) (i32.const 32767))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* calloc */
     emit_indent();
-    printf("(func $calloc (param $nmemb i32) (param $size i32) (result i32)\n");
+    out("(func $calloc (param $nmemb i32) (param $size i32) (result i32)\n");
     emit_indent();
-    printf("  (local $ptr i32) (local $total i32)\n");
+    out("  (local $ptr i32) (local $total i32)\n");
     emit_indent();
-    printf("  (local.set $total (i32.mul (local.get $nmemb) (local.get $size)))\n");
+    out("  (local.set $total (i32.mul (local.get $nmemb) (local.get $size)))\n");
     emit_indent();
-    printf("  (local.set $ptr (call $malloc (local.get $total)))\n");
+    out("  (local.set $ptr (call $malloc (local.get $total)))\n");
     emit_indent();
-    printf("  (drop (call $memset (local.get $ptr) (i32.const 0) (local.get $total)))\n");
+    out("  (drop (call $memset (local.get $ptr) (i32.const 0) (local.get $total)))\n");
     emit_indent();
-    printf("  (local.get $ptr)\n");
+    out("  (local.get $ptr)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* strcpy */
     emit_indent();
-    printf("(func $strcpy (param $dst i32) (param $src i32) (result i32)\n");
+    out("(func $strcpy (param $dst i32) (param $src i32) (result i32)\n");
     emit_indent();
-    printf("  (local $d i32)\n");
+    out("  (local $d i32)\n");
     emit_indent();
-    printf("  (local.set $d (local.get $dst))\n");
+    out("  (local.set $d (local.get $dst))\n");
     emit_indent();
-    printf("  (block $done (loop $copy\n");
+    out("  (block $done (loop $copy\n");
     emit_indent();
-    printf("    (i32.store8 (local.get $d) (i32.load8_u (local.get $src)))\n");
+    out("    (i32.store8 (local.get $d) (i32.load8_u (local.get $src)))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (i32.load8_u (local.get $src))))\n");
+    out("    (br_if $done (i32.eqz (i32.load8_u (local.get $src))))\n");
     emit_indent();
-    printf("    (local.set $d (i32.add (local.get $d) (i32.const 1)))\n");
+    out("    (local.set $d (i32.add (local.get $d) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $src (i32.add (local.get $src) (i32.const 1)))\n");
+    out("    (local.set $src (i32.add (local.get $src) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $copy)))\n");
+    out("    (br $copy)))\n");
     emit_indent();
-    printf("  (local.get $dst)\n");
+    out("  (local.get $dst)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* strcat */
     emit_indent();
-    printf("(func $strcat (param $dst i32) (param $src i32) (result i32)\n");
+    out("(func $strcat (param $dst i32) (param $src i32) (result i32)\n");
     emit_indent();
-    printf("  (local $d i32)\n");
+    out("  (local $d i32)\n");
     emit_indent();
-    printf("  (local.set $d (i32.add (local.get $dst) (call $strlen (local.get $dst))))\n");
+    out("  (local.set $d (i32.add (local.get $dst) (call $strlen (local.get $dst))))\n");
     emit_indent();
-    printf("  (drop (call $strcpy (local.get $d) (local.get $src)))\n");
+    out("  (drop (call $strcpy (local.get $d) (local.get $src)))\n");
     emit_indent();
-    printf("  (local.get $dst)\n");
+    out("  (local.get $dst)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* strchr */
     emit_indent();
-    printf("(func $strchr (param $s i32) (param $c i32) (result i32)\n");
+    out("(func $strchr (param $s i32) (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (local $ch i32)\n");
+    out("  (local $ch i32)\n");
     emit_indent();
-    printf("  (block $done (loop $scan\n");
+    out("  (block $done (loop $scan\n");
     emit_indent();
-    printf("    (local.set $ch (i32.load8_u (local.get $s)))\n");
+    out("    (local.set $ch (i32.load8_u (local.get $s)))\n");
     emit_indent();
-    printf("    (if (i32.eq (local.get $ch) (local.get $c)) (then (return (local.get $s))))\n");
+    out("    (if (i32.eq (local.get $ch) (local.get $c)) (then (return (local.get $s))))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $ch)))\n");
+    out("    (br_if $done (i32.eqz (local.get $ch)))\n");
     emit_indent();
-    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    out("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $scan)))\n");
+    out("    (br $scan)))\n");
     emit_indent();
-    printf("  (i32.const 0)\n");
+    out("  (i32.const 0)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* strrchr */
     emit_indent();
-    printf("(func $strrchr (param $s i32) (param $c i32) (result i32)\n");
+    out("(func $strrchr (param $s i32) (param $c i32) (result i32)\n");
     emit_indent();
-    printf("  (local $last i32) (local $ch i32)\n");
+    out("  (local $last i32) (local $ch i32)\n");
     emit_indent();
-    printf("  (local.set $last (i32.const 0))\n");
+    out("  (local.set $last (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $scan\n");
+    out("  (block $done (loop $scan\n");
     emit_indent();
-    printf("    (local.set $ch (i32.load8_u (local.get $s)))\n");
+    out("    (local.set $ch (i32.load8_u (local.get $s)))\n");
     emit_indent();
-    printf("    (if (i32.eq (local.get $ch) (local.get $c)) (then (local.set $last (local.get $s))))\n");
+    out("    (if (i32.eq (local.get $ch) (local.get $c)) (then (local.set $last (local.get $s))))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $ch)))\n");
+    out("    (br_if $done (i32.eqz (local.get $ch)))\n");
     emit_indent();
-    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    out("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $scan)))\n");
+    out("    (br $scan)))\n");
     emit_indent();
-    printf("  (local.get $last)\n");
+    out("  (local.get $last)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* strstr */
     emit_indent();
-    printf("(func $strstr (param $hay i32) (param $needle i32) (result i32)\n");
+    out("(func $strstr (param $hay i32) (param $needle i32) (result i32)\n");
     emit_indent();
-    printf("  (local $h i32) (local $n i32)\n");
+    out("  (local $h i32) (local $n i32)\n");
     emit_indent();
-    printf("  (if (i32.eqz (i32.load8_u (local.get $needle))) (then (return (local.get $hay))))\n");
+    out("  (if (i32.eqz (i32.load8_u (local.get $needle))) (then (return (local.get $hay))))\n");
     emit_indent();
-    printf("  (block $notfound (loop $outer\n");
+    out("  (block $notfound (loop $outer\n");
     emit_indent();
-    printf("    (br_if $notfound (i32.eqz (i32.load8_u (local.get $hay))))\n");
+    out("    (br_if $notfound (i32.eqz (i32.load8_u (local.get $hay))))\n");
     emit_indent();
-    printf("    (local.set $h (local.get $hay))\n");
+    out("    (local.set $h (local.get $hay))\n");
     emit_indent();
-    printf("    (local.set $n (local.get $needle))\n");
+    out("    (local.set $n (local.get $needle))\n");
     emit_indent();
-    printf("    (block $nomatch (loop $inner\n");
+    out("    (block $nomatch (loop $inner\n");
     emit_indent();
-    printf("      (if (i32.eqz (i32.load8_u (local.get $n))) (then (return (local.get $hay))))\n");
+    out("      (if (i32.eqz (i32.load8_u (local.get $n))) (then (return (local.get $hay))))\n");
     emit_indent();
-    printf("      (br_if $nomatch (i32.ne (i32.load8_u (local.get $h)) (i32.load8_u (local.get $n))))\n");
+    out("      (br_if $nomatch (i32.ne (i32.load8_u (local.get $h)) (i32.load8_u (local.get $n))))\n");
     emit_indent();
-    printf("      (local.set $h (i32.add (local.get $h) (i32.const 1)))\n");
+    out("      (local.set $h (i32.add (local.get $h) (i32.const 1)))\n");
     emit_indent();
-    printf("      (local.set $n (i32.add (local.get $n) (i32.const 1)))\n");
+    out("      (local.set $n (i32.add (local.get $n) (i32.const 1)))\n");
     emit_indent();
-    printf("      (br $inner)))\n");
+    out("      (br $inner)))\n");
     emit_indent();
-    printf("    (local.set $hay (i32.add (local.get $hay) (i32.const 1)))\n");
+    out("    (local.set $hay (i32.add (local.get $hay) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $outer)))\n");
+    out("    (br $outer)))\n");
     emit_indent();
-    printf("  (i32.const 0)\n");
+    out("  (i32.const 0)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* strncmp */
     emit_indent();
-    printf("(func $strncmp (param $a i32) (param $b i32) (param $n i32) (result i32)\n");
+    out("(func $strncmp (param $a i32) (param $b i32) (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (local $i i32) (local $ca i32) (local $cb i32)\n");
+    out("  (local $i i32) (local $ca i32) (local $cb i32)\n");
     emit_indent();
-    printf("  (local.set $i (i32.const 0))\n");
+    out("  (local.set $i (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $cmp\n");
+    out("  (block $done (loop $cmp\n");
     emit_indent();
-    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    out("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
     emit_indent();
-    printf("    (local.set $ca (i32.load8_u (local.get $a)))\n");
+    out("    (local.set $ca (i32.load8_u (local.get $a)))\n");
     emit_indent();
-    printf("    (local.set $cb (i32.load8_u (local.get $b)))\n");
+    out("    (local.set $cb (i32.load8_u (local.get $b)))\n");
     emit_indent();
-    printf("    (if (i32.ne (local.get $ca) (local.get $cb))\n");
+    out("    (if (i32.ne (local.get $ca) (local.get $cb))\n");
     emit_indent();
-    printf("      (then (return (i32.sub (local.get $ca) (local.get $cb)))))\n");
+    out("      (then (return (i32.sub (local.get $ca) (local.get $cb)))))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $ca)))\n");
+    out("    (br_if $done (i32.eqz (local.get $ca)))\n");
     emit_indent();
-    printf("    (local.set $a (i32.add (local.get $a) (i32.const 1)))\n");
+    out("    (local.set $a (i32.add (local.get $a) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $b (i32.add (local.get $b) (i32.const 1)))\n");
+    out("    (local.set $b (i32.add (local.get $b) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $cmp)))\n");
+    out("    (br $cmp)))\n");
     emit_indent();
-    printf("  (i32.const 0)\n");
+    out("  (i32.const 0)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* strncat */
     emit_indent();
-    printf("(func $strncat (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
+    out("(func $strncat (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (local $d i32) (local $i i32)\n");
+    out("  (local $d i32) (local $i i32)\n");
     emit_indent();
-    printf("  (local.set $d (i32.add (local.get $dst) (call $strlen (local.get $dst))))\n");
+    out("  (local.set $d (i32.add (local.get $dst) (call $strlen (local.get $dst))))\n");
     emit_indent();
-    printf("  (local.set $i (i32.const 0))\n");
+    out("  (local.set $i (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $cp\n");
+    out("  (block $done (loop $cp\n");
     emit_indent();
-    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    out("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (i32.load8_u (local.get $src))))\n");
+    out("    (br_if $done (i32.eqz (i32.load8_u (local.get $src))))\n");
     emit_indent();
-    printf("    (i32.store8 (local.get $d) (i32.load8_u (local.get $src)))\n");
+    out("    (i32.store8 (local.get $d) (i32.load8_u (local.get $src)))\n");
     emit_indent();
-    printf("    (local.set $d (i32.add (local.get $d) (i32.const 1)))\n");
+    out("    (local.set $d (i32.add (local.get $d) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $src (i32.add (local.get $src) (i32.const 1)))\n");
+    out("    (local.set $src (i32.add (local.get $src) (i32.const 1)))\n");
     emit_indent();
-    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $cp)))\n");
+    out("    (br $cp)))\n");
     emit_indent();
-    printf("  (i32.store8 (local.get $d) (i32.const 0))\n");
+    out("  (i32.store8 (local.get $d) (i32.const 0))\n");
     emit_indent();
-    printf("  (local.get $dst)\n");
+    out("  (local.get $dst)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* memmove */
     emit_indent();
-    printf("(func $memmove (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
+    out("(func $memmove (param $dst i32) (param $src i32) (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (local $i i32)\n");
+    out("  (local $i i32)\n");
     emit_indent();
-    printf("  (if (i32.le_u (local.get $dst) (local.get $src))\n");
+    out("  (if (i32.le_u (local.get $dst) (local.get $src))\n");
     emit_indent();
-    printf("    (then (drop (call $memcpy (local.get $dst) (local.get $src) (local.get $n))))\n");
+    out("    (then (drop (call $memcpy (local.get $dst) (local.get $src) (local.get $n))))\n");
     emit_indent();
-    printf("    (else\n");
+    out("    (else\n");
     emit_indent();
-    printf("      (local.set $i (local.get $n))\n");
+    out("      (local.set $i (local.get $n))\n");
     emit_indent();
-    printf("      (block $done (loop $bk\n");
+    out("      (block $done (loop $bk\n");
     emit_indent();
-    printf("        (br_if $done (i32.eqz (local.get $i)))\n");
+    out("        (br_if $done (i32.eqz (local.get $i)))\n");
     emit_indent();
-    printf("        (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n");
+    out("        (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n");
     emit_indent();
-    printf("        (i32.store8 (i32.add (local.get $dst) (local.get $i))\n");
+    out("        (i32.store8 (i32.add (local.get $dst) (local.get $i))\n");
     emit_indent();
-    printf("                    (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n");
+    out("                    (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n");
     emit_indent();
-    printf("        (br $bk)))))\n");
+    out("        (br $bk)))))\n");
     emit_indent();
-    printf("  (local.get $dst)\n");
+    out("  (local.get $dst)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* memchr */
     emit_indent();
-    printf("(func $memchr (param $s i32) (param $c i32) (param $n i32) (result i32)\n");
+    out("(func $memchr (param $s i32) (param $c i32) (param $n i32) (result i32)\n");
     emit_indent();
-    printf("  (local $i i32)\n");
+    out("  (local $i i32)\n");
     emit_indent();
-    printf("  (local.set $i (i32.const 0))\n");
+    out("  (local.set $i (i32.const 0))\n");
     emit_indent();
-    printf("  (block $done (loop $scan\n");
+    out("  (block $done (loop $scan\n");
     emit_indent();
-    printf("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
+    out("    (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n");
     emit_indent();
-    printf("    (if (i32.eq (i32.load8_u (i32.add (local.get $s) (local.get $i))) (local.get $c))\n");
+    out("    (if (i32.eq (i32.load8_u (i32.add (local.get $s) (local.get $i))) (local.get $c))\n");
     emit_indent();
-    printf("      (then (return (i32.add (local.get $s) (local.get $i)))))\n");
+    out("      (then (return (i32.add (local.get $s) (local.get $i)))))\n");
     emit_indent();
-    printf("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+    out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $scan)))\n");
+    out("    (br $scan)))\n");
     emit_indent();
-    printf("  (i32.const 0)\n");
+    out("  (i32.const 0)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* puts */
     emit_indent();
-    printf("(func $puts (param $s i32) (result i32)\n");
+    out("(func $puts (param $s i32) (result i32)\n");
     emit_indent();
-    printf("  (local $c i32)\n");
+    out("  (local $c i32)\n");
     emit_indent();
-    printf("  (block $done (loop $pr\n");
+    out("  (block $done (loop $pr\n");
     emit_indent();
-    printf("    (local.set $c (i32.load8_u (local.get $s)))\n");
+    out("    (local.set $c (i32.load8_u (local.get $s)))\n");
     emit_indent();
-    printf("    (br_if $done (i32.eqz (local.get $c)))\n");
+    out("    (br_if $done (i32.eqz (local.get $c)))\n");
     emit_indent();
-    printf("    (drop (call $putchar (local.get $c)))\n");
+    out("    (drop (call $putchar (local.get $c)))\n");
     emit_indent();
-    printf("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+    out("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
     emit_indent();
-    printf("    (br $pr)))\n");
+    out("    (br $pr)))\n");
     emit_indent();
-    printf("  (drop (call $putchar (i32.const 10)))\n");
+    out("  (drop (call $putchar (i32.const 10)))\n");
     emit_indent();
-    printf("  (i32.const 0)\n");
+    out("  (i32.const 0)\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* strtol (simplified: base 10 only, ignores endptr) */
     emit_indent();
-    printf("(func $strtol (param $s i32) (param $endptr i32) (param $base i32) (result i32)\n");
+    out("(func $strtol (param $s i32) (param $endptr i32) (param $base i32) (result i32)\n");
     emit_indent();
-    printf("  (call $atoi (local.get $s))\n");
+    out("  (call $atoi (local.get $s))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* file I/O helpers for #include support */
     emit_indent();
-    printf("(func $__open_file (param $path i32) (param $path_len i32) (result i32)\n");
+    out("(func $__open_file (param $path i32) (param $path_len i32) (result i32)\n");
     emit_indent();
-    printf("  (if (result i32) (i32.eqz (call $__path_open\n");
+    out("  (if (result i32) (i32.eqz (call $__path_open\n");
     emit_indent();
-    printf("    (i32.const 3)\n");
+    out("    (i32.const 3)\n");
     emit_indent();
-    printf("    (i32.const 0)\n");
+    out("    (i32.const 0)\n");
     emit_indent();
-    printf("    (local.get $path)\n");
+    out("    (local.get $path)\n");
     emit_indent();
-    printf("    (local.get $path_len)\n");
+    out("    (local.get $path_len)\n");
     emit_indent();
-    printf("    (i32.const 0)\n");
+    out("    (i32.const 0)\n");
     emit_indent();
-    printf("    (i64.const 2)\n");
+    out("    (i64.const 2)\n");
     emit_indent();
-    printf("    (i64.const 0)\n");
+    out("    (i64.const 0)\n");
     emit_indent();
-    printf("    (i32.const 0)\n");
+    out("    (i32.const 0)\n");
     emit_indent();
-    printf("    (i32.const 28)\n");
+    out("    (i32.const 28)\n");
     emit_indent();
-    printf("  ))\n");
+    out("  ))\n");
     emit_indent();
-    printf("    (then (i32.load (i32.const 28)))\n");
+    out("    (then (i32.load (i32.const 28)))\n");
     emit_indent();
-    printf("    (else (i32.const -1))\n");
+    out("    (else (i32.const -1))\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     emit_indent();
-    printf("(func $__read_file (param $fd i32) (param $buf i32) (param $max_len i32) (result i32)\n");
+    out("(func $__read_file (param $fd i32) (param $buf i32) (param $max_len i32) (result i32)\n");
     emit_indent();
-    printf("  (i32.store (i32.const 16) (local.get $buf))\n");
+    out("  (i32.store (i32.const 16) (local.get $buf))\n");
     emit_indent();
-    printf("  (i32.store (i32.const 20) (local.get $max_len))\n");
+    out("  (i32.store (i32.const 20) (local.get $max_len))\n");
     emit_indent();
-    printf("  (if (result i32) (i32.eqz (call $__fd_read (local.get $fd) (i32.const 16) (i32.const 1) (i32.const 24)))\n");
+    out("  (if (result i32) (i32.eqz (call $__fd_read (local.get $fd) (i32.const 16) (i32.const 1) (i32.const 24)))\n");
     emit_indent();
-    printf("    (then (i32.load (i32.const 24)))\n");
+    out("    (then (i32.load (i32.const 24)))\n");
     emit_indent();
-    printf("    (else (i32.const -1))\n");
+    out("    (else (i32.const -1))\n");
     emit_indent();
-    printf("  )\n");
+    out("  )\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     emit_indent();
-    printf("(func $__close_file (param $fd i32)\n");
+    out("(func $__close_file (param $fd i32)\n");
     emit_indent();
-    printf("  (drop (call $__fd_close (local.get $fd)))\n");
+    out("  (drop (call $__fd_close (local.get $fd)))\n");
     emit_indent();
-    printf(")\n");
+    out(")\n");
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* user functions */
     for (i = 0; i < prog->ival2; i++) {
@@ -3003,7 +2999,7 @@ void gen_module(struct Node *prog) {
     }
 
     emit_indent();
-    printf("\n");
+    out("\n");
 
     /* _start — calls __init if needed, then main */
     {
@@ -3017,61 +3013,61 @@ void gen_module(struct Node *prog) {
         }
         if (need_init) {
             emit_indent();
-            printf("(func $__init\n");
+            out("(func $__init\n");
             indent_level++;
             emit_indent();
-            printf("(local $__ptr i32)\n");
+            out("(local $__ptr i32)\n");
             for (gi2 = 0; gi2 < nglobals; gi2++) {
                 if (globals_tbl[gi2]->gv_arr_len > 0 && globals_tbl[gi2]->gv_arr_str_ids != (int *)0) {
                     int ai2;
                     /* allocate arr_len * 4 bytes */
                     emit_indent();
-                    printf("i32.const %d\n", globals_tbl[gi2]->gv_arr_len * 4);
+                    out("i32.const "); out_d(globals_tbl[gi2]->gv_arr_len * 4); out("\n");
                     emit_indent();
-                    printf("call $malloc\n");
+                    out("call $malloc\n");
                     emit_indent();
-                    printf("local.tee $__ptr\n");
+                    out("local.tee $__ptr\n");
                     emit_indent();
-                    printf("global.set $%s\n", globals_tbl[gi2]->name);
+                    out("global.set $"); out(globals_tbl[gi2]->name); out("\n");
                     /* store each element */
                     for (ai2 = 0; ai2 < globals_tbl[gi2]->gv_arr_len; ai2++) {
                         emit_indent();
-                        printf("local.get $__ptr\n");
+                        out("local.get $__ptr\n");
                         if (ai2 > 0) {
                             emit_indent();
-                            printf("i32.const %d\n", ai2 * 4);
+                            out("i32.const "); out_d(ai2 * 4); out("\n");
                             emit_indent();
-                            printf("i32.add\n");
+                            out("i32.add\n");
                         }
                         emit_indent();
-                        printf("i32.const %d\n", str_table[globals_tbl[gi2]->gv_arr_str_ids[ai2]]->offset);
+                        out("i32.const "); out_d(str_table[globals_tbl[gi2]->gv_arr_str_ids[ai2]]->offset); out("\n");
                         emit_indent();
-                        printf("i32.store\n");
+                        out("i32.store\n");
                     }
                 }
             }
             indent_level--;
             emit_indent();
-            printf(")\n");
+            out(")\n");
         }
         emit_indent();
-        printf("(func $_start (export \"_start\")\n");
+        out("(func $_start (export \"_start\")\n");
         indent_level++;
         if (need_init) {
             emit_indent();
-            printf("call $__init\n");
+            out("call $__init\n");
         }
         emit_indent();
-        printf("call $main\n");
+        out("call $main\n");
         emit_indent();
-        printf("call $__proc_exit\n");
+        out("call $__proc_exit\n");
         indent_level--;
         emit_indent();
-        printf(")\n");
+        out(")\n");
     }
 
     indent_level--;
     emit_indent();
-    printf(")\n");
+    out(")\n");
 }
 

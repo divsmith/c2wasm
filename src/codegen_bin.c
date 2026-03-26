@@ -1,89 +1,5 @@
 /* codegen_bin.c — WASM binary emitter */
-
-/* --- Growable byte buffer --- */
-
-struct ByteVec {
-    char *data;
-    int len;
-    int cap;
-};
-
-void bv_init(struct ByteVec *v, int cap) {
-    v->data = (char *)malloc(cap);
-    v->len = 0;
-    v->cap = cap;
-}
-
-struct ByteVec *bv_new(int cap) {
-    struct ByteVec *v;
-    v = (struct ByteVec *)malloc(sizeof(struct ByteVec));
-    bv_init(v, cap);
-    return v;
-}
-
-void bv_reset(struct ByteVec *v) {
-    v->len = 0;
-}
-
-void bv_push(struct ByteVec *v, int b) {
-    char *nd;
-    if (v->len >= v->cap) {
-        nd = (char *)malloc(v->cap * 2);
-        memcpy(nd, v->data, v->len);
-        v->data = nd;
-        v->cap = v->cap * 2;
-    }
-    v->data[v->len] = (char)(b & 0xFF);
-    v->len++;
-}
-
-void bv_append(struct ByteVec *dst, struct ByteVec *src) {
-    int i;
-    for (i = 0; i < src->len; i++) {
-        bv_push(dst, src->data[i] & 0xFF);
-    }
-}
-
-void bv_u32(struct ByteVec *v, int val) {
-    int b;
-    if (val < 0) val = 0;
-    do {
-        b = val & 0x7F;
-        val = val >> 7;
-        if (val != 0) b = b | 0x80;
-        bv_push(v, b);
-    } while (val != 0);
-}
-
-void bv_i32(struct ByteVec *v, int val) {
-    int b;
-    int more;
-    more = 1;
-    while (more) {
-        b = val & 0x7F;
-        val = val >> 7;
-        if ((val == 0 && (b & 0x40) == 0) || (val == -1 && (b & 0x40) != 0)) {
-            more = 0;
-        } else {
-            b = b | 0x80;
-        }
-        bv_push(v, b);
-    }
-}
-
-void bv_name(struct ByteVec *v, char *s, int slen) {
-    int i;
-    bv_u32(v, slen);
-    for (i = 0; i < slen; i++) {
-        bv_push(v, s[i] & 0xFF);
-    }
-}
-
-void bv_section(struct ByteVec *out, int id, struct ByteVec *content) {
-    bv_push(out, id);
-    bv_u32(out, content->len);
-    bv_append(out, content);
-}
+/* ByteVec primitives are in bytevec.h / bytevec.c */
 
 /* --- Binary type deduplication --- */
 
@@ -3210,7 +3126,7 @@ void emit_helper_print_float(struct ByteVec *o) {
 /* --- Binary module codegen --- */
 
 void gen_module_bin(struct Node *prog) {
-    struct ByteVec *out;
+    struct ByteVec *bin_out;
     struct ByteVec *sec;
     struct ByteVec *fb;
     int i;
@@ -3223,7 +3139,7 @@ void gen_module_bin(struct Node *prog) {
     int ret_flt;
     int nparams2;
 
-    out = bv_new(65536);
+    bin_out = bv_new(65536);
     sec = bv_new(32768);
     fb = bv_new(8192);
 
@@ -3300,10 +3216,10 @@ void gen_module_bin(struct Node *prog) {
     bin_add_func("_start", 0, 0);
 
     /* Magic + version */
-    bv_push(out, 0x00); bv_push(out, 0x61);
-    bv_push(out, 0x73); bv_push(out, 0x6D);
-    bv_push(out, 0x01); bv_push(out, 0x00);
-    bv_push(out, 0x00); bv_push(out, 0x00);
+    bv_push(bin_out, 0x00); bv_push(bin_out, 0x61);
+    bv_push(bin_out, 0x73); bv_push(bin_out, 0x6D);
+    bv_push(bin_out, 0x01); bv_push(bin_out, 0x00);
+    bv_push(bin_out, 0x00); bv_push(bin_out, 0x00);
 
     /* Type section (id=1) */
     bv_reset(sec);
@@ -3329,7 +3245,7 @@ void gen_module_bin(struct Node *prog) {
             bv_u32(sec, 0);
         }
     }
-    bv_section(out, 1, sec);
+    bv_section(bin_out, 1, sec);
 
     /* Import section (id=2) */
     bv_reset(sec);
@@ -3346,7 +3262,7 @@ void gen_module_bin(struct Node *prog) {
     bv_name(sec, "fd_read", 7);
     bv_push(sec, 0x00);
     bv_u32(sec, bin_funcs[2]->type_idx);
-    bv_section(out, 2, sec);
+    bv_section(bin_out, 2, sec);
 
     /* Function section (id=3) */
     nlocal_funcs = bin_nfuncs - 3;
@@ -3355,7 +3271,7 @@ void gen_module_bin(struct Node *prog) {
     for (i = 3; i < bin_nfuncs; i++) {
         bv_u32(sec, bin_funcs[i]->type_idx);
     }
-    bv_section(out, 3, sec);
+    bv_section(bin_out, 3, sec);
 
     /* Table section (id=4) — only if function pointers are used */
     if (fn_table_count > 0) {
@@ -3364,15 +3280,15 @@ void gen_module_bin(struct Node *prog) {
         bv_push(sec, 0x70); /* funcref */
         bv_push(sec, 0x00); /* limits: min only */
         bv_u32(sec, fn_table_count);
-        bv_section(out, 4, sec);
+        bv_section(bin_out, 4, sec);
     }
 
     /* Memory section (id=5) */
     bv_reset(sec);
     bv_u32(sec, 1);
     bv_push(sec, 0x00);
-    bv_u32(sec, 256);
-    bv_section(out, 5, sec);
+    bv_u32(sec, 512);
+    bv_section(bin_out, 5, sec);
 
     /* Global section (id=6) */
     bv_reset(sec);
@@ -3397,7 +3313,7 @@ void gen_module_bin(struct Node *prog) {
             bv_push(sec, 0x41); bv_i32(sec, globals_tbl[i]->init_val); bv_push(sec, 0x0B);
         }
     }
-    bv_section(out, 6, sec);
+    bv_section(bin_out, 6, sec);
 
     /* Export section (id=7) */
     bv_reset(sec);
@@ -3408,7 +3324,7 @@ void gen_module_bin(struct Node *prog) {
     bv_name(sec, "_start", 6);
     bv_push(sec, 0x00);
     bv_u32(sec, bin_find_func("_start"));
-    bv_section(out, 7, sec);
+    bv_section(bin_out, 7, sec);
 
     /* Element section (id=9) — only if function pointers are used */
     if (fn_table_count > 0) {
@@ -3421,7 +3337,7 @@ void gen_module_bin(struct Node *prog) {
         for (eli = 0; eli < fn_table_count; eli++) {
             bv_u32(sec, bin_find_func(fn_table_names[eli]));
         }
-        bv_section(out, 9, sec);
+        bv_section(bin_out, 9, sec);
     }
 
     /* Code section (id=10) */
@@ -3516,7 +3432,7 @@ void gen_module_bin(struct Node *prog) {
     bv_push(fb, 0x0B);
     bv_u32(sec, fb->len);
     bv_append(sec, fb);
-    bv_section(out, 10, sec);
+    bv_section(bin_out, 10, sec);
 
     /* Data section (id=11) */
     if (nstrings > 0) {
@@ -3531,12 +3447,12 @@ void gen_module_bin(struct Node *prog) {
             }
             bv_push(sec, 0x00);
         }
-        bv_section(out, 11, sec);
+        bv_section(bin_out, 11, sec);
     }
 
     /* Write binary to stdout */
-    for (i = 0; i < out->len; i++) {
-        putchar(out->data[i] & 0xFF);
+    for (i = 0; i < bin_out->len; i++) {
+        putchar(bin_out->data[i] & 0xFF);
     }
 }
 
