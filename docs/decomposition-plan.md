@@ -6,11 +6,11 @@
 |-------|--------|-------|
 | Phase 1: #include Support | ✅ Complete | `#include "file"` preprocessing, file I/O builtins, include-once, tests 49–50 |
 | Phase 2: Multi-File Decomposition | ✅ Complete | Unity build: 16 files, all tests + bootstrap pass |
-| Phase 3: Output Abstraction | ⬜ Not started | |
-| Phase 4: WAT Assembler | ⬜ Not started | |
-| Phase 5: Remove Binary Codegen | ⬜ Not started | Depends on Phase 4 |
-| Phase 6: Simplification | ⬜ Not started | |
-| Phase 7: Documentation & CI | ⬜ Not started | |
+| Phase 3: Output Abstraction | ✅ Complete | `out()`/`out_d()`/`out_c()`/`out_x()` replace 953 printf calls |
+| Phase 4: WAT Assembler | ✅ Complete | Two-pass WAT→WASM assembler (~1,860 lines), all 50 tests pass in binary mode |
+| Phase 5: Remove Binary Codegen | ✅ Complete | Deleted codegen_bin.c (3,458 lines), self-compiled WAT shrunk 37% |
+| Phase 6: Simplification | ⬜ Not started | Optional polish: switch statements, ternary cleanup |
+| Phase 7: Documentation & CI | ✅ Complete | README.md updated with new architecture and project structure |
 
 ## Problem
 

@@ -66,7 +66,7 @@ Integer types map to `i32`. Float types use `f64` in WASM (WAT mode). Unsigned t
 
 ## How It Works
 
-### Compiler Pipeline (inside `src/c2wasm.c`)
+### Compiler Pipeline
 
 ```
 Source text
@@ -88,16 +88,17 @@ Source text
      │ Typed AST
      ▼
 ┌──────────────┐
-│ Code Gen     │  WAT text mode or WASM binary mode
+│ WAT Codegen  │  Emits WAT text (to stdout or ByteVec buffer)
 └────┬─────────┘
      │
-     ▼
-  stdout (WAT text or WASM binary)
+     ├─── WAT mode ──→ stdout (human-readable WAT)
+     │
+     └─── Binary mode ──→ [WAT Assembler] ──→ stdout (WASM binary)
 ```
 
 The compiler has two output modes:
 - **WAT mode** (`build/c2wasm`): Emits WebAssembly Text Format — human-readable, useful for debugging
-- **Binary mode** (`build/c2wasm-bin`): Emits WASM binary directly — no external assembler needed
+- **Binary mode** (`build/c2wasm-bin`): Generates WAT internally, then assembles it to WASM binary — one unified codegen path
 
 ### Browser Integration
 
@@ -111,11 +112,11 @@ The compiler has two output modes:
 | Decision | Rationale |
 |----------|-----------|
 | Integer types → `i32`, float types → `f64` | Simplicity; covers all common use cases |
-| Dual output: WAT + binary | WAT is readable; binary eliminates external assembler |
+| Dual output: WAT + binary | WAT is readable; binary uses the same WAT codegen path plus an assembler |
 | `printf` lowered at compile time | Format strings expanded to `putchar`/helper calls; no variadic WASM needed |
 | Free-list allocator with coalescing | Real `free()` enables long-running programs and libc functions |
 | 40+ inline libc functions | No external linking needed; every program is self-contained |
-| Single-file compiler | Maximizes self-hosting elegance |
+| Single-file compiler | Unity build (`c2wasm.c` #includes all files) maximizes self-hosting elegance |
 
 ---
 
@@ -191,8 +192,8 @@ make clean     # force a clean rebuild next time
 Requires `wat2wasm` and `wasmtime` on `PATH`:
 
 ```bash
-make test         # WAT path: all 39 tests + bootstrap self-hosting check
-make test-binary  # binary path: all 39 tests (only needs wasmtime, not wat2wasm)
+make test         # WAT path: all 50 tests + bootstrap self-hosting check
+make test-binary  # binary path: all 50 tests (only needs wasmtime, not wat2wasm)
 make bootstrap    # run the 3-stage bootstrap check alone
 ```
 
@@ -220,21 +221,34 @@ make serve
 
 ### Test Programs
 
-`tests/programs/` contains 48 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, function pointers, and array initializers.
+`tests/programs/` contains 50 progressive test programs, from basic returns through structs, strings, switch/case, enums, typedef, function pointers, floats, and multi-file includes.
 
 ---
 
 ## Project Structure
 
 ```
-wasm-c/
+c2wasm/
 ├── src/
-│   └── c2wasm.c              ← the compiler (~5,000 lines of C)
+│   ├── c2wasm.c              ← unity build entry (~39 lines, #includes everything)
+│   ├── constants.h           ← limits, token/node kinds, forward decls (~136 lines)
+│   ├── util.c                ← error reporting (~17 lines)
+│   ├── source.c              ← source buffer, read_source() (~25 lines)
+│   ├── lexer.h / lexer.c     ← tokenizer, #include preprocessing (~735 lines)
+│   ├── types.h / types.c     ← type registries (~275 lines)
+│   ├── ast.h / ast.c         ← AST node definition (~61 lines)
+│   ├── parser.h / parser.c   ← recursive descent parser (~1767 lines)
+│   ├── codegen.h             ← shared codegen declarations (~20 lines)
+│   ├── codegen_shared.c      ← local tracking, loop labels (~143 lines)
+│   ├── bytevec.h / bytevec.c ← growable byte buffer (~95 lines)
+│   ├── output.h / output.c   ← WAT output abstraction (~98 lines)
+│   ├── codegen_wat.c         ← WAT text emitter (~3073 lines)
+│   ├── assembler.h / .c      ← WAT → WASM binary assembler (~1863 lines)
+│   ├── file_io.c             ← native file I/O for #include (~45 lines)
+│   └── main.c                ← entry point, mode dispatch (~39 lines)
 ├── tests/
 │   ├── run_tests.sh          ← test runner (supports --binary flag)
-│   └── programs/             ← 39 test programs + expected output
-├── compiler/
-│   └── Makefile
+│   └── programs/             ← 50 test programs + expected output
 ├── demo/
 │   ├── index.html            ← browser UI
 │   ├── main.js               ← editor, pipeline, localStorage file management
@@ -244,6 +258,7 @@ wasm-c/
 │   └── style.css             ← VS Code-inspired dark theme
 ├── tools/
 │   └── bootstrap.sh          ← 3-stage self-hosting verification
+├── Makefile                  ← build, test, wasm, serve targets
 └── .github/
     └── workflows/
         └── pages.yml         ← auto-deploy demo/ to GitHub Pages (wasi-sdk)
