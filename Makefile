@@ -1,6 +1,7 @@
 CC       ?= gcc
 CFLAGS    = -Wall -Wextra -std=c11 -pedantic -O2
 SRC       = src/c2wasm.c
+FILE_IO   = src/file_io.c
 BIN       = build/c2wasm
 DEMO      = demo
 
@@ -17,13 +18,13 @@ endif
 
 all: $(BIN)
 
-$(BIN): $(SRC)
+$(BIN): $(SRC) $(FILE_IO)
 	mkdir -p $(dir $(BIN))
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $(SRC) $(FILE_IO)
 
-$(BIN)-bin: $(SRC)
+$(BIN)-bin: $(SRC) $(FILE_IO)
 	mkdir -p $(dir $(BIN))
-	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | $(CC) $(CFLAGS) -o $@ -x c -
+	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | $(CC) $(CFLAGS) -o $@ -x c - $(FILE_IO)
 
 test: $(BIN)
 	bash tests/run_tests.sh

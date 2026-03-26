@@ -143,6 +143,9 @@ enum {
 #define MAX_CASES 256
 #define MAX_ENUM_CONSTS 512
 #define MAX_TYPE_ALIASES 128
+#define MAX_INCLUDE_DEPTH 32
+#define MAX_INCLUDES 64
+#define MAX_INCLUDE_SRC 65536
 
 /* ================================================================
  * Error reporting
@@ -184,6 +187,50 @@ void read_source(void) {
         c = getchar();
     }
     src[src_len] = '\0';
+}
+
+/* ================================================================
+ * Include stack for #include support
+ * ================================================================ */
+
+int __open_file(char *path, int path_len);
+int __read_file(int fd, char *buf, int max_len);
+void __close_file(int fd);
+
+struct IncludeStack {
+    char *is_src;
+    int is_src_len;
+    int is_lex_pos;
+    int is_lex_line;
+    int is_lex_col;
+};
+
+struct IncludeStack **inc_stack;
+int inc_depth;
+
+char **inc_files;
+int ninc_files;
+
+void init_includes(void) {
+    inc_stack = (struct IncludeStack **)malloc(MAX_INCLUDE_DEPTH * sizeof(void *));
+    inc_depth = 0;
+    inc_files = (char **)malloc(MAX_INCLUDES * sizeof(char *));
+    ninc_files = 0;
+}
+
+int already_included(char *fname) {
+    int i;
+    for (i = 0; i < ninc_files; i++) {
+        if (strcmp(inc_files[i], fname) == 0) return 1;
+    }
+    return 0;
+}
+
+void mark_included(char *fname) {
+    if (ninc_files < MAX_INCLUDES) {
+        inc_files[ninc_files] = fname;
+        ninc_files++;
+    }
 }
 
 /* ================================================================
@@ -284,6 +331,34 @@ int is_alnum(char c) {
 /* Manual is_xdigit check (replaces isxdigit) */
 int is_xdigit(char c) {
     return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+void include_push(void) {
+    struct IncludeStack *frame;
+    if (inc_depth >= MAX_INCLUDE_DEPTH) {
+        error(lex_line, lex_col, "#include nested too deep");
+    }
+    frame = (struct IncludeStack *)malloc(sizeof(struct IncludeStack));
+    frame->is_src = src;
+    frame->is_src_len = src_len;
+    frame->is_lex_pos = lex_pos;
+    frame->is_lex_line = lex_line;
+    frame->is_lex_col = lex_col;
+    inc_stack[inc_depth] = frame;
+    inc_depth++;
+}
+
+int include_pop(void) {
+    struct IncludeStack *frame;
+    if (inc_depth <= 0) return 0;
+    inc_depth--;
+    frame = inc_stack[inc_depth];
+    src = frame->is_src;
+    src_len = frame->is_src_len;
+    lex_pos = frame->is_lex_pos;
+    lex_line = frame->is_lex_line;
+    lex_col = frame->is_lex_col;
+    return 1;
 }
 
 #define MAX_KW 32
@@ -431,6 +506,9 @@ struct Token *next_token(void) {
     t->col = lex_col;
 
     if (lex_pos >= src_len) {
+        if (include_pop()) {
+            return next_token();
+        }
         t->kind = TOK_EOF;
         return t;
     }
@@ -485,6 +563,54 @@ struct Token *next_token(void) {
             macros[nmacros]->name = name;
             macros[nmacros]->value = val;
             nmacros++;
+        } else if (dlen == 7 && memcmp(src + s, "include", 7) == 0) {
+            /* #include "filename" */
+            char *inc_name;
+            int inc_ni;
+            int inc_fd;
+            char *inc_buf;
+            int inc_nread;
+            while (lp() == ' ' || lp() == '\t') la();
+            if (lp() == '"') {
+                la();
+                inc_name = (char *)malloc(256);
+                inc_ni = 0;
+                while (lp() != '"' && lp() != '\n' && lex_pos < src_len) {
+                    if (inc_ni < 255) {
+                        inc_name[inc_ni] = la();
+                        inc_ni++;
+                    } else {
+                        error(lex_line, lex_col, "#include filename too long");
+                    }
+                }
+                inc_name[inc_ni] = '\0';
+                if (lp() == '"') la();
+                /* skip to end of line */
+                while (lex_pos < src_len && lp() != '\n') la();
+                if (!already_included(inc_name)) {
+                    mark_included(inc_name);
+                    inc_fd = __open_file(inc_name, inc_ni);
+                    if (inc_fd < 0) {
+                        error(lex_line, lex_col, "cannot open include file");
+                    }
+                    inc_buf = (char *)malloc(MAX_INCLUDE_SRC);
+                    inc_nread = __read_file(inc_fd, inc_buf, MAX_INCLUDE_SRC - 1);
+                    __close_file(inc_fd);
+                    if (inc_nread < 0) inc_nread = 0;
+                    inc_buf[inc_nread] = '\0';
+                    include_push();
+                    src = inc_buf;
+                    src_len = inc_nread;
+                    lex_pos = 0;
+                    lex_line = 1;
+                    lex_col = 1;
+                }
+                return next_token();
+            } else if (lp() == '<') {
+                /* skip system includes — handled by host compiler */
+                while (lex_pos < src_len && lp() != '\n') la();
+                return next_token();
+            }
         }
         /* skip to end of line */
         while (lex_pos < src_len && lp() != '\n') la();
@@ -3874,6 +4000,23 @@ void gen_expr_call(struct Node *n) {
         gen_expr(n->list[2]);
         emit_indent();
         printf("call $strtol\n");
+    } else if (strcmp(n->sval, "__open_file") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $__open_file\n");
+    } else if (strcmp(n->sval, "__read_file") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $__read_file\n");
+    } else if (strcmp(n->sval, "__close_file") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $__close_file\n");
+        emit_indent();
+        printf("i32.const 0\n");
     } else {
         for (i = 0; i < n->ival2; i++) {
             gen_expr(n->list[i]);
@@ -4688,6 +4831,10 @@ void gen_module(struct Node *prog) {
     printf("(import \"wasi_snapshot_preview1\" \"fd_write\" (func $__fd_write (param i32 i32 i32 i32) (result i32)))\n");
     emit_indent();
     printf("(import \"wasi_snapshot_preview1\" \"fd_read\" (func $__fd_read (param i32 i32 i32 i32) (result i32)))\n");
+    emit_indent();
+    printf("(import \"wasi_snapshot_preview1\" \"path_open\" (func $__path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))\n");
+    emit_indent();
+    printf("(import \"wasi_snapshot_preview1\" \"fd_close\" (func $__fd_close (param i32) (result i32)))\n");
     emit_indent();
     printf("\n");
 
@@ -5927,6 +6074,70 @@ void gen_module(struct Node *prog) {
     printf("(func $strtol (param $s i32) (param $endptr i32) (param $base i32) (result i32)\n");
     emit_indent();
     printf("  (call $atoi (local.get $s))\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    /* file I/O helpers for #include support */
+    emit_indent();
+    printf("(func $__open_file (param $path i32) (param $path_len i32) (result i32)\n");
+    emit_indent();
+    printf("  (if (result i32) (i32.eqz (call $__path_open\n");
+    emit_indent();
+    printf("    (i32.const 3)\n");
+    emit_indent();
+    printf("    (i32.const 0)\n");
+    emit_indent();
+    printf("    (local.get $path)\n");
+    emit_indent();
+    printf("    (local.get $path_len)\n");
+    emit_indent();
+    printf("    (i32.const 0)\n");
+    emit_indent();
+    printf("    (i64.const 2)\n");
+    emit_indent();
+    printf("    (i64.const 0)\n");
+    emit_indent();
+    printf("    (i32.const 0)\n");
+    emit_indent();
+    printf("    (i32.const 28)\n");
+    emit_indent();
+    printf("  ))\n");
+    emit_indent();
+    printf("    (then (i32.load (i32.const 28)))\n");
+    emit_indent();
+    printf("    (else (i32.const -1))\n");
+    emit_indent();
+    printf("  )\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    emit_indent();
+    printf("(func $__read_file (param $fd i32) (param $buf i32) (param $max_len i32) (result i32)\n");
+    emit_indent();
+    printf("  (i32.store (i32.const 16) (local.get $buf))\n");
+    emit_indent();
+    printf("  (i32.store (i32.const 20) (local.get $max_len))\n");
+    emit_indent();
+    printf("  (if (result i32) (i32.eqz (call $__fd_read (local.get $fd) (i32.const 16) (i32.const 1) (i32.const 24)))\n");
+    emit_indent();
+    printf("    (then (i32.load (i32.const 24)))\n");
+    emit_indent();
+    printf("    (else (i32.const -1))\n");
+    emit_indent();
+    printf("  )\n");
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("\n");
+
+    emit_indent();
+    printf("(func $__close_file (param $fd i32)\n");
+    emit_indent();
+    printf("  (drop (call $__fd_close (local.get $fd)))\n");
     emit_indent();
     printf(")\n");
     emit_indent();
@@ -9565,6 +9776,7 @@ int main(void) {
 
     init_kw_table();
     init_macros();
+    init_includes();
     init_strings();
     init_structs();
     init_globals();

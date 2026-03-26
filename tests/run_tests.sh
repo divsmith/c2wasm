@@ -44,8 +44,8 @@ for src in "$PROG_DIR"/*.c; do
     fi
 
     if [ "$BINARY_MODE" -eq 1 ]; then
-        # Compile C → WASM binary directly
-        "$COMPILER" < "$src" > "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.compile_err"
+        # Compile C → WASM binary directly (from programs dir for #include)
+        (cd "$PROG_DIR" && "$COMPILER" < "./${name}.c") > "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.compile_err"
         if [ $? -ne 0 ]; then
             echo "FAIL: $name (compile error)"
             cat "$TMP_DIR/${name}.compile_err" | head -5
@@ -53,8 +53,8 @@ for src in "$PROG_DIR"/*.c; do
             continue
         fi
     else
-        # Compile C → WAT
-        "$COMPILER" < "$src" > "$TMP_DIR/${name}.wat" 2>"$TMP_DIR/${name}.compile_err"
+        # Compile C → WAT (from programs dir for #include)
+        (cd "$PROG_DIR" && "$COMPILER" < "./${name}.c") > "$TMP_DIR/${name}.wat" 2>"$TMP_DIR/${name}.compile_err"
         if [ $? -ne 0 ]; then
             echo "FAIL: $name (compile error)"
             cat "$TMP_DIR/${name}.compile_err" | head -5
