@@ -5,7 +5,7 @@
 | Phase | Status | Notes |
 |-------|--------|-------|
 | Phase 1: #include Support | ✅ Complete | `#include "file"` preprocessing, file I/O builtins, include-once, tests 49–50 |
-| Phase 2: Multi-File Decomposition | ⬜ Not started | Depends on Phase 1 |
+| Phase 2: Multi-File Decomposition | ✅ Complete | Unity build: 16 files, all tests + bootstrap pass |
 | Phase 3: Output Abstraction | ⬜ Not started | |
 | Phase 4: WAT Assembler | ⬜ Not started | |
 | Phase 5: Remove Binary Codegen | ⬜ Not started | Depends on Phase 4 |

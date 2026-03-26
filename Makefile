@@ -24,7 +24,7 @@ $(BIN): $(SRC) $(FILE_IO)
 
 $(BIN)-bin: $(SRC) $(FILE_IO)
 	mkdir -p $(dir $(BIN))
-	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | $(CC) $(CFLAGS) -o $@ -x c - $(FILE_IO)
+	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | $(CC) $(CFLAGS) -Isrc -o $@ -x c - $(FILE_IO)
 
 test: $(BIN)
 	bash tests/run_tests.sh
@@ -52,7 +52,7 @@ wasm-wasi: $(SRC)
 	fi
 	mkdir -p $(DEMO)
 	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | \
-		$(WASI_SDK)/bin/clang -x c - $(FILE_IO) -O2 -o $(DEMO)/compiler.wasm \
+		$(WASI_SDK)/bin/clang -x c - $(FILE_IO) -Isrc -O2 -o $(DEMO)/compiler.wasm \
 		--sysroot=$(WASI_SDK)/share/wasi-sysroot
 
 wasm-wat: $(SRC)

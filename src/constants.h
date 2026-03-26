@@ -1,0 +1,136 @@
+/* ================================================================
+ * Constants
+ * ================================================================ */
+
+/* Token kinds */
+enum {
+    TOK_EOF = 0,
+    TOK_INT = 1,
+    TOK_CHAR_KW = 2,
+    TOK_VOID = 3,
+    TOK_RETURN = 4,
+    TOK_IF = 5,
+    TOK_ELSE = 6,
+    TOK_WHILE = 7,
+    TOK_FOR = 8,
+    TOK_BREAK = 9,
+    TOK_CONTINUE = 10,
+    TOK_STRUCT = 11,
+    TOK_SIZEOF = 12,
+    TOK_DEFINE = 13,
+    TOK_IDENT = 14,
+    TOK_INT_LIT = 15,
+    TOK_CHAR_LIT = 16,
+    TOK_STR_LIT = 17,
+    TOK_LPAREN = 18,
+    TOK_RPAREN = 19,
+    TOK_LBRACE = 20,
+    TOK_RBRACE = 21,
+    TOK_LBRACKET = 22,
+    TOK_RBRACKET = 23,
+    TOK_SEMI = 24,
+    TOK_COMMA = 25,
+    TOK_DOT = 26,
+    TOK_ARROW = 27,
+    TOK_PLUS = 28,
+    TOK_MINUS = 29,
+    TOK_STAR = 30,
+    TOK_SLASH = 31,
+    TOK_PERCENT = 32,
+    TOK_AMP = 33,
+    TOK_BANG = 34,
+    TOK_PIPE = 35,
+    TOK_TILDE = 36,
+    TOK_PIPE_PIPE = 37,
+    TOK_AMP_AMP = 38,
+    TOK_EQ = 39,
+    TOK_PLUS_EQ = 40,
+    TOK_MINUS_EQ = 41,
+    TOK_EQ_EQ = 42,
+    TOK_BANG_EQ = 43,
+    TOK_LT = 44,
+    TOK_GT = 45,
+    TOK_LT_EQ = 46,
+    TOK_GT_EQ = 47,
+    TOK_LSHIFT = 48,
+    TOK_RSHIFT = 49,
+    TOK_PLUS_PLUS = 50,
+    TOK_MINUS_MINUS = 51,
+    TOK_CARET = 52,
+    TOK_PIPE_EQ = 53,
+    TOK_AMP_EQ = 54,
+    TOK_CARET_EQ = 55,
+    TOK_LSHIFT_EQ = 56,
+    TOK_RSHIFT_EQ = 57,
+    TOK_DO = 58,
+    TOK_QUESTION = 59,
+    TOK_COLON = 60, /* used by ternary ?: and by switch case/default labels */
+    TOK_SWITCH = 61,
+    TOK_CASE = 62,
+    TOK_DEFAULT = 63,
+    TOK_CONST = 64,
+    TOK_ENUM = 65,
+    TOK_TYPEDEF = 66,
+    TOK_UNSIGNED = 67,
+    TOK_SIGNED = 68,
+    TOK_SHORT = 69,
+    TOK_LONG = 70,
+    TOK_FLOAT_LIT = 71,
+    TOK_FLOAT = 72,
+    TOK_DOUBLE = 73
+};
+
+/* Node kinds */
+enum {
+    ND_PROGRAM = 0,
+    ND_FUNC = 1,
+    ND_BLOCK = 2,
+    ND_RETURN = 3,
+    ND_INT_LIT = 4,
+    ND_BINARY = 5,
+    ND_UNARY = 6,
+    ND_VAR_DECL = 7,
+    ND_IDENT = 8,
+    ND_ASSIGN = 9,
+    ND_IF = 10,
+    ND_WHILE = 11,
+    ND_FOR = 12,
+    ND_BREAK = 13,
+    ND_CONTINUE = 14,
+    ND_EXPR_STMT = 15,
+    ND_CALL = 16,
+    ND_STR_LIT = 17,
+    ND_MEMBER = 18,
+    ND_SIZEOF = 19,
+    ND_SUBSCRIPT = 20,
+    ND_POST_INC = 21,
+    ND_POST_DEC = 22,
+    ND_DO_WHILE = 23,
+    ND_TERNARY = 24,
+    ND_SWITCH = 25,
+    ND_CASE = 26,
+    ND_DEFAULT = 27,
+    ND_FLOAT_LIT = 28,
+    ND_CAST = 29,
+    ND_CALL_INDIRECT = 30
+};
+
+/* Limits */
+#define MAX_SRC 2097152
+#define MAX_MACROS 256
+#define MAX_STRINGS 2048
+#define MAX_STR_DATA 512
+#define MAX_STRUCTS 64
+#define MAX_FIELDS 32
+#define MAX_GLOBALS 256
+#define MAX_FUNC_SIGS 512
+#define MAX_LOCALS 256
+#define MAX_LOOP_DEPTH 64
+#define MAX_CASES 256
+#define MAX_ENUM_CONSTS 512
+#define MAX_TYPE_ALIASES 128
+#define MAX_INCLUDE_DEPTH 32
+#define MAX_INCLUDES 64
+#define MAX_INCLUDE_SRC 262144
+
+#define ND_COUNT 31

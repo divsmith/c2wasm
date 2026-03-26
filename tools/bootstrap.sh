@@ -15,14 +15,15 @@ echo "[1/5] Building native compiler..."
 (cd "$ROOT" && make clean && make) >/dev/null 2>&1
 
 # Stage 1: native compiler compiles itself
+# Run from src/ so #include directives resolve correctly
 echo "[2/5] Stage 1: native compiler -> s1.wat"
-"$BIN" < "$SRC" > "$TMP/s1.wat"
+(cd "$ROOT/src" && "$BIN" < c2wasm.c > "$TMP/s1.wat")
 wat2wasm "$TMP/s1.wat" -o "$TMP/s1.wasm"
 echo "       $(wc -l < "$TMP/s1.wat") lines of WAT"
 
 # Stage 2: WASM compiler compiles itself
 echo "[3/5] Stage 2: WASM compiler -> s2.wat"
-wasmtime "$TMP/s1.wasm" < "$SRC" > "$TMP/s2.wat"
+(cd "$ROOT/src" && wasmtime --dir=. "$TMP/s1.wasm" < c2wasm.c > "$TMP/s2.wat")
 echo "       $(wc -l < "$TMP/s2.wat") lines of WAT"
 
 # Verify fixed point
