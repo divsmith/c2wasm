@@ -36,5 +36,4 @@ int binary_mode = 0;
 #include "codegen_wat.c"
 #include "assembler.h"
 #include "assembler.c"
-#include "codegen_bin.c"
 #include "main.c"

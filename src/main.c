@@ -19,8 +19,6 @@ int main(void) {
     init_loop_labels();
     init_gen_expr_tbl();
     init_gen_stmt_tbl();
-    init_gen_expr_bin_tbl();
-    init_gen_stmt_bin_tbl();
 
     read_source();
     lex_init();
