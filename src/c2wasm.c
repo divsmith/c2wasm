@@ -125,7 +125,8 @@ enum {
     ND_CASE = 26,
     ND_DEFAULT = 27,
     ND_FLOAT_LIT = 28,
-    ND_CAST = 29
+    ND_CAST = 29,
+    ND_CALL_INDIRECT = 30
 };
 
 /* Limits */
@@ -285,32 +286,53 @@ int is_xdigit(char c) {
     return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
+#define MAX_KW 32
+char **kw_words;
+int *kw_toks;
+int nkw;
+
+void kw_add(char *word, int tok) {
+    kw_words[nkw] = word;
+    kw_toks[nkw] = tok;
+    nkw++;
+}
+
+void init_kw_table(void) {
+    kw_words = (char **)malloc(MAX_KW * sizeof(char *));
+    kw_toks = (int *)malloc(MAX_KW * sizeof(int));
+    nkw = 0;
+    kw_add("int", TOK_INT);
+    kw_add("char", TOK_CHAR_KW);
+    kw_add("void", TOK_VOID);
+    kw_add("return", TOK_RETURN);
+    kw_add("if", TOK_IF);
+    kw_add("else", TOK_ELSE);
+    kw_add("while", TOK_WHILE);
+    kw_add("do", TOK_DO);
+    kw_add("for", TOK_FOR);
+    kw_add("break", TOK_BREAK);
+    kw_add("continue", TOK_CONTINUE);
+    kw_add("switch", TOK_SWITCH);
+    kw_add("case", TOK_CASE);
+    kw_add("default", TOK_DEFAULT);
+    kw_add("const", TOK_CONST);
+    kw_add("enum", TOK_ENUM);
+    kw_add("typedef", TOK_TYPEDEF);
+    kw_add("struct", TOK_STRUCT);
+    kw_add("sizeof", TOK_SIZEOF);
+    kw_add("unsigned", TOK_UNSIGNED);
+    kw_add("signed", TOK_SIGNED);
+    kw_add("short", TOK_SHORT);
+    kw_add("long", TOK_LONG);
+    kw_add("float", TOK_FLOAT);
+    kw_add("double", TOK_DOUBLE);
+}
+
 int kw_lookup(char *s) {
-    if (strcmp(s, "int") == 0) return TOK_INT;
-    if (strcmp(s, "char") == 0) return TOK_CHAR_KW;
-    if (strcmp(s, "void") == 0) return TOK_VOID;
-    if (strcmp(s, "return") == 0) return TOK_RETURN;
-    if (strcmp(s, "if") == 0) return TOK_IF;
-    if (strcmp(s, "else") == 0) return TOK_ELSE;
-    if (strcmp(s, "while") == 0) return TOK_WHILE;
-    if (strcmp(s, "do") == 0) return TOK_DO;
-    if (strcmp(s, "for") == 0) return TOK_FOR;
-    if (strcmp(s, "break") == 0) return TOK_BREAK;
-    if (strcmp(s, "continue") == 0) return TOK_CONTINUE;
-    if (strcmp(s, "switch") == 0) return TOK_SWITCH;
-    if (strcmp(s, "case") == 0) return TOK_CASE;
-    if (strcmp(s, "default") == 0) return TOK_DEFAULT;
-    if (strcmp(s, "const") == 0) return TOK_CONST;
-    if (strcmp(s, "enum") == 0) return TOK_ENUM;
-    if (strcmp(s, "typedef") == 0) return TOK_TYPEDEF;
-    if (strcmp(s, "struct") == 0) return TOK_STRUCT;
-    if (strcmp(s, "sizeof") == 0) return TOK_SIZEOF;
-    if (strcmp(s, "unsigned") == 0) return TOK_UNSIGNED;
-    if (strcmp(s, "signed") == 0) return TOK_SIGNED;
-    if (strcmp(s, "short") == 0) return TOK_SHORT;
-    if (strcmp(s, "long") == 0) return TOK_LONG;
-    if (strcmp(s, "float") == 0) return TOK_FLOAT;
-    if (strcmp(s, "double") == 0) return TOK_DOUBLE;
+    int i;
+    for (i = 0; i < nkw; i++) {
+        if (strcmp(s, kw_words[i]) == 0) return kw_toks[i];
+    }
     return 0;
 }
 
@@ -825,6 +847,8 @@ struct GlobalVar {
     int gv_is_unsigned;
     int gv_is_float;      /* 0=int, 1=float(f32), 2=double(f64) */
     char *gv_float_init;  /* float literal text for init, or NULL */
+    int gv_arr_len;       /* >0 if array with brace init */
+    int *gv_arr_str_ids;  /* string table IDs for {str,...} init, or NULL */
 };
 
 struct GlobalVar **globals_tbl;
@@ -891,6 +915,76 @@ int func_param_is_float(char *name, int idx) {
 }
 
 /* ================================================================
+ * Function Pointer Registry
+ * ================================================================ */
+
+struct FnPtrVar {
+    char *name;
+    int fp_nparams;
+    int fp_is_void;  /* 0=returns i32, 1=returns void */
+};
+
+#define MAX_FNPTR_VARS 512
+#define MAX_FN_TABLE   512
+
+struct FnPtrVar **fnptr_vars;
+int nfnptr_vars;
+
+char **fn_table_names;
+int fn_table_count;
+
+void init_fnptr_registry(void) {
+    fnptr_vars = (struct FnPtrVar **)malloc(MAX_FNPTR_VARS * sizeof(void *));
+    nfnptr_vars = 0;
+    fn_table_names = (char **)malloc(MAX_FN_TABLE * sizeof(void *));
+    fn_table_count = 0;
+}
+
+void register_fnptr_var(char *name, int nparams, int is_void) {
+    if (nfnptr_vars >= MAX_FNPTR_VARS) return;
+    fnptr_vars[nfnptr_vars] = (struct FnPtrVar *)malloc(sizeof(struct FnPtrVar));
+    fnptr_vars[nfnptr_vars]->name = strdupn(name, 127);
+    fnptr_vars[nfnptr_vars]->fp_nparams = nparams;
+    fnptr_vars[nfnptr_vars]->fp_is_void = is_void;
+    nfnptr_vars++;
+}
+
+struct FnPtrVar *find_fnptr_var(char *name) {
+    int i;
+    for (i = nfnptr_vars - 1; i >= 0; i--) {
+        if (strcmp(fnptr_vars[i]->name, name) == 0) return fnptr_vars[i];
+    }
+    return (struct FnPtrVar *)0;
+}
+
+void fn_table_add(char *name) {
+    int i;
+    for (i = 0; i < fn_table_count; i++) {
+        if (strcmp(fn_table_names[i], name) == 0) return;
+    }
+    if (fn_table_count < MAX_FN_TABLE) {
+        fn_table_names[fn_table_count] = name;
+        fn_table_count++;
+    }
+}
+
+int fn_table_idx(char *name) {
+    int i;
+    for (i = 0; i < fn_table_count; i++) {
+        if (strcmp(fn_table_names[i], name) == 0) return i;
+    }
+    return -1;
+}
+
+int is_known_func(char *name) {
+    int i;
+    for (i = 0; i < nfunc_sigs; i++) {
+        if (strcmp(func_sigs[i]->name, name) == 0) return 1;
+    }
+    return 0;
+}
+
+/* ================================================================
  * Enum Constant Table
  * ================================================================ */
 
@@ -919,6 +1013,9 @@ struct TypeAlias {
     char *alias;
     int resolved_kind; /* 0=int, 1=void, 2=char */
     int is_ptr;
+    int is_fnptr;      /* 1 if typedef for function pointer type */
+    int fnptr_nparams;
+    int fnptr_is_void;
 };
 
 struct TypeAlias **type_aliases;
@@ -927,6 +1024,9 @@ int last_type_is_ptr;
 int last_type_is_unsigned;
 int last_type_elem_size;  /* 1=char, 2=short, 4=int/long */
 int last_type_is_float;   /* 0=not float, 1=float(f32), 2=double(f64) */
+int last_type_is_fnptr;   /* 1 if resolved from fnptr typedef */
+int last_type_fnptr_nparams;
+int last_type_fnptr_is_void;
 
 void init_type_aliases(void) {
     type_aliases = (struct TypeAlias **)malloc(MAX_TYPE_ALIASES * sizeof(void *));
@@ -1244,9 +1344,19 @@ struct Node *parse_atom(void) {
         advance_tok();
         /* function call: ident '(' args ')' */
         if (at(TOK_LPAREN)) {
+            struct FnPtrVar *fpv;
+            fpv = find_fnptr_var(n->sval);
             advance_tok();
-            c = node_new(ND_CALL, n->nline, n->ncol);
-            c->sval = n->sval;
+            if (fpv != (struct FnPtrVar *)0) {
+                /* indirect call through function pointer variable */
+                c = node_new(ND_CALL_INDIRECT, n->nline, n->ncol);
+                c->c0 = n; /* callee expression (ND_IDENT for the fnptr var) */
+                c->ival = fpv->fp_nparams;
+                c->ival3 = fpv->fp_is_void;
+            } else {
+                c = node_new(ND_CALL, n->nline, n->ncol);
+                c->sval = n->sval;
+            }
             args = (struct NList *)malloc(sizeof(struct NList));
             args->items = (struct Node **)0;
             args->count = 0;
@@ -1262,6 +1372,12 @@ struct Node *parse_atom(void) {
             c->list = args->items;
             c->ival2 = args->count;
             return c;
+        }
+        /* function name used as a value (not called) → table index */
+        if (is_known_func(n->sval)) {
+            fn_table_add(n->sval);
+            n->kind = ND_INT_LIT;
+            n->ival = fn_table_idx(n->sval);
         }
         return n;
     }
@@ -1495,7 +1611,9 @@ struct Node *parse_var_decl(void) {
     int vd_elem_size;
     int vd_is_unsigned;
     int vd_is_float;
+    int vd_is_void;
     int is_ptr;
+    int ptr_depth_vd;
     int arr_size;
     int ei;
     int tai_vd;
@@ -1506,7 +1624,9 @@ struct Node *parse_var_decl(void) {
     vd_elem_size = 4;
     vd_is_unsigned = 0;
     vd_is_float = 0;
+    vd_is_void = 0;
     is_ptr = 0;
+    ptr_depth_vd = 0;
     arr_size = 0;
     tai_vd = -1;
     had_mod_vd = 0;
@@ -1564,6 +1684,7 @@ struct Node *parse_var_decl(void) {
         } else if (at(TOK_INT)) {
             advance_tok();
         } else if (at(TOK_VOID)) {
+            vd_is_void = 1;
             advance_tok();
         } else if (at(TOK_IDENT)) {
             tai_vd = find_type_alias(cur->text);
@@ -1573,13 +1694,93 @@ struct Node *parse_var_decl(void) {
             if (tai_vd >= 0 && type_aliases[tai_vd]->is_ptr) {
                 is_ptr = 1;
             }
+            if (tai_vd >= 0 && type_aliases[tai_vd]->is_fnptr) {
+                /* fnptr typedef: next token is the variable name */
+                advance_tok(); /* consume typedef name */
+                if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
+                n = node_new(ND_VAR_DECL, line, col);
+                n->sval = strdupn(cur->text, 127);
+                n->ival2 = 4;
+                n->ival3 = 0;
+                advance_tok();
+                register_fnptr_var(n->sval, type_aliases[tai_vd]->fnptr_nparams, type_aliases[tai_vd]->fnptr_is_void);
+                if (at(TOK_EQ)) {
+                    advance_tok();
+                    n->c0 = parse_expr();
+                }
+                expect(TOK_SEMI, "expected ';' after declaration");
+                return n;
+            }
             if (tai_vd >= 0 || !had_mod_vd) {
                 advance_tok();
             }
         }
     }
-    while (at(TOK_STAR)) { is_ptr = 1; vd_is_float = 0; advance_tok(); }
-    if (last_type_is_ptr) is_ptr = 1;
+    while (at(TOK_STAR)) { is_ptr = 1; ptr_depth_vd++; vd_is_float = 0; advance_tok(); }
+    if (last_type_is_ptr) { is_ptr = 1; ptr_depth_vd++; }
+    if (ptr_depth_vd >= 2) vd_elem_size = 4;
+    /* function pointer: type (*name)(params) or type (*name[N])(params) */
+    if (at(TOK_LPAREN)) {
+        struct Node *fp_sz;
+        int fp_nparams;
+        int fp_arr;
+        fp_nparams = 0;
+        fp_arr = 0;
+        fp_sz = (struct Node *)0;
+        advance_tok(); /* consume '(' */
+        while (at(TOK_STAR)) advance_tok(); /* consume '*' */
+        if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name in function pointer");
+        n = node_new(ND_VAR_DECL, line, col);
+        n->sval = strdupn(cur->text, 127);
+        n->ival2 = 4; /* pointer-sized */
+        n->ival3 = 0;
+        advance_tok();
+        /* optional array: (*name[N]) */
+        if (at(TOK_LBRACKET)) {
+            advance_tok();
+            fp_sz = parse_expr();
+            fp_arr = fp_sz->ival;
+            n->ival = fp_arr;
+            expect(TOK_RBRACKET, "expected ']'");
+        }
+        expect(TOK_RPAREN, "expected ')' after function pointer name");
+        /* parse parameter type list */
+        expect(TOK_LPAREN, "expected '(' for function pointer parameters");
+        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+            while (at(TOK_CONST)) advance_tok();
+            if (at(TOK_VOID)) {
+                advance_tok();
+                /* void with no stars = no params; void* = one param */
+                if (at(TOK_STAR)) {
+                    while (at(TOK_STAR)) advance_tok();
+                    if (at(TOK_IDENT)) advance_tok();
+                    fp_nparams++;
+                }
+            } else {
+                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {
+                    advance_tok();
+                    if (at(TOK_INT)) advance_tok();
+                }
+                if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_FLOAT) || at(TOK_DOUBLE) || at(TOK_IDENT)) {
+                    advance_tok();
+                }
+                while (at(TOK_STAR)) advance_tok();
+                if (at(TOK_IDENT)) advance_tok();
+                fp_nparams++;
+            }
+            if (at(TOK_COMMA)) advance_tok();
+        }
+        expect(TOK_RPAREN, "expected ')' after function pointer parameters");
+        register_fnptr_var(n->sval, fp_nparams, vd_is_void);
+        /* optional initializer */
+        if (at(TOK_EQ)) {
+            advance_tok();
+            n->c0 = parse_expr();
+        }
+        expect(TOK_SEMI, "expected ';' after function pointer declaration");
+        return n;
+    }
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     n = node_new(ND_VAR_DECL, line, col);
     n->sval = strdupn(cur->text, 127);
@@ -1894,12 +2095,20 @@ int parse_type(void) {
     last_type_is_unsigned = 0;
     last_type_elem_size = 4;
     last_type_is_float = 0;
+    last_type_is_fnptr = 0;
+    last_type_fnptr_nparams = 0;
+    last_type_fnptr_is_void = 0;
     while (at(TOK_CONST)) advance_tok();
     if (at(TOK_IDENT)) {
         taidx = find_type_alias(cur->text);
         if (taidx >= 0) {
             last_type_is_ptr = type_aliases[taidx]->is_ptr;
             if (type_aliases[taidx]->resolved_kind == 2) last_type_elem_size = 1;
+            if (type_aliases[taidx]->is_fnptr) {
+                last_type_is_fnptr = 1;
+                last_type_fnptr_nparams = type_aliases[taidx]->fnptr_nparams;
+                last_type_fnptr_is_void = type_aliases[taidx]->fnptr_is_void;
+            }
             advance_tok();
             return type_aliases[taidx]->resolved_kind;
         }
@@ -2024,11 +2233,50 @@ struct Node *parse_func(void) {
         } else {
             pty = parse_type();
             while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
-            if (at(TOK_IDENT)) {
+            /* function pointer parameter: type (*name)(params) */
+            if (at(TOK_LPAREN)) {
+                int fparam_np;
+                int fparam_void;
+                fparam_np = 0;
+                fparam_void = (pty == 1) ? 1 : 0; /* 1 = void return */
+                advance_tok(); /* consume '(' */
+                while (at(TOK_STAR)) advance_tok();
+                if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected fnptr param name");
                 pn = node_new(ND_IDENT, cur->line, cur->col);
                 pn->sval = strdupn(cur->text, 127);
-                pn->ival2 = last_type_elem_size;
+                pn->ival2 = 4;
+                pn->ival3 = 0;
+                advance_tok();
+                expect(TOK_RPAREN, "expected ')' in fnptr param");
+                expect(TOK_LPAREN, "expected '(' for fnptr param types");
+                while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+                    while (at(TOK_CONST)) advance_tok();
+                    if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np++; } }
+                    else {
+                        if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                        else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
+                        if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
+                        while (at(TOK_STAR)) advance_tok();
+                        if (at(TOK_IDENT)) advance_tok();
+                        fparam_np++;
+                    }
+                    if (at(TOK_COMMA)) advance_tok();
+                }
+                expect(TOK_RPAREN, "expected ')' after fnptr param types");
+                register_fnptr_var(pn->sval, fparam_np, fparam_void);
+                if (sig_idx >= 0) {
+                    func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = 0;
+                    func_sigs[sig_idx]->nparam++;
+                }
+                nlist_push(params, pn);
+            } else if (at(TOK_IDENT)) {
+                pn = node_new(ND_IDENT, cur->line, cur->col);
+                pn->sval = strdupn(cur->text, 127);
+                pn->ival2 = last_type_is_fnptr ? 4 : last_type_elem_size;
                 pn->ival3 = last_type_is_unsigned | (last_type_is_float << 4);
+                if (last_type_is_fnptr) {
+                    register_fnptr_var(pn->sval, last_type_fnptr_nparams, last_type_fnptr_is_void);
+                }
                 if (sig_idx >= 0) {
                     func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = last_type_is_float;
                     func_sigs[sig_idx]->nparam++;
@@ -2040,11 +2288,50 @@ struct Node *parse_func(void) {
                 advance_tok();
                 pty = parse_type();
                 while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
-                if (at(TOK_IDENT)) {
+                /* function pointer parameter in subsequent position */
+                if (at(TOK_LPAREN)) {
+                    int fparam_np2;
+                    int fparam_void2;
+                    fparam_np2 = 0;
+                    fparam_void2 = (pty == 1) ? 1 : 0;
+                    advance_tok();
+                    while (at(TOK_STAR)) advance_tok();
+                    if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected fnptr param name");
                     pn = node_new(ND_IDENT, cur->line, cur->col);
                     pn->sval = strdupn(cur->text, 127);
-                    pn->ival2 = last_type_elem_size;
+                    pn->ival2 = 4;
+                    pn->ival3 = 0;
+                    advance_tok();
+                    expect(TOK_RPAREN, "expected ')' in fnptr param");
+                    expect(TOK_LPAREN, "expected '(' for fnptr param types");
+                    while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+                        while (at(TOK_CONST)) advance_tok();
+                        if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np2++; } }
+                        else {
+                            if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                            else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
+                            if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
+                            while (at(TOK_STAR)) advance_tok();
+                            if (at(TOK_IDENT)) advance_tok();
+                            fparam_np2++;
+                        }
+                        if (at(TOK_COMMA)) advance_tok();
+                    }
+                    expect(TOK_RPAREN, "expected ')' after fnptr param types");
+                    register_fnptr_var(pn->sval, fparam_np2, fparam_void2);
+                    if (sig_idx >= 0) {
+                        func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = 0;
+                        func_sigs[sig_idx]->nparam++;
+                    }
+                    nlist_push(params, pn);
+                } else if (at(TOK_IDENT)) {
+                    pn = node_new(ND_IDENT, cur->line, cur->col);
+                    pn->sval = strdupn(cur->text, 127);
+                    pn->ival2 = last_type_is_fnptr ? 4 : last_type_elem_size;
                     pn->ival3 = last_type_is_unsigned | (last_type_is_float << 4);
+                    if (last_type_is_fnptr) {
+                        register_fnptr_var(pn->sval, last_type_fnptr_nparams, last_type_fnptr_is_void);
+                    }
                     if (sig_idx >= 0) {
                         func_sigs[sig_idx]->param_is_float[func_sigs[sig_idx]->nparam] = last_type_is_float;
                         func_sigs[sig_idx]->nparam++;
@@ -2111,6 +2398,7 @@ void parse_global_var(void) {
     int gv_uns;
     int gv_flt;
     int is_ptr;
+    int ptr_depth;
     int neg;
     int tai_gv;
     int had_mod_gv;
@@ -2119,6 +2407,7 @@ void parse_global_var(void) {
     gv_uns = 0;
     gv_flt = 0;
     is_ptr = 0;
+    ptr_depth = 0;
     tai_gv = -1;
     had_mod_gv = 0;
     while (at(TOK_CONST)) advance_tok();
@@ -2175,8 +2464,71 @@ void parse_global_var(void) {
             }
         }
     }
-    while (at(TOK_STAR)) { is_ptr = 1; gv_flt = 0; advance_tok(); }
-    if (last_type_is_ptr) is_ptr = 1;
+    while (at(TOK_STAR)) { is_ptr = 1; ptr_depth++; gv_flt = 0; advance_tok(); }
+    if (last_type_is_ptr) { is_ptr = 1; ptr_depth++; }
+    /* double+ pointer: subscript element is pointer-sized */
+    if (ptr_depth >= 2) gv_es = 4;
+    /* global function pointer: type (*name)(params) */
+    if (at(TOK_LPAREN)) {
+        int gfp_nparams;
+        int gfp_is_void;
+        char *gfp_name;
+        gfp_nparams = 0;
+        gfp_is_void = 0;
+        advance_tok(); /* consume '(' */
+        while (at(TOK_STAR)) advance_tok();
+        if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name in function pointer");
+        gfp_name = strdupn(cur->text, 127);
+        advance_tok();
+        expect(TOK_RPAREN, "expected ')' after function pointer name");
+        expect(TOK_LPAREN, "expected '(' for function pointer parameters");
+        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+            while (at(TOK_CONST)) advance_tok();
+            if (at(TOK_VOID)) {
+                advance_tok();
+                if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); gfp_nparams++; }
+            } else {
+                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {
+                    advance_tok(); if (at(TOK_INT)) advance_tok();
+                }
+                if (at(TOK_INT) || at(TOK_CHAR_KW) || at(TOK_FLOAT) || at(TOK_DOUBLE) || at(TOK_IDENT)) advance_tok();
+                while (at(TOK_STAR)) advance_tok();
+                if (at(TOK_IDENT)) advance_tok();
+                gfp_nparams++;
+            }
+            if (at(TOK_COMMA)) advance_tok();
+        }
+        expect(TOK_RPAREN, "expected ')' after function pointer parameters");
+        /* detect void return */
+        if (at(TOK_VOID)) gfp_is_void = 1;
+        register_fnptr_var(gfp_name, gfp_nparams, gfp_is_void);
+        /* register as global with i32 value */
+        if (nglobals >= MAX_GLOBALS) error(cur->line, cur->col, "too many globals");
+        globals_tbl[nglobals] = (struct GlobalVar *)malloc(sizeof(struct GlobalVar));
+        globals_tbl[nglobals]->name = gfp_name;
+        globals_tbl[nglobals]->init_val = 0;
+        globals_tbl[nglobals]->gv_elem_size = 4;
+        globals_tbl[nglobals]->gv_is_unsigned = 0;
+        globals_tbl[nglobals]->gv_is_float = 0;
+        globals_tbl[nglobals]->gv_float_init = (char *)0;
+        globals_tbl[nglobals]->gv_arr_len = 0;
+        globals_tbl[nglobals]->gv_arr_str_ids = (int *)0;
+        if (at(TOK_EQ)) {
+            advance_tok();
+            if (at(TOK_IDENT)) {
+                fn_table_add(cur->text);
+                globals_tbl[nglobals]->init_val = fn_table_idx(cur->text);
+                advance_tok();
+            } else if (at(TOK_INT_LIT)) {
+                globals_tbl[nglobals]->init_val = cur->int_val;
+                advance_tok();
+            }
+        }
+        nglobals++;
+        expect(TOK_SEMI, "expected ';' after global function pointer declaration");
+        return;
+    }
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected variable name");
     if (nglobals >= MAX_GLOBALS) error(cur->line, cur->col, "too many globals");
     globals_tbl[nglobals] = (struct GlobalVar *)malloc(sizeof(struct GlobalVar));
@@ -2186,7 +2538,65 @@ void parse_global_var(void) {
     globals_tbl[nglobals]->gv_is_unsigned = gv_uns;
     globals_tbl[nglobals]->gv_is_float = gv_flt;
     globals_tbl[nglobals]->gv_float_init = (char *)0;
+    globals_tbl[nglobals]->gv_arr_len = 0;
+    globals_tbl[nglobals]->gv_arr_str_ids = (int *)0;
     advance_tok();
+    /* array: name[] = { ... } or name[N] = { ... } */
+    if (at(TOK_LBRACKET)) {
+        int ga_size;
+        ga_size = 0;
+        advance_tok(); /* consume '[' */
+        if (at(TOK_INT_LIT)) {
+            ga_size = cur->int_val;
+            advance_tok();
+        }
+        expect(TOK_RBRACKET, "expected ']'");
+        if (is_ptr) globals_tbl[nglobals]->gv_elem_size = 4;
+        if (at(TOK_EQ)) {
+            advance_tok();
+            expect(TOK_LBRACE, "expected '{'");
+            {
+                int *sa_ids;
+                int sa_count;
+                int sa_cap;
+                sa_count = 0;
+                sa_cap = 64;
+                sa_ids = (int *)malloc(sa_cap * sizeof(int));
+                while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+                    if (at(TOK_STR_LIT)) {
+                        sa_ids[sa_count++] = add_string(cur->text, cur->int_val);
+                        advance_tok();
+                    } else if (at(TOK_IDENT)) {
+                        /* function name or enum const in array init */
+                        int eci_arr;
+                        eci_arr = find_enum_const(cur->text);
+                        if (eci_arr >= 0) {
+                            sa_ids[sa_count++] = enum_consts[eci_arr]->val;
+                        } else if (is_known_func(cur->text)) {
+                            fn_table_add(cur->text);
+                            sa_ids[sa_count++] = fn_table_idx(cur->text);
+                        } else {
+                            sa_ids[sa_count++] = 0;
+                        }
+                        advance_tok();
+                    } else if (at(TOK_INT_LIT)) {
+                        sa_ids[sa_count++] = cur->int_val;
+                        advance_tok();
+                    } else {
+                        advance_tok(); /* skip unknown */
+                    }
+                    if (at(TOK_COMMA)) advance_tok();
+                }
+                expect(TOK_RBRACE, "expected '}'");
+                if (ga_size == 0) ga_size = sa_count;
+                globals_tbl[nglobals]->gv_arr_len = ga_size;
+                globals_tbl[nglobals]->gv_arr_str_ids = sa_ids;
+            }
+        }
+        nglobals++;
+        expect(TOK_SEMI, "expected ';' after global array declaration");
+        return;
+    }
     if (at(TOK_EQ)) {
         advance_tok();
         if (at(TOK_FLOAT_LIT)) {
@@ -2305,6 +2715,47 @@ void parse_typedef(void) {
         error(cur->line, cur->col, "expected type in typedef");
     }
     while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
+    /* function pointer typedef: typedef type (*Alias)(params) */
+    if (at(TOK_LPAREN)) {
+        int td_nparams;
+        int td_is_void;
+        td_nparams = 0;
+        td_is_void = (rk == 1) ? 1 : 0;
+        advance_tok(); /* consume '(' */
+        while (at(TOK_STAR)) advance_tok();
+        if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected alias name in function pointer typedef");
+        alias_name = strdupn(cur->text, 127);
+        advance_tok();
+        expect(TOK_RPAREN, "expected ')' in function pointer typedef");
+        expect(TOK_LPAREN, "expected '(' for function pointer typedef parameters");
+        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+            while (at(TOK_CONST)) advance_tok();
+            if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); td_nparams++; } }
+            else {
+                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
+                if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
+                while (at(TOK_STAR)) advance_tok();
+                if (at(TOK_IDENT)) advance_tok();
+                td_nparams++;
+            }
+            if (at(TOK_COMMA)) advance_tok();
+        }
+        expect(TOK_RPAREN, "expected ')' after function pointer typedef parameters");
+        expect(TOK_SEMI, "expected ';' after typedef");
+        if (ntype_aliases < MAX_TYPE_ALIASES) {
+            ta = (struct TypeAlias *)malloc(sizeof(struct TypeAlias));
+            ta->alias = alias_name;
+            ta->resolved_kind = rk;
+            ta->is_ptr = 1;
+            ta->is_fnptr = 1;
+            ta->fnptr_nparams = td_nparams;
+            ta->fnptr_is_void = td_is_void;
+            type_aliases[ntype_aliases] = ta;
+            ntype_aliases++;
+        }
+        return;
+    }
     if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected alias name in typedef");
     alias_name = strdupn(cur->text, 127);
     advance_tok();
@@ -2314,6 +2765,9 @@ void parse_typedef(void) {
         ta->alias = alias_name;
         ta->resolved_kind = rk;
         ta->is_ptr = is_ptr;
+        ta->is_fnptr = 0;
+        ta->fnptr_nparams = 0;
+        ta->fnptr_is_void = 0;
         type_aliases[ntype_aliases] = ta;
         ntype_aliases++;
     }
@@ -2577,396 +3031,235 @@ int last_expr_is_float; /* 0=i32, 1=f32, 2=f64 — set by gen_expr */
 
 /* --- Expression codegen --- */
 
-void gen_expr(struct Node *n) {
+/* Forward declarations for dispatch table refactoring */
+void gen_expr(struct Node *n);
+void gen_stmt(struct Node *n);
+
+typedef void (*GenExprFn)(struct Node *);
+typedef void (*GenStmtFn)(struct Node *);
+
+#define ND_COUNT 31
+
+GenExprFn *gen_expr_tbl;
+GenStmtFn *gen_stmt_tbl;
+
+void gen_expr_int_lit(struct Node *n) {
+    emit_indent();
+    printf("i32.const %d\n", n->ival);
+    last_expr_is_float = 0;
+}
+
+void gen_expr_float_lit(struct Node *n) {
+    emit_indent();
+    printf("f64.const %s\n", n->sval);
+    last_expr_is_float = 2;
+}
+
+void gen_expr_cast(struct Node *n) {
+    gen_expr(n->c0);
+    if (n->ival >= 1 && !last_expr_is_float) {
+        /* cast to float/double, expr is int */
+        emit_indent();
+        printf("f64.convert_i32_s\n");
+        last_expr_is_float = 2;
+    } else if (n->ival >= 1 && last_expr_is_float) {
+        /* cast to float/double, already float — no-op */
+        last_expr_is_float = 2;
+    } else if (n->ival == 0 && last_expr_is_float) {
+        /* cast to int, expr is float */
+        emit_indent();
+        printf("i32.trunc_f64_s\n");
+        last_expr_is_float = 0;
+    }
+    /* cast to int when already int — no-op */
+}
+
+void gen_expr_ident(struct Node *n) {
+    int vf;
+    vf = var_is_float(n->sval);
+    if (find_global(n->sval) >= 0) {
+        emit_indent();
+        printf("global.get $%s\n", n->sval);
+    } else {
+        emit_indent();
+        printf("local.get $%s\n", n->sval);
+    }
+    last_expr_is_float = vf;
+}
+
+void gen_expr_assign(struct Node *n) {
     struct Node *tgt;
     char *name;
     int is_global;
     int off;
     int esz;
-    char *fmt;
-    int flen;
-    int ai;
-    int fi;
-    int sid;
-    int i;
 
-    switch (n->kind) {
-    case ND_INT_LIT:
-        emit_indent();
-        printf("i32.const %d\n", n->ival);
-        last_expr_is_float = 0;
-        break;
-    case ND_FLOAT_LIT:
-        emit_indent();
-        printf("f64.const %s\n", n->sval);
-        last_expr_is_float = 2;
-        break;
-    case ND_CAST:
-        gen_expr(n->c0);
-        if (n->ival >= 1 && !last_expr_is_float) {
-            /* cast to float/double, expr is int */
-            emit_indent();
-            printf("f64.convert_i32_s\n");
-            last_expr_is_float = 2;
-        } else if (n->ival >= 1 && last_expr_is_float) {
-            /* cast to float/double, already float — no-op */
-            last_expr_is_float = 2;
-        } else if (n->ival == 0 && last_expr_is_float) {
-            /* cast to int, expr is float */
-            emit_indent();
-            printf("i32.trunc_f64_s\n");
-            last_expr_is_float = 0;
-        }
-        /* cast to int when already int — no-op */
-        break;
-    case ND_IDENT: {
-        int vf;
-        vf = var_is_float(n->sval);
-        if (find_global(n->sval) >= 0) {
-            emit_indent();
-            printf("global.get $%s\n", n->sval);
-        } else {
-            emit_indent();
-            printf("local.get $%s\n", n->sval);
-        }
-        last_expr_is_float = vf;
-        break;
-    }
-    case ND_ASSIGN:
-        tgt = n->c0;
-        if (tgt->kind == ND_IDENT) {
-            int tgt_float;
-            name = tgt->sval;
-            is_global = (find_global(name) >= 0);
-            tgt_float = var_is_float(name);
-            if (n->ival == TOK_EQ) {
-                gen_expr(n->c1);
-                /* insert float/int conversion if needed */
-                if (tgt_float && !last_expr_is_float) {
-                    emit_indent();
-                    printf("f64.convert_i32_s\n");
-                    last_expr_is_float = 2;
-                } else if (!tgt_float && last_expr_is_float) {
-                    emit_indent();
-                    printf("i32.trunc_f64_s\n");
-                    last_expr_is_float = 0;
-                }
-            } else if (n->ival == TOK_PLUS_EQ) {
+    tgt = n->c0;
+    if (tgt->kind == ND_IDENT) {
+        int tgt_float;
+        name = tgt->sval;
+        is_global = (find_global(name) >= 0);
+        tgt_float = var_is_float(name);
+        if (n->ival == TOK_EQ) {
+            gen_expr(n->c1);
+            /* insert float/int conversion if needed */
+            if (tgt_float && !last_expr_is_float) {
                 emit_indent();
-                if (is_global) {
-                    printf("global.get $%s\n", name);
-                } else {
-                    printf("local.get $%s\n", name);
-                }
-                gen_expr(n->c1);
-                if (tgt_float) {
-                    if (!last_expr_is_float) {
-                        emit_indent();
-                        printf("f64.convert_i32_s\n");
-                    }
-                    emit_indent();
-                    printf("f64.add\n");
-                    last_expr_is_float = 2;
-                } else {
-                    emit_indent();
-                    printf("i32.add\n");
-                    last_expr_is_float = 0;
-                }
-            } else if (n->ival == TOK_MINUS_EQ) {
+                printf("f64.convert_i32_s\n");
+                last_expr_is_float = 2;
+            } else if (!tgt_float && last_expr_is_float) {
                 emit_indent();
-                if (is_global) {
-                    printf("global.get $%s\n", name);
-                } else {
-                    printf("local.get $%s\n", name);
-                }
-                gen_expr(n->c1);
-                if (tgt_float) {
-                    if (!last_expr_is_float) {
-                        emit_indent();
-                        printf("f64.convert_i32_s\n");
-                    }
-                    emit_indent();
-                    printf("f64.sub\n");
-                    last_expr_is_float = 2;
-                } else {
-                    emit_indent();
-                    printf("i32.sub\n");
-                    last_expr_is_float = 0;
-                }
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                emit_indent();
-                if (is_global) {
-                    printf("global.get $%s\n", name);
-                } else {
-                    printf("local.get $%s\n", name);
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-                else { printf("i32.shr_s\n"); }
+                printf("i32.trunc_f64_s\n");
                 last_expr_is_float = 0;
             }
+        } else if (n->ival == TOK_PLUS_EQ) {
+            emit_indent();
             if (is_global) {
-                if (tgt_float) {
+                printf("global.get $%s\n", name);
+            } else {
+                printf("local.get $%s\n", name);
+            }
+            gen_expr(n->c1);
+            if (tgt_float) {
+                if (!last_expr_is_float) {
                     emit_indent();
-                    printf("local.set $__ftmp\n");
-                    emit_indent();
-                    printf("local.get $__ftmp\n");
-                    emit_indent();
-                    printf("global.set $%s\n", name);
-                    emit_indent();
-                    printf("local.get $__ftmp\n");
-                } else {
-                    emit_indent();
-                    printf("local.set $__atmp\n");
-                    emit_indent();
-                    printf("local.get $__atmp\n");
-                    emit_indent();
-                    printf("global.set $%s\n", name);
-                    emit_indent();
-                    printf("local.get $__atmp\n");
+                    printf("f64.convert_i32_s\n");
                 }
+                emit_indent();
+                printf("f64.add\n");
+                last_expr_is_float = 2;
             } else {
                 emit_indent();
-                printf("local.tee $%s\n", name);
-            }
-            last_expr_is_float = tgt_float;
-        } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
-            esz = expr_elem_size(tgt->c0);
-            if (n->ival == TOK_EQ) {
-                gen_expr(n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr(tgt->c0);
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
                 printf("i32.add\n");
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr(tgt->c0);
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
+                last_expr_is_float = 0;
+            }
+        } else if (n->ival == TOK_MINUS_EQ) {
+            emit_indent();
+            if (is_global) {
+                printf("global.get $%s\n", name);
+            } else {
+                printf("local.get $%s\n", name);
+            }
+            gen_expr(n->c1);
+            if (tgt_float) {
+                if (!last_expr_is_float) {
+                    emit_indent();
+                    printf("f64.convert_i32_s\n");
                 }
-                gen_expr(n->c1);
+                emit_indent();
+                printf("f64.sub\n");
+                last_expr_is_float = 2;
+            } else {
                 emit_indent();
                 printf("i32.sub\n");
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr(tgt->c0);
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-                else { printf("i32.shr_s\n"); }
+                last_expr_is_float = 0;
             }
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
             emit_indent();
-            if (last_expr_is_float) {
+            if (is_global) {
+                printf("global.get $%s\n", name);
+            } else {
+                printf("local.get $%s\n", name);
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+            else { printf("i32.shr_s\n"); }
+            last_expr_is_float = 0;
+        }
+        if (is_global) {
+            if (tgt_float) {
+                emit_indent();
                 printf("local.set $__ftmp\n");
-                gen_expr(tgt->c0);
                 emit_indent();
                 printf("local.get $__ftmp\n");
                 emit_indent();
-                printf("f64.store\n");
+                printf("global.set $%s\n", name);
                 emit_indent();
                 printf("local.get $__ftmp\n");
             } else {
+                emit_indent();
                 printf("local.set $__atmp\n");
-                gen_expr(tgt->c0);
                 emit_indent();
                 printf("local.get $__atmp\n");
                 emit_indent();
-                if (esz == 1) {
-                    printf("i32.store8\n");
-                } else if (esz == 2) {
-                    printf("i32.store16\n");
-                } else {
-                    printf("i32.store\n");
-                }
+                printf("global.set $%s\n", name);
                 emit_indent();
                 printf("local.get $__atmp\n");
             }
-        } else if (tgt->kind == ND_MEMBER) {
-            off = resolve_field_offset(tgt->sval);
-            if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
-            if (n->ival == TOK_EQ) {
-                gen_expr(n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr(tgt->c0);
-                if (off > 0) {
-                    emit_indent();
-                    printf("i32.const %d\n", off);
-                    emit_indent();
-                    printf("i32.add\n");
-                }
-                emit_indent();
-                printf("i32.load\n");
-                gen_expr(n->c1);
-                emit_indent();
-                printf("i32.add\n");
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr(tgt->c0);
-                if (off > 0) {
-                    emit_indent();
-                    printf("i32.const %d\n", off);
-                    emit_indent();
-                    printf("i32.add\n");
-                }
-                emit_indent();
-                printf("i32.load\n");
-                gen_expr(n->c1);
-                emit_indent();
-                printf("i32.sub\n");
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr(tgt->c0);
-                if (off > 0) {
-                    emit_indent();
-                    printf("i32.const %d\n", off);
-                    emit_indent();
-                    printf("i32.add\n");
-                }
-                emit_indent();
-                printf("i32.load\n");
-                gen_expr(n->c1);
-                emit_indent();
-                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-                else { printf("i32.shr_s\n"); }
-            }
+        } else {
             emit_indent();
-            printf("local.set $__atmp\n");
+            printf("local.tee $%s\n", name);
+        }
+        last_expr_is_float = tgt_float;
+    } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
+        esz = expr_elem_size(tgt->c0);
+        if (n->ival == TOK_EQ) {
+            gen_expr(n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
             gen_expr(tgt->c0);
-            if (off > 0) {
-                emit_indent();
-                printf("i32.const %d\n", off);
-                emit_indent();
-                printf("i32.add\n");
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
             }
-            emit_indent();
-            printf("local.get $__atmp\n");
-            emit_indent();
-            printf("i32.store\n");
-            emit_indent();
-            printf("local.get $__atmp\n");
-        } else if (tgt->kind == ND_SUBSCRIPT) {
-            esz = expr_elem_size(tgt->c0);
-            if (n->ival == TOK_EQ) {
-                gen_expr(n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr(tgt->c0);
-                gen_expr(tgt->c1);
-                if (esz > 1) {
-                    emit_indent();
-                    printf("i32.const %d\n", esz);
-                    emit_indent();
-                    printf("i32.mul\n");
-                }
-                emit_indent();
-                printf("i32.add\n");
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                printf("i32.add\n");
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr(tgt->c0);
-                gen_expr(tgt->c1);
-                if (esz > 1) {
-                    emit_indent();
-                    printf("i32.const %d\n", esz);
-                    emit_indent();
-                    printf("i32.mul\n");
-                }
-                emit_indent();
-                printf("i32.add\n");
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                printf("i32.sub\n");
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr(tgt->c0);
-                gen_expr(tgt->c1);
-                if (esz > 1) {
-                    emit_indent();
-                    printf("i32.const %d\n", esz);
-                    emit_indent();
-                    printf("i32.mul\n");
-                }
-                emit_indent();
-                printf("i32.add\n");
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-                gen_expr(n->c1);
-                emit_indent();
-                if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
-                else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
-                else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
-                else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
-                else { printf("i32.shr_s\n"); }
-            }
-            emit_indent();
-            printf("local.set $__atmp\n");
-            gen_expr(tgt->c0);
-            gen_expr(tgt->c1);
-            if (esz > 1) {
-                emit_indent();
-                printf("i32.const %d\n", esz);
-                emit_indent();
-                printf("i32.mul\n");
-            }
+            gen_expr(n->c1);
             emit_indent();
             printf("i32.add\n");
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr(tgt->c0);
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            printf("i32.sub\n");
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr(tgt->c0);
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+            else { printf("i32.shr_s\n"); }
+        }
+        emit_indent();
+        if (last_expr_is_float) {
+            printf("local.set $__ftmp\n");
+            gen_expr(tgt->c0);
+            emit_indent();
+            printf("local.get $__ftmp\n");
+            emit_indent();
+            printf("f64.store\n");
+            emit_indent();
+            printf("local.get $__ftmp\n");
+        } else {
+            printf("local.set $__atmp\n");
+            gen_expr(tgt->c0);
             emit_indent();
             printf("local.get $__atmp\n");
             emit_indent();
@@ -2980,460 +3273,60 @@ void gen_expr(struct Node *n) {
             emit_indent();
             printf("local.get $__atmp\n");
         }
-        break;
-    case ND_UNARY:
-        if (n->ival == TOK_MINUS) {
-            gen_expr(n->c0);
-            if (last_expr_is_float) {
+    } else if (tgt->kind == ND_MEMBER) {
+        off = resolve_field_offset(tgt->sval);
+        if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
+        if (n->ival == TOK_EQ) {
+            gen_expr(n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr(tgt->c0);
+            if (off > 0) {
                 emit_indent();
-                printf("f64.neg\n");
-            } else {
-                /* save value, push 0, push value, sub */
+                printf("i32.const %d\n", off);
                 emit_indent();
-                printf("local.set $__atmp\n");
-                emit_indent();
-                printf("i32.const 0\n");
-                emit_indent();
-                printf("local.get $__atmp\n");
-                emit_indent();
-                printf("i32.sub\n");
-            }
-        } else if (n->ival == TOK_BANG) {
-            gen_expr(n->c0);
-            if (last_expr_is_float) {
-                emit_indent();
-                printf("f64.const 0\n");
-                emit_indent();
-                printf("f64.eq\n");
-                last_expr_is_float = 0;
-            } else {
-                emit_indent();
-                printf("i32.eqz\n");
-            }
-        } else if (n->ival == TOK_TILDE) {
-            emit_indent();
-            printf("i32.const -1\n");
-            gen_expr(n->c0);
-            emit_indent();
-            printf("i32.xor\n");
-            last_expr_is_float = 0;
-        } else if (n->ival == TOK_STAR) {
-            esz = expr_elem_size(n->c0);
-            gen_expr(n->c0);
-            if (esz == 8) {
-                emit_indent();
-                printf("f64.load\n");
-                last_expr_is_float = 2;
-            } else {
-                last_expr_is_float = 0;
-                emit_indent();
-                if (esz == 1) {
-                    printf("i32.load8_u\n");
-                } else if (esz == 2) {
-                    printf("i32.load16_s\n");
-                } else {
-                    printf("i32.load\n");
-                }
-            }
-        } else if (n->ival == TOK_AMP) {
-            error(n->nline, n->ncol, "cannot take address of this expression");
-        }
-        break;
-    case ND_BINARY: {
-        int left_float;
-        int right_float;
-        int op_float;
-        gen_expr(n->c0);
-        left_float = last_expr_is_float;
-        gen_expr(n->c1);
-        right_float = last_expr_is_float;
-        op_float = 0;
-        if (left_float || right_float) {
-            op_float = 2;
-            /* promote: if either is float, both should be f64 */
-            if (left_float && !right_float) {
-                /* stack: [f64, i32] — convert top (right) from i32 to f64 */
-                emit_indent();
-                printf("f64.convert_i32_s\n");
-            } else if (!left_float && right_float) {
-                /* stack: [i32, f64] — need to swap and convert left */
-                emit_indent();
-                printf("local.set $__ftmp\n");
-                emit_indent();
-                printf("f64.convert_i32_s\n");
-                emit_indent();
-                printf("local.get $__ftmp\n");
-            }
-        }
-        if (op_float) {
-            emit_indent();
-            if (n->ival == TOK_PLUS) {
-                printf("f64.add\n");
-                last_expr_is_float = 2;
-            } else if (n->ival == TOK_MINUS) {
-                printf("f64.sub\n");
-                last_expr_is_float = 2;
-            } else if (n->ival == TOK_STAR) {
-                printf("f64.mul\n");
-                last_expr_is_float = 2;
-            } else if (n->ival == TOK_SLASH) {
-                printf("f64.div\n");
-                last_expr_is_float = 2;
-            } else if (n->ival == TOK_EQ_EQ) {
-                printf("f64.eq\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_BANG_EQ) {
-                printf("f64.ne\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_LT) {
-                printf("f64.lt\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_GT) {
-                printf("f64.gt\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_LT_EQ) {
-                printf("f64.le\n");
-                last_expr_is_float = 0;
-            } else if (n->ival == TOK_GT_EQ) {
-                printf("f64.ge\n");
-                last_expr_is_float = 0;
-            } else {
-                error(n->nline, n->ncol, "unsupported float binary operator");
-            }
-        } else {
-            emit_indent();
-            if (n->ival == TOK_PLUS) {
                 printf("i32.add\n");
-            } else if (n->ival == TOK_MINUS) {
-                printf("i32.sub\n");
-            } else if (n->ival == TOK_STAR) {
-                printf("i32.mul\n");
-            } else if (n->ival == TOK_SLASH) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.div_u\n"); } else { printf("i32.div_s\n"); }
-            } else if (n->ival == TOK_PERCENT) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.rem_u\n"); } else { printf("i32.rem_s\n"); }
-            } else if (n->ival == TOK_EQ_EQ) {
-                printf("i32.eq\n");
-            } else if (n->ival == TOK_BANG_EQ) {
-                printf("i32.ne\n");
-            } else if (n->ival == TOK_LT) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.lt_u\n"); } else { printf("i32.lt_s\n"); }
-            } else if (n->ival == TOK_GT) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.gt_u\n"); } else { printf("i32.gt_s\n"); }
-            } else if (n->ival == TOK_LT_EQ) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.le_u\n"); } else { printf("i32.le_s\n"); }
-            } else if (n->ival == TOK_GT_EQ) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.ge_u\n"); } else { printf("i32.ge_s\n"); }
-            } else if (n->ival == TOK_AMP_AMP) {
-                printf("i32.and\n");
-            } else if (n->ival == TOK_PIPE_PIPE) {
-                printf("i32.or\n");
-            } else if (n->ival == TOK_AMP) {
-                printf("i32.and\n");
-            } else if (n->ival == TOK_PIPE) {
-                printf("i32.or\n");
-            } else if (n->ival == TOK_LSHIFT) {
-                printf("i32.shl\n");
-            } else if (n->ival == TOK_RSHIFT) {
-                if (expr_is_unsigned(n->c0)) { printf("i32.shr_u\n"); } else { printf("i32.shr_s\n"); }
-            } else if (n->ival == TOK_CARET) {
-                printf("i32.xor\n");
-            } else {
-                error(n->nline, n->ncol, "unsupported binary operator");
-            }
-            last_expr_is_float = 0;
-        }
-        break;
-    }
-    case ND_CALL:
-        if (strcmp(n->sval, "printf") == 0) {
-            if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
-                error(n->nline, n->ncol, "printf requires string literal format");
-            }
-            sid = n->list[0]->ival;
-            fmt = str_table[sid]->data;
-            flen = str_table[sid]->len;
-            ai = 1;
-            for (fi = 0; fi < flen; fi++) {
-                if (fmt[fi] == '%' && fi + 1 < flen) {
-                    fi++;
-                    if (fmt[fi] == 'd') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
-                        gen_expr(n->list[ai]);
-                        ai++;
-                        emit_indent();
-                        printf("call $__print_int\n");
-                    } else if (fmt[fi] == 's') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
-                        gen_expr(n->list[ai]);
-                        ai++;
-                        emit_indent();
-                        printf("call $__print_str\n");
-                    } else if (fmt[fi] == 'c') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
-                        gen_expr(n->list[ai]);
-                        ai++;
-                        emit_indent();
-                        printf("call $putchar\n");
-                        emit_indent();
-                        printf("drop\n");
-                    } else if (fmt[fi] == 'x') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
-                        gen_expr(n->list[ai]);
-                        ai++;
-                        emit_indent();
-                        printf("call $__print_hex\n");
-                    } else if (fmt[fi] == 'f') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
-                        gen_expr(n->list[ai]);
-                        if (!last_expr_is_float) {
-                            emit_indent();
-                            printf("f64.convert_i32_s\n");
-                        }
-                        ai++;
-                        emit_indent();
-                        printf("call $__print_float\n");
-                    } else if (fmt[fi] == '%') {
-                        emit_indent();
-                        printf("i32.const 37\n");
-                        emit_indent();
-                        printf("call $putchar\n");
-                        emit_indent();
-                        printf("drop\n");
-                    } else {
-                        error(n->nline, n->ncol, "unsupported printf format");
-                    }
-                } else {
-                    emit_indent();
-                    printf("i32.const %d\n", fmt[fi] & 255);
-                    emit_indent();
-                    printf("call $putchar\n");
-                    emit_indent();
-                    printf("drop\n");
-                }
             }
             emit_indent();
-            printf("i32.const 0\n");
-            last_expr_is_float = 0;
-        } else if (strcmp(n->sval, "putchar") == 0) {
-            gen_expr(n->list[0]);
+            printf("i32.load\n");
+            gen_expr(n->c1);
             emit_indent();
-            printf("call $putchar\n");
-        } else if (strcmp(n->sval, "getchar") == 0) {
-            emit_indent();
-            printf("call $getchar\n");
-        } else if (strcmp(n->sval, "exit") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $__proc_exit\n");
-            emit_indent();
-            printf("i32.const 0\n");
-        } else if (strcmp(n->sval, "malloc") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $malloc\n");
-        } else if (strcmp(n->sval, "free") == 0) {
-            if (n->ival2 > 0) {
-                gen_expr(n->list[0]);
-            } else {
+            printf("i32.add\n");
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr(tgt->c0);
+            if (off > 0) {
                 emit_indent();
-                printf("i32.const 0\n");
-            }
-            emit_indent();
-            printf("call $free\n");
-            emit_indent();
-            printf("i32.const 0\n");
-        } else if (strcmp(n->sval, "strlen") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $strlen\n");
-        } else if (strcmp(n->sval, "strcmp") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strcmp\n");
-        } else if (strcmp(n->sval, "strncpy") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $strncpy\n");
-        } else if (strcmp(n->sval, "memcpy") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memcpy\n");
-        } else if (strcmp(n->sval, "memset") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memset\n");
-        } else if (strcmp(n->sval, "memcmp") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memcmp\n");
-        /* --- new libc builtins --- */
-        } else if (strcmp(n->sval, "isdigit") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isdigit\n");
-        } else if (strcmp(n->sval, "isalpha") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isalpha\n");
-        } else if (strcmp(n->sval, "isalnum") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isalnum\n");
-        } else if (strcmp(n->sval, "isspace") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isspace\n");
-        } else if (strcmp(n->sval, "isupper") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isupper\n");
-        } else if (strcmp(n->sval, "islower") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $islower\n");
-        } else if (strcmp(n->sval, "isprint") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isprint\n");
-        } else if (strcmp(n->sval, "ispunct") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $ispunct\n");
-        } else if (strcmp(n->sval, "isxdigit") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $isxdigit\n");
-        } else if (strcmp(n->sval, "toupper") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $toupper\n");
-        } else if (strcmp(n->sval, "tolower") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $tolower\n");
-        } else if (strcmp(n->sval, "abs") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $abs\n");
-        } else if (strcmp(n->sval, "atoi") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $atoi\n");
-        } else if (strcmp(n->sval, "puts") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $puts\n");
-        } else if (strcmp(n->sval, "srand") == 0) {
-            gen_expr(n->list[0]);
-            emit_indent();
-            printf("call $srand\n");
-            emit_indent();
-            printf("i32.const 0\n");
-        } else if (strcmp(n->sval, "rand") == 0) {
-            emit_indent();
-            printf("call $rand\n");
-        } else if (strcmp(n->sval, "strcpy") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strcpy\n");
-        } else if (strcmp(n->sval, "strcat") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strcat\n");
-        } else if (strcmp(n->sval, "strchr") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strchr\n");
-        } else if (strcmp(n->sval, "strrchr") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strrchr\n");
-        } else if (strcmp(n->sval, "strstr") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $strstr\n");
-        } else if (strcmp(n->sval, "calloc") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            emit_indent();
-            printf("call $calloc\n");
-        } else if (strcmp(n->sval, "strncmp") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $strncmp\n");
-        } else if (strcmp(n->sval, "strncat") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $strncat\n");
-        } else if (strcmp(n->sval, "memmove") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memmove\n");
-        } else if (strcmp(n->sval, "memchr") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $memchr\n");
-        } else if (strcmp(n->sval, "strtol") == 0) {
-            gen_expr(n->list[0]);
-            gen_expr(n->list[1]);
-            gen_expr(n->list[2]);
-            emit_indent();
-            printf("call $strtol\n");
-        } else {
-            for (i = 0; i < n->ival2; i++) {
-                gen_expr(n->list[i]);
-                /* convert param if needed */
-                if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
-                    emit_indent();
-                    printf("f64.convert_i32_s\n");
-                } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
-                    emit_indent();
-                    printf("i32.trunc_f64_s\n");
-                }
-            }
-            emit_indent();
-            printf("call $%s\n", n->sval);
-            if (func_is_void(n->sval)) {
+                printf("i32.const %d\n", off);
                 emit_indent();
-                printf("i32.const 0\n");
-                last_expr_is_float = 0;
-            } else {
-                last_expr_is_float = func_ret_is_float(n->sval);
+                printf("i32.add\n");
             }
+            emit_indent();
+            printf("i32.load\n");
+            gen_expr(n->c1);
+            emit_indent();
+            printf("i32.sub\n");
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr(tgt->c0);
+            if (off > 0) {
+                emit_indent();
+                printf("i32.const %d\n", off);
+                emit_indent();
+                printf("i32.add\n");
+            }
+            emit_indent();
+            printf("i32.load\n");
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+            else { printf("i32.shr_s\n"); }
         }
-        break;
-    case ND_STR_LIT:
         emit_indent();
-        printf("i32.const %d\n", str_table[n->ival]->offset);
-        last_expr_is_float = 0;
-        break;
-    case ND_MEMBER:
-        off = resolve_field_offset(n->sval);
-        if (off < 0) error(n->nline, n->ncol, "unknown struct field");
-        gen_expr(n->c0);
+        printf("local.set $__atmp\n");
+        gen_expr(tgt->c0);
         if (off > 0) {
             emit_indent();
             printf("i32.const %d\n", off);
@@ -3441,42 +3334,92 @@ void gen_expr(struct Node *n) {
             printf("i32.add\n");
         }
         emit_indent();
-        printf("i32.load\n");
-        break;
-    case ND_SIZEOF: {
-        struct StructDef *sd;
-        int sz;
-        if (n->ival == 1) {
-            sz = 4; /* pointer type */
-        } else if (n->c0 != (struct Node *)0) {
-            /* sizeof(expr): infer size from variable */
-            if (n->c0->kind == ND_IDENT) {
-                sz = var_elem_size(n->c0->sval);
-            } else {
-                sz = 4;
+        printf("local.get $__atmp\n");
+        emit_indent();
+        printf("i32.store\n");
+        emit_indent();
+        printf("local.get $__atmp\n");
+    } else if (tgt->kind == ND_SUBSCRIPT) {
+        esz = expr_elem_size(tgt->c0);
+        if (n->ival == TOK_EQ) {
+            gen_expr(n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (esz > 1) {
+                emit_indent();
+                printf("i32.const %d\n", esz);
+                emit_indent();
+                printf("i32.mul\n");
             }
-        } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
-            sz = 1;
-        } else if (n->sval != (char *)0) {
-            sd = find_struct(n->sval);
-            if (sd != (struct StructDef *)0) {
-                sz = sd->size;
+            emit_indent();
+            printf("i32.add\n");
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
             } else {
-                sz = 4;
+                printf("i32.load\n");
             }
-        } else if (n->ival2 > 0) {
-            sz = n->ival2;
-        } else {
-            sz = 4;
+            gen_expr(n->c1);
+            emit_indent();
+            printf("i32.add\n");
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (esz > 1) {
+                emit_indent();
+                printf("i32.const %d\n", esz);
+                emit_indent();
+                printf("i32.mul\n");
+            }
+            emit_indent();
+            printf("i32.add\n");
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            printf("i32.sub\n");
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (esz > 1) {
+                emit_indent();
+                printf("i32.const %d\n", esz);
+                emit_indent();
+                printf("i32.mul\n");
+            }
+            emit_indent();
+            printf("i32.add\n");
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_PIPE_EQ) { printf("i32.or\n"); }
+            else if (n->ival == TOK_AMP_EQ) { printf("i32.and\n"); }
+            else if (n->ival == TOK_CARET_EQ) { printf("i32.xor\n"); }
+            else if (n->ival == TOK_LSHIFT_EQ) { printf("i32.shl\n"); }
+            else { printf("i32.shr_s\n"); }
         }
         emit_indent();
-        printf("i32.const %d\n", sz);
-        break;
-    }
-    case ND_SUBSCRIPT:
-        esz = expr_elem_size(n->c0);
-        gen_expr(n->c0);
-        gen_expr(n->c1);
+        printf("local.set $__atmp\n");
+        gen_expr(tgt->c0);
+        gen_expr(tgt->c1);
         if (esz > 1) {
             emit_indent();
             printf("i32.const %d\n", esz);
@@ -3486,138 +3429,700 @@ void gen_expr(struct Node *n) {
         emit_indent();
         printf("i32.add\n");
         emit_indent();
+        printf("local.get $__atmp\n");
+        emit_indent();
         if (esz == 1) {
-            printf("i32.load8_u\n");
+            printf("i32.store8\n");
         } else if (esz == 2) {
-            printf("i32.load16_s\n");
+            printf("i32.store16\n");
         } else {
-            printf("i32.load\n");
+            printf("i32.store\n");
         }
-        break;
-    case ND_POST_INC:
-    case ND_POST_DEC: {
-        struct Node *tgt2;
-        char *pname;
-        int pis_global;
-        int pesz;
-        int poff;
-        tgt2 = n->c0;
-        if (tgt2->kind == ND_IDENT) {
-            pname = tgt2->sval;
-            pis_global = (find_global(pname) >= 0);
-            if (pis_global) {
-                emit_indent(); printf("global.get $%s\n", pname);
-                emit_indent(); printf("local.set $__atmp\n");
-                emit_indent(); printf("global.get $%s\n", pname);
-                emit_indent(); printf("i32.const 1\n");
-                emit_indent();
-                if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-                emit_indent(); printf("global.set $%s\n", pname);
-                emit_indent(); printf("local.get $__atmp\n");
-            } else {
-                emit_indent(); printf("local.get $%s\n", pname);
-                emit_indent(); printf("local.get $%s\n", pname);
-                emit_indent(); printf("i32.const 1\n");
-                emit_indent();
-                if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-                emit_indent(); printf("local.set $%s\n", pname);
-            }
-        } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
-            /* NOTE: tgt2->c0 evaluated 3x (save old val, store addr, reload).
-               Correct only when pointer expression has no side effects. */
-            pesz = expr_elem_size(tgt2->c0);
-            gen_expr(tgt2->c0);
-            emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-            emit_indent(); printf("local.set $__atmp\n");
-            gen_expr(tgt2->c0);
-            gen_expr(tgt2->c0);
-            emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-            emit_indent(); printf("i32.const 1\n");
-            emit_indent();
-            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-            emit_indent();
-            if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
-            emit_indent(); printf("local.get $__atmp\n");
-        } else if (tgt2->kind == ND_SUBSCRIPT) {
-            /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
-               Correct only when the array and index expressions have no side effects. */
-            pesz = expr_elem_size(tgt2->c0);
-            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-            emit_indent(); printf("i32.add\n");
-            emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-            emit_indent(); printf("local.set $__atmp\n");
-            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-            emit_indent(); printf("i32.add\n");
-            gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-            if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
-            emit_indent(); printf("i32.add\n");
-            emit_indent();
-            if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
-            emit_indent(); printf("i32.const 1\n");
-            emit_indent();
-            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-            emit_indent();
-            if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
-            emit_indent(); printf("local.get $__atmp\n");
-        } else if (tgt2->kind == ND_MEMBER) {
-            poff = resolve_field_offset(tgt2->sval);
-            if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
-            gen_expr(tgt2->c0);
-            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
-            emit_indent(); printf("i32.load\n");
-            emit_indent(); printf("local.set $__atmp\n");
-            gen_expr(tgt2->c0);
-            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
-            gen_expr(tgt2->c0);
-            if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
-            emit_indent(); printf("i32.load\n");
-            emit_indent(); printf("i32.const 1\n");
-            emit_indent();
-            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
-            emit_indent(); printf("i32.store\n");
-            emit_indent(); printf("local.get $__atmp\n");
-        } else {
-            error(n->nline, n->ncol, "unsupported post-inc/dec target");
-        }
-        break;
+        emit_indent();
+        printf("local.get $__atmp\n");
     }
-    case ND_TERNARY:
+}
+
+void gen_expr_unary(struct Node *n) {
+    int esz;
+
+    if (n->ival == TOK_MINUS) {
         gen_expr(n->c0);
-        /* both branches produce i32; compiler is uniformly i32 throughout */
+        if (last_expr_is_float) {
+            emit_indent();
+            printf("f64.neg\n");
+        } else {
+            /* save value, push 0, push value, sub */
+            emit_indent();
+            printf("local.set $__atmp\n");
+            emit_indent();
+            printf("i32.const 0\n");
+            emit_indent();
+            printf("local.get $__atmp\n");
+            emit_indent();
+            printf("i32.sub\n");
+        }
+    } else if (n->ival == TOK_BANG) {
+        gen_expr(n->c0);
+        if (last_expr_is_float) {
+            emit_indent();
+            printf("f64.const 0\n");
+            emit_indent();
+            printf("f64.eq\n");
+            last_expr_is_float = 0;
+        } else {
+            emit_indent();
+            printf("i32.eqz\n");
+        }
+    } else if (n->ival == TOK_TILDE) {
         emit_indent();
-        printf("(if (result i32)\n");
-        indent_level++;
+        printf("i32.const -1\n");
+        gen_expr(n->c0);
         emit_indent();
-        printf("(then\n");
-        indent_level++;
-        gen_expr(n->c1);
-        indent_level--;
+        printf("i32.xor\n");
+        last_expr_is_float = 0;
+    } else if (n->ival == TOK_STAR) {
+        esz = expr_elem_size(n->c0);
+        gen_expr(n->c0);
+        if (esz == 8) {
+            emit_indent();
+            printf("f64.load\n");
+            last_expr_is_float = 2;
+        } else {
+            last_expr_is_float = 0;
+            emit_indent();
+            if (esz == 1) {
+                printf("i32.load8_u\n");
+            } else if (esz == 2) {
+                printf("i32.load16_s\n");
+            } else {
+                printf("i32.load\n");
+            }
+        }
+    } else if (n->ival == TOK_AMP) {
+        error(n->nline, n->ncol, "cannot take address of this expression");
+    }
+}
+
+void gen_expr_binary(struct Node *n) {
+    int left_float;
+    int right_float;
+    int op_float;
+    gen_expr(n->c0);
+    left_float = last_expr_is_float;
+    gen_expr(n->c1);
+    right_float = last_expr_is_float;
+    op_float = 0;
+    if (left_float || right_float) {
+        op_float = 2;
+        /* promote: if either is float, both should be f64 */
+        if (left_float && !right_float) {
+            /* stack: [f64, i32] — convert top (right) from i32 to f64 */
+            emit_indent();
+            printf("f64.convert_i32_s\n");
+        } else if (!left_float && right_float) {
+            /* stack: [i32, f64] — need to swap and convert left */
+            emit_indent();
+            printf("local.set $__ftmp\n");
+            emit_indent();
+            printf("f64.convert_i32_s\n");
+            emit_indent();
+            printf("local.get $__ftmp\n");
+        }
+    }
+    if (op_float) {
         emit_indent();
-        printf(")\n");
+        if (n->ival == TOK_PLUS) {
+            printf("f64.add\n");
+            last_expr_is_float = 2;
+        } else if (n->ival == TOK_MINUS) {
+            printf("f64.sub\n");
+            last_expr_is_float = 2;
+        } else if (n->ival == TOK_STAR) {
+            printf("f64.mul\n");
+            last_expr_is_float = 2;
+        } else if (n->ival == TOK_SLASH) {
+            printf("f64.div\n");
+            last_expr_is_float = 2;
+        } else if (n->ival == TOK_EQ_EQ) {
+            printf("f64.eq\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_BANG_EQ) {
+            printf("f64.ne\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_LT) {
+            printf("f64.lt\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_GT) {
+            printf("f64.gt\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_LT_EQ) {
+            printf("f64.le\n");
+            last_expr_is_float = 0;
+        } else if (n->ival == TOK_GT_EQ) {
+            printf("f64.ge\n");
+            last_expr_is_float = 0;
+        } else {
+            error(n->nline, n->ncol, "unsupported float binary operator");
+        }
+    } else {
         emit_indent();
-        printf("(else\n");
-        indent_level++;
-        gen_expr(n->c2);
-        indent_level--;
+        if (n->ival == TOK_PLUS) {
+            printf("i32.add\n");
+        } else if (n->ival == TOK_MINUS) {
+            printf("i32.sub\n");
+        } else if (n->ival == TOK_STAR) {
+            printf("i32.mul\n");
+        } else if (n->ival == TOK_SLASH) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.div_u\n"); } else { printf("i32.div_s\n"); }
+        } else if (n->ival == TOK_PERCENT) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.rem_u\n"); } else { printf("i32.rem_s\n"); }
+        } else if (n->ival == TOK_EQ_EQ) {
+            printf("i32.eq\n");
+        } else if (n->ival == TOK_BANG_EQ) {
+            printf("i32.ne\n");
+        } else if (n->ival == TOK_LT) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.lt_u\n"); } else { printf("i32.lt_s\n"); }
+        } else if (n->ival == TOK_GT) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.gt_u\n"); } else { printf("i32.gt_s\n"); }
+        } else if (n->ival == TOK_LT_EQ) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.le_u\n"); } else { printf("i32.le_s\n"); }
+        } else if (n->ival == TOK_GT_EQ) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.ge_u\n"); } else { printf("i32.ge_s\n"); }
+        } else if (n->ival == TOK_AMP_AMP) {
+            printf("i32.and\n");
+        } else if (n->ival == TOK_PIPE_PIPE) {
+            printf("i32.or\n");
+        } else if (n->ival == TOK_AMP) {
+            printf("i32.and\n");
+        } else if (n->ival == TOK_PIPE) {
+            printf("i32.or\n");
+        } else if (n->ival == TOK_LSHIFT) {
+            printf("i32.shl\n");
+        } else if (n->ival == TOK_RSHIFT) {
+            if (expr_is_unsigned(n->c0)) { printf("i32.shr_u\n"); } else { printf("i32.shr_s\n"); }
+        } else if (n->ival == TOK_CARET) {
+            printf("i32.xor\n");
+        } else {
+            error(n->nline, n->ncol, "unsupported binary operator");
+        }
+        last_expr_is_float = 0;
+    }
+}
+
+void gen_expr_call(struct Node *n) {
+    char *fmt;
+    int flen;
+    int ai;
+    int fi;
+    int sid;
+    int i;
+
+    if (strcmp(n->sval, "printf") == 0) {
+        if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
+            error(n->nline, n->ncol, "printf requires string literal format");
+        }
+        sid = n->list[0]->ival;
+        fmt = str_table[sid]->data;
+        flen = str_table[sid]->len;
+        ai = 1;
+        for (fi = 0; fi < flen; fi++) {
+            if (fmt[fi] == '%' && fi + 1 < flen) {
+                fi++;
+                if (fmt[fi] == 'd') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    printf("call $__print_int\n");
+                } else if (fmt[fi] == 's') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    printf("call $__print_str\n");
+                } else if (fmt[fi] == 'c') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    printf("call $putchar\n");
+                    emit_indent();
+                    printf("drop\n");
+                } else if (fmt[fi] == 'x') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    printf("call $__print_hex\n");
+                } else if (fmt[fi] == 'f') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
+                    gen_expr(n->list[ai]);
+                    if (!last_expr_is_float) {
+                        emit_indent();
+                        printf("f64.convert_i32_s\n");
+                    }
+                    ai++;
+                    emit_indent();
+                    printf("call $__print_float\n");
+                } else if (fmt[fi] == '%') {
+                    emit_indent();
+                    printf("i32.const 37\n");
+                    emit_indent();
+                    printf("call $putchar\n");
+                    emit_indent();
+                    printf("drop\n");
+                } else {
+                    error(n->nline, n->ncol, "unsupported printf format");
+                }
+            } else {
+                emit_indent();
+                printf("i32.const %d\n", fmt[fi] & 255);
+                emit_indent();
+                printf("call $putchar\n");
+                emit_indent();
+                printf("drop\n");
+            }
+        }
         emit_indent();
-        printf(")\n");
-        indent_level--;
+        printf("i32.const 0\n");
+        last_expr_is_float = 0;
+    } else if (strcmp(n->sval, "putchar") == 0) {
+        gen_expr(n->list[0]);
         emit_indent();
-        printf(")\n");
-        break;
-    default:
+        printf("call $putchar\n");
+    } else if (strcmp(n->sval, "getchar") == 0) {
+        emit_indent();
+        printf("call $getchar\n");
+    } else if (strcmp(n->sval, "exit") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $__proc_exit\n");
+        emit_indent();
+        printf("i32.const 0\n");
+    } else if (strcmp(n->sval, "malloc") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $malloc\n");
+    } else if (strcmp(n->sval, "free") == 0) {
+        if (n->ival2 > 0) {
+            gen_expr(n->list[0]);
+        } else {
+            emit_indent();
+            printf("i32.const 0\n");
+        }
+        emit_indent();
+        printf("call $free\n");
+        emit_indent();
+        printf("i32.const 0\n");
+    } else if (strcmp(n->sval, "strlen") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $strlen\n");
+    } else if (strcmp(n->sval, "strcmp") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strcmp\n");
+    } else if (strcmp(n->sval, "strncpy") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $strncpy\n");
+    } else if (strcmp(n->sval, "memcpy") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memcpy\n");
+    } else if (strcmp(n->sval, "memset") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memset\n");
+    } else if (strcmp(n->sval, "memcmp") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memcmp\n");
+    /* --- new libc builtins --- */
+    } else if (strcmp(n->sval, "isdigit") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isdigit\n");
+    } else if (strcmp(n->sval, "isalpha") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isalpha\n");
+    } else if (strcmp(n->sval, "isalnum") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isalnum\n");
+    } else if (strcmp(n->sval, "isspace") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isspace\n");
+    } else if (strcmp(n->sval, "isupper") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isupper\n");
+    } else if (strcmp(n->sval, "islower") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $islower\n");
+    } else if (strcmp(n->sval, "isprint") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isprint\n");
+    } else if (strcmp(n->sval, "ispunct") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $ispunct\n");
+    } else if (strcmp(n->sval, "isxdigit") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $isxdigit\n");
+    } else if (strcmp(n->sval, "toupper") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $toupper\n");
+    } else if (strcmp(n->sval, "tolower") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $tolower\n");
+    } else if (strcmp(n->sval, "abs") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $abs\n");
+    } else if (strcmp(n->sval, "atoi") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $atoi\n");
+    } else if (strcmp(n->sval, "puts") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $puts\n");
+    } else if (strcmp(n->sval, "srand") == 0) {
+        gen_expr(n->list[0]);
+        emit_indent();
+        printf("call $srand\n");
+        emit_indent();
+        printf("i32.const 0\n");
+    } else if (strcmp(n->sval, "rand") == 0) {
+        emit_indent();
+        printf("call $rand\n");
+    } else if (strcmp(n->sval, "strcpy") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strcpy\n");
+    } else if (strcmp(n->sval, "strcat") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strcat\n");
+    } else if (strcmp(n->sval, "strchr") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strchr\n");
+    } else if (strcmp(n->sval, "strrchr") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strrchr\n");
+    } else if (strcmp(n->sval, "strstr") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $strstr\n");
+    } else if (strcmp(n->sval, "calloc") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        printf("call $calloc\n");
+    } else if (strcmp(n->sval, "strncmp") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $strncmp\n");
+    } else if (strcmp(n->sval, "strncat") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $strncat\n");
+    } else if (strcmp(n->sval, "memmove") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memmove\n");
+    } else if (strcmp(n->sval, "memchr") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $memchr\n");
+    } else if (strcmp(n->sval, "strtol") == 0) {
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        emit_indent();
+        printf("call $strtol\n");
+    } else {
+        for (i = 0; i < n->ival2; i++) {
+            gen_expr(n->list[i]);
+            /* convert param if needed */
+            if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
+                emit_indent();
+                printf("f64.convert_i32_s\n");
+            } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
+                emit_indent();
+                printf("i32.trunc_f64_s\n");
+            }
+        }
+        emit_indent();
+        printf("call $%s\n", n->sval);
+        if (func_is_void(n->sval)) {
+            emit_indent();
+            printf("i32.const 0\n");
+            last_expr_is_float = 0;
+        } else {
+            last_expr_is_float = func_ret_is_float(n->sval);
+        }
+    }
+}
+
+void gen_expr_str_lit(struct Node *n) {
+    emit_indent();
+    printf("i32.const %d\n", str_table[n->ival]->offset);
+    last_expr_is_float = 0;
+}
+
+void gen_expr_call_indirect(struct Node *n) {
+    int ci_i;
+    int ci_np;
+    ci_np = n->ival; /* declared param count */
+    /* push arguments */
+    for (ci_i = 0; ci_i < n->ival2; ci_i++) {
+        gen_expr(n->list[ci_i]);
+    }
+    /* push table index (the callee expression) */
+    gen_expr(n->c0);
+    /* emit call_indirect with matching type signature */
+    emit_indent();
+    printf("call_indirect (type $__fntype_%d_%s)\n",
+           ci_np, n->ival3 ? "void" : "i32");
+    if (n->ival3) {
+        /* void function — push dummy i32 */
+        emit_indent();
+        printf("i32.const 0\n");
+    }
+    last_expr_is_float = 0;
+}
+
+void gen_expr_member(struct Node *n) {
+    int off;
+
+    off = resolve_field_offset(n->sval);
+    if (off < 0) error(n->nline, n->ncol, "unknown struct field");
+    gen_expr(n->c0);
+    if (off > 0) {
+        emit_indent();
+        printf("i32.const %d\n", off);
+        emit_indent();
+        printf("i32.add\n");
+    }
+    emit_indent();
+    printf("i32.load\n");
+}
+
+void gen_expr_sizeof(struct Node *n) {
+    struct StructDef *sd;
+    int sz;
+    if (n->ival == 1) {
+        sz = 4; /* pointer type */
+    } else if (n->c0 != (struct Node *)0) {
+        /* sizeof(expr): infer size from variable */
+        if (n->c0->kind == ND_IDENT) {
+            sz = var_elem_size(n->c0->sval);
+        } else {
+            sz = 4;
+        }
+    } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
+        sz = 1;
+    } else if (n->sval != (char *)0) {
+        sd = find_struct(n->sval);
+        if (sd != (struct StructDef *)0) {
+            sz = sd->size;
+        } else {
+            sz = 4;
+        }
+    } else if (n->ival2 > 0) {
+        sz = n->ival2;
+    } else {
+        sz = 4;
+    }
+    emit_indent();
+    printf("i32.const %d\n", sz);
+}
+
+void gen_expr_subscript(struct Node *n) {
+    int esz;
+
+    esz = expr_elem_size(n->c0);
+    gen_expr(n->c0);
+    gen_expr(n->c1);
+    if (esz > 1) {
+        emit_indent();
+        printf("i32.const %d\n", esz);
+        emit_indent();
+        printf("i32.mul\n");
+    }
+    emit_indent();
+    printf("i32.add\n");
+    emit_indent();
+    if (esz == 1) {
+        printf("i32.load8_u\n");
+    } else if (esz == 2) {
+        printf("i32.load16_s\n");
+    } else {
+        printf("i32.load\n");
+    }
+}
+
+void gen_expr_post_inc_dec(struct Node *n) {
+    struct Node *tgt2;
+    char *pname;
+    int pis_global;
+    int pesz;
+    int poff;
+    tgt2 = n->c0;
+    if (tgt2->kind == ND_IDENT) {
+        pname = tgt2->sval;
+        pis_global = (find_global(pname) >= 0);
+        if (pis_global) {
+            emit_indent(); printf("global.get $%s\n", pname);
+            emit_indent(); printf("local.set $__atmp\n");
+            emit_indent(); printf("global.get $%s\n", pname);
+            emit_indent(); printf("i32.const 1\n");
+            emit_indent();
+            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+            emit_indent(); printf("global.set $%s\n", pname);
+            emit_indent(); printf("local.get $__atmp\n");
+        } else {
+            emit_indent(); printf("local.get $%s\n", pname);
+            emit_indent(); printf("local.get $%s\n", pname);
+            emit_indent(); printf("i32.const 1\n");
+            emit_indent();
+            if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+            emit_indent(); printf("local.set $%s\n", pname);
+        }
+    } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
+        /* NOTE: tgt2->c0 evaluated 3x (save old val, store addr, reload).
+           Correct only when pointer expression has no side effects. */
+        pesz = expr_elem_size(tgt2->c0);
+        gen_expr(tgt2->c0);
+        emit_indent();
+        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
+        emit_indent(); printf("local.set $__atmp\n");
+        gen_expr(tgt2->c0);
+        gen_expr(tgt2->c0);
+        emit_indent();
+        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
+        emit_indent(); printf("i32.const 1\n");
+        emit_indent();
+        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+        emit_indent();
+        if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
+        emit_indent(); printf("local.get $__atmp\n");
+    } else if (tgt2->kind == ND_SUBSCRIPT) {
+        /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
+           Correct only when the array and index expressions have no side effects. */
+        pesz = expr_elem_size(tgt2->c0);
+        gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+        emit_indent(); printf("i32.add\n");
+        emit_indent();
+        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
+        emit_indent(); printf("local.set $__atmp\n");
+        gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+        emit_indent(); printf("i32.add\n");
+        gen_expr(tgt2->c0); gen_expr(tgt2->c1);
+        if (pesz > 1) { emit_indent(); printf("i32.const %d\n", pesz); emit_indent(); printf("i32.mul\n"); }
+        emit_indent(); printf("i32.add\n");
+        emit_indent();
+        if (pesz == 1) { printf("i32.load8_u\n"); } else if (pesz == 2) { printf("i32.load16_s\n"); } else { printf("i32.load\n"); }
+        emit_indent(); printf("i32.const 1\n");
+        emit_indent();
+        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+        emit_indent();
+        if (pesz == 1) { printf("i32.store8\n"); } else if (pesz == 2) { printf("i32.store16\n"); } else { printf("i32.store\n"); }
+        emit_indent(); printf("local.get $__atmp\n");
+    } else if (tgt2->kind == ND_MEMBER) {
+        poff = resolve_field_offset(tgt2->sval);
+        if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
+        gen_expr(tgt2->c0);
+        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+        emit_indent(); printf("i32.load\n");
+        emit_indent(); printf("local.set $__atmp\n");
+        gen_expr(tgt2->c0);
+        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+        gen_expr(tgt2->c0);
+        if (poff > 0) { emit_indent(); printf("i32.const %d\n", poff); emit_indent(); printf("i32.add\n"); }
+        emit_indent(); printf("i32.load\n");
+        emit_indent(); printf("i32.const 1\n");
+        emit_indent();
+        if (n->kind == ND_POST_INC) { printf("i32.add\n"); } else { printf("i32.sub\n"); }
+        emit_indent(); printf("i32.store\n");
+        emit_indent(); printf("local.get $__atmp\n");
+    } else {
+        error(n->nline, n->ncol, "unsupported post-inc/dec target");
+    }
+}
+
+void gen_expr_ternary(struct Node *n) {
+    gen_expr(n->c0);
+    /* both branches produce i32; compiler is uniformly i32 throughout */
+    emit_indent();
+    printf("(if (result i32)\n");
+    indent_level++;
+    emit_indent();
+    printf("(then\n");
+    indent_level++;
+    gen_expr(n->c1);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("(else\n");
+    indent_level++;
+    gen_expr(n->c2);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+}
+
+void gen_expr(struct Node *n) {
+    GenExprFn fn;
+    if (n->kind < 0 || n->kind >= ND_COUNT) {
         error(n->nline, n->ncol, "unsupported expression in codegen");
     }
+    fn = gen_expr_tbl[n->kind];
+    fn(n);
 }
 
 /* --- Statement codegen --- */
 
-void gen_stmt(struct Node *n);
 
 void gen_body(struct Node *n) {
     int i;
@@ -3630,110 +4135,157 @@ void gen_body(struct Node *n) {
     }
 }
 
-void gen_stmt(struct Node *n) {
-    int lbl;
-    int i;
-    int bsz;
-
-    switch (n->kind) {
-    case ND_RETURN:
-        if (n->c0 != (struct Node *)0) {
-            gen_expr(n->c0);
-        }
-        emit_indent();
-        printf("return\n");
-        break;
-    case ND_VAR_DECL: {
-        int vd_is_flt;
-        vd_is_flt = n->ival3 >> 4;
-        if (n->ival > 0) {
-            /* Array: allocate n->ival elements of elem_size bytes */
-            bsz = n->ival * n->ival2;
-            emit_indent();
-            printf("i32.const %d\n", bsz);
-            emit_indent();
-            printf("call $malloc\n");
-            emit_indent();
-            printf("local.set $%s\n", n->sval);
-        } else if (n->c0 != (struct Node *)0) {
-            gen_expr(n->c0);
-            /* type conversion if needed */
-            if (vd_is_flt && !last_expr_is_float) {
-                emit_indent();
-                printf("f64.convert_i32_s\n");
-            } else if (!vd_is_flt && last_expr_is_float) {
-                emit_indent();
-                printf("i32.trunc_f64_s\n");
-            }
-            emit_indent();
-            printf("local.set $%s\n", n->sval);
-        }
-        break;
+void gen_stmt_return(struct Node *n) {
+    if (n->c0 != (struct Node *)0) {
+        gen_expr(n->c0);
     }
-    case ND_EXPR_STMT:
-        gen_expr(n->c0);
+    emit_indent();
+    printf("return\n");
+}
+
+void gen_stmt_var_decl(struct Node *n) {
+    int bsz;
+    int vd_is_flt;
+    vd_is_flt = n->ival3 >> 4;
+    if (n->ival > 0) {
+        /* Array: allocate n->ival elements of elem_size bytes */
+        bsz = n->ival * n->ival2;
         emit_indent();
-        printf("drop\n");
-        break;
-    case ND_IF:
-        gen_expr(n->c0);
-        if (last_expr_is_float) {
-            /* convert float condition to boolean: f64 != 0.0 */
-            emit_indent();
-            printf("f64.const 0\n");
-            emit_indent();
-            printf("f64.ne\n");
-        }
-        if (n->c2 != (struct Node *)0) {
-            emit_indent();
-            printf("(if\n");
-            indent_level++;
-            emit_indent();
-            printf("(then\n");
-            indent_level++;
-            gen_body(n->c1);
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-            emit_indent();
-            printf("(else\n");
-            indent_level++;
-            gen_body(n->c2);
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-        } else {
-            emit_indent();
-            printf("(if\n");
-            indent_level++;
-            emit_indent();
-            printf("(then\n");
-            indent_level++;
-            gen_body(n->c1);
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-            indent_level--;
-            emit_indent();
-            printf(")\n");
-        }
-        break;
-    case ND_WHILE:
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        loop_sp++;
+        printf("i32.const %d\n", bsz);
         emit_indent();
-        printf("(block $brk_%d\n", lbl);
+        printf("call $malloc\n");
+        emit_indent();
+        printf("local.set $%s\n", n->sval);
+    } else if (n->c0 != (struct Node *)0) {
+        gen_expr(n->c0);
+        /* type conversion if needed */
+        if (vd_is_flt && !last_expr_is_float) {
+            emit_indent();
+            printf("f64.convert_i32_s\n");
+        } else if (!vd_is_flt && last_expr_is_float) {
+            emit_indent();
+            printf("i32.trunc_f64_s\n");
+        }
+        emit_indent();
+        printf("local.set $%s\n", n->sval);
+    }
+}
+
+void gen_stmt_expr_stmt(struct Node *n) {
+    gen_expr(n->c0);
+    emit_indent();
+    printf("drop\n");
+}
+
+void gen_stmt_if(struct Node *n) {
+    gen_expr(n->c0);
+    if (last_expr_is_float) {
+        /* convert float condition to boolean: f64 != 0.0 */
+        emit_indent();
+        printf("f64.const 0\n");
+        emit_indent();
+        printf("f64.ne\n");
+    }
+    if (n->c2 != (struct Node *)0) {
+        emit_indent();
+        printf("(if\n");
         indent_level++;
         emit_indent();
-        printf("(loop $lp_%d\n", lbl);
+        printf("(then\n");
         indent_level++;
-        gen_expr(n->c0);
+        gen_body(n->c1);
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+        emit_indent();
+        printf("(else\n");
+        indent_level++;
+        gen_body(n->c2);
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+    } else {
+        emit_indent();
+        printf("(if\n");
+        indent_level++;
+        emit_indent();
+        printf("(then\n");
+        indent_level++;
+        gen_body(n->c1);
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+    }
+}
+
+void gen_stmt_while(struct Node *n) {
+    int lbl;
+
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    loop_sp++;
+    emit_indent();
+    printf("(block $brk_%d\n", lbl);
+    indent_level++;
+    emit_indent();
+    printf("(loop $lp_%d\n", lbl);
+    indent_level++;
+    gen_expr(n->c0);
+    if (last_expr_is_float) {
+        emit_indent();
+        printf("f64.const 0\n");
+        emit_indent();
+        printf("f64.ne\n");
+    }
+    emit_indent();
+    printf("i32.eqz\n");
+    emit_indent();
+    printf("br_if $brk_%d\n", lbl);
+    emit_indent();
+    printf("(block $cont_%d\n", lbl);
+    indent_level++;
+    gen_body(n->c1);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    emit_indent();
+    printf("br $lp_%d\n", lbl);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    loop_sp--;
+}
+
+void gen_stmt_for(struct Node *n) {
+    int lbl;
+
+    if (n->c0 != (struct Node *)0) {
+        gen_stmt(n->c0);
+    }
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    loop_sp++;
+    emit_indent();
+    printf("(block $brk_%d\n", lbl);
+    indent_level++;
+    emit_indent();
+    printf("(loop $lp_%d\n", lbl);
+    indent_level++;
+    if (n->c1 != (struct Node *)0) {
+        gen_expr(n->c1);
         if (last_expr_is_float) {
             emit_indent();
             printf("f64.const 0\n");
@@ -3744,251 +4296,271 @@ void gen_stmt(struct Node *n) {
         printf("i32.eqz\n");
         emit_indent();
         printf("br_if $brk_%d\n", lbl);
-        emit_indent();
-        printf("(block $cont_%d\n", lbl);
-        indent_level++;
-        gen_body(n->c1);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        emit_indent();
-        printf("br $lp_%d\n", lbl);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        loop_sp--;
-        break;
-    case ND_FOR:
-        if (n->c0 != (struct Node *)0) {
-            gen_stmt(n->c0);
-        }
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        loop_sp++;
-        emit_indent();
-        printf("(block $brk_%d\n", lbl);
-        indent_level++;
-        emit_indent();
-        printf("(loop $lp_%d\n", lbl);
-        indent_level++;
-        if (n->c1 != (struct Node *)0) {
-            gen_expr(n->c1);
-            if (last_expr_is_float) {
-                emit_indent();
-                printf("f64.const 0\n");
-                emit_indent();
-                printf("f64.ne\n");
-            }
-            emit_indent();
-            printf("i32.eqz\n");
-            emit_indent();
-            printf("br_if $brk_%d\n", lbl);
-        }
-        emit_indent();
-        printf("(block $cont_%d\n", lbl);
-        indent_level++;
-        gen_body(n->c3);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        if (n->c2 != (struct Node *)0) {
-            gen_expr(n->c2);
-            emit_indent();
-            printf("drop\n");
-        }
-        emit_indent();
-        printf("br $lp_%d\n", lbl);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        loop_sp--;
-        break;
-    case ND_DO_WHILE:
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        loop_sp++;
-        emit_indent();
-        printf("(block $brk_%d\n", lbl);
-        indent_level++;
-        emit_indent();
-        printf("(loop $lp_%d\n", lbl);
-        indent_level++;
-        emit_indent();
-        printf("(block $cont_%d\n", lbl);
-        indent_level++;
-        gen_body(n->c0);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        gen_expr(n->c1);
-        if (last_expr_is_float) {
-            emit_indent();
-            printf("f64.const 0\n");
-            emit_indent();
-            printf("f64.ne\n");
-        }
-        emit_indent();
-        printf("br_if $lp_%d\n", lbl);
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        indent_level--;
-        emit_indent();
-        printf(")\n");
-        loop_sp--;
-        break;
-    case ND_BREAK:
-        if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
-        emit_indent();
-        printf("br $brk_%d\n", brk_lbl[loop_sp - 1]);
-        break;
-    case ND_CONTINUE:
-        if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
-        if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
-        emit_indent();
-        printf("br $cont_%d\n", cont_lbl[loop_sp - 1]);
-        break;
-    case ND_BLOCK:
-        for (i = 0; i < n->ival2; i++) {
-            gen_stmt(n->list[i]);
-        }
-        break;
-    case ND_SWITCH: {
-        int case_vals[256];
-        int case_start[256];
-        int nc;
-        int dflt_pos;
-        int has_dflt;
-        int k;
-        int j;
-        int next_start;
-        int sw_lbl;
-        int si;
-        int last_case_pos;
-
-        nc = 0;
-        dflt_pos = -1;
-        has_dflt = 0;
-        for (si = 0; si < n->ival2; si++) {
-            if (n->list[si]->kind == ND_CASE) {
-                if (nc >= MAX_CASES) {
-                    error(n->nline, n->ncol, "too many cases in switch");
-                }
-                case_vals[nc] = n->list[si]->ival;
-                case_start[nc] = si;
-                nc++;
-            } else if (n->list[si]->kind == ND_DEFAULT) {
-                dflt_pos = si;
-                has_dflt = 1;
-            }
-        }
-
-        /* enforce: default must be last (limitation of WAT codegen) */
-        if (has_dflt) {
-            last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
-            if (dflt_pos < last_case_pos) {
-                error(n->c0->nline, n->c0->ncol,
-                      "default must appear after all case labels");
-            }
-        }
-
-        sw_lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = sw_lbl;
-        if (loop_sp > 0) {
-            cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
-        } else {
-            cont_lbl[loop_sp] = -1;
-        }
-        loop_sp++;
-
-        /* save switch value */
-        gen_expr(n->c0);
-        emit_indent();
-        printf("local.set $__stmp\n");
-
-        /* outer break block */
-        emit_indent();
-        printf("(block $brk_%d\n", sw_lbl);
-        indent_level++;
-
-        /* default target block (outermost) */
-        emit_indent();
-        printf("(block $sw%d_dflt\n", sw_lbl);
-        indent_level++;
-
-        /* open case blocks in reverse order: first case = innermost */
-        for (k = nc - 1; k >= 0; k--) {
-            emit_indent();
-            printf("(block $sw%d_c%d\n", sw_lbl, k);
-            indent_level++;
-        }
-
-        /* dispatch: compare and branch for each case */
-        for (k = 0; k < nc; k++) {
-            emit_indent(); printf("local.get $__stmp\n");
-            emit_indent(); printf("i32.const %d\n", case_vals[k]);
-            emit_indent(); printf("i32.eq\n");
-            emit_indent(); printf("br_if $sw%d_c%d\n", sw_lbl, k);
-        }
-        emit_indent();
-        if (has_dflt) {
-            printf("br $sw%d_dflt\n", sw_lbl);
-        } else {
-            printf("br $brk_%d\n", sw_lbl);
-        }
-
-        /* close case blocks in forward order and emit case bodies */
-        for (k = 0; k < nc; k++) {
-            indent_level--;
-            emit_indent(); printf(")\n");
-            if (k + 1 < nc) {
-                next_start = case_start[k + 1];
-            } else if (has_dflt) {
-                next_start = dflt_pos;
-            } else {
-                next_start = n->ival2;
-            }
-            for (j = case_start[k] + 1; j < next_start; j++) {
-                if (n->list[j]->kind == ND_CASE) continue;
-                if (n->list[j]->kind == ND_DEFAULT) continue;
-                gen_stmt(n->list[j]);
-            }
-        }
-
-        /* close default target block */
-        indent_level--;
-        emit_indent(); printf(")\n");
-
-        /* emit default body */
-        if (has_dflt) {
-            for (j = dflt_pos + 1; j < n->ival2; j++) {
-                if (n->list[j]->kind == ND_CASE) continue;
-                if (n->list[j]->kind == ND_DEFAULT) continue;
-                gen_stmt(n->list[j]);
-            }
-        }
-
-        /* close break block */
-        indent_level--;
-        emit_indent(); printf(")\n");
-
-        loop_sp--;
-        break;
     }
-    default:
+    emit_indent();
+    printf("(block $cont_%d\n", lbl);
+    indent_level++;
+    gen_body(n->c3);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    if (n->c2 != (struct Node *)0) {
+        gen_expr(n->c2);
+        emit_indent();
+        printf("drop\n");
+    }
+    emit_indent();
+    printf("br $lp_%d\n", lbl);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    loop_sp--;
+}
+
+void gen_stmt_do_while(struct Node *n) {
+    int lbl;
+
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    loop_sp++;
+    emit_indent();
+    printf("(block $brk_%d\n", lbl);
+    indent_level++;
+    emit_indent();
+    printf("(loop $lp_%d\n", lbl);
+    indent_level++;
+    emit_indent();
+    printf("(block $cont_%d\n", lbl);
+    indent_level++;
+    gen_body(n->c0);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    gen_expr(n->c1);
+    if (last_expr_is_float) {
+        emit_indent();
+        printf("f64.const 0\n");
+        emit_indent();
+        printf("f64.ne\n");
+    }
+    emit_indent();
+    printf("br_if $lp_%d\n", lbl);
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    indent_level--;
+    emit_indent();
+    printf(")\n");
+    loop_sp--;
+}
+
+void gen_stmt_break(struct Node *n) {
+    if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
+    emit_indent();
+    printf("br $brk_%d\n", brk_lbl[loop_sp - 1]);
+}
+
+void gen_stmt_continue(struct Node *n) {
+    if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
+    if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
+    emit_indent();
+    printf("br $cont_%d\n", cont_lbl[loop_sp - 1]);
+}
+
+void gen_stmt_block(struct Node *n) {
+    int i;
+
+    for (i = 0; i < n->ival2; i++) {
+        gen_stmt(n->list[i]);
+    }
+}
+
+void gen_stmt_switch(struct Node *n) {
+    int case_vals[256];
+    int case_start[256];
+    int nc;
+    int dflt_pos;
+    int has_dflt;
+    int k;
+    int j;
+    int next_start;
+    int sw_lbl;
+    int si;
+    int last_case_pos;
+
+    nc = 0;
+    dflt_pos = -1;
+    has_dflt = 0;
+    for (si = 0; si < n->ival2; si++) {
+        if (n->list[si]->kind == ND_CASE) {
+            if (nc >= MAX_CASES) {
+                error(n->nline, n->ncol, "too many cases in switch");
+            }
+            case_vals[nc] = n->list[si]->ival;
+            case_start[nc] = si;
+            nc++;
+        } else if (n->list[si]->kind == ND_DEFAULT) {
+            dflt_pos = si;
+            has_dflt = 1;
+        }
+    }
+
+    /* enforce: default must be last (limitation of WAT codegen) */
+    if (has_dflt) {
+        last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
+        if (dflt_pos < last_case_pos) {
+            error(n->c0->nline, n->c0->ncol,
+                  "default must appear after all case labels");
+        }
+    }
+
+    sw_lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = sw_lbl;
+    if (loop_sp > 0) {
+        cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
+    } else {
+        cont_lbl[loop_sp] = -1;
+    }
+    loop_sp++;
+
+    /* save switch value */
+    gen_expr(n->c0);
+    emit_indent();
+    printf("local.set $__stmp\n");
+
+    /* outer break block */
+    emit_indent();
+    printf("(block $brk_%d\n", sw_lbl);
+    indent_level++;
+
+    /* default target block (outermost) */
+    emit_indent();
+    printf("(block $sw%d_dflt\n", sw_lbl);
+    indent_level++;
+
+    /* open case blocks in reverse order: first case = innermost */
+    for (k = nc - 1; k >= 0; k--) {
+        emit_indent();
+        printf("(block $sw%d_c%d\n", sw_lbl, k);
+        indent_level++;
+    }
+
+    /* dispatch: compare and branch for each case */
+    for (k = 0; k < nc; k++) {
+        emit_indent(); printf("local.get $__stmp\n");
+        emit_indent(); printf("i32.const %d\n", case_vals[k]);
+        emit_indent(); printf("i32.eq\n");
+        emit_indent(); printf("br_if $sw%d_c%d\n", sw_lbl, k);
+    }
+    emit_indent();
+    if (has_dflt) {
+        printf("br $sw%d_dflt\n", sw_lbl);
+    } else {
+        printf("br $brk_%d\n", sw_lbl);
+    }
+
+    /* close case blocks in forward order and emit case bodies */
+    for (k = 0; k < nc; k++) {
+        indent_level--;
+        emit_indent(); printf(")\n");
+        if (k + 1 < nc) {
+            next_start = case_start[k + 1];
+        } else if (has_dflt) {
+            next_start = dflt_pos;
+        } else {
+            next_start = n->ival2;
+        }
+        for (j = case_start[k] + 1; j < next_start; j++) {
+            if (n->list[j]->kind == ND_CASE) continue;
+            if (n->list[j]->kind == ND_DEFAULT) continue;
+            gen_stmt(n->list[j]);
+        }
+    }
+
+    /* close default target block */
+    indent_level--;
+    emit_indent(); printf(")\n");
+
+    /* emit default body */
+    if (has_dflt) {
+        for (j = dflt_pos + 1; j < n->ival2; j++) {
+            if (n->list[j]->kind == ND_CASE) continue;
+            if (n->list[j]->kind == ND_DEFAULT) continue;
+            gen_stmt(n->list[j]);
+        }
+    }
+
+    /* close break block */
+    indent_level--;
+    emit_indent(); printf(")\n");
+
+    loop_sp--;
+}
+
+void gen_stmt(struct Node *n) {
+    GenStmtFn fn;
+    if (n->kind < 0 || n->kind >= ND_COUNT) {
         error(n->nline, n->ncol, "unsupported statement in codegen");
     }
+    fn = gen_stmt_tbl[n->kind];
+    fn(n);
+}
+
+void gen_expr_error(struct Node *n) {
+    error(n->nline, n->ncol, "unsupported expression in codegen");
+}
+
+void gen_stmt_error(struct Node *n) {
+    error(n->nline, n->ncol, "unsupported statement in codegen");
+}
+
+void init_gen_expr_tbl(void) {
+    int i;
+    gen_expr_tbl = (GenExprFn *)malloc(ND_COUNT * sizeof(void *));
+    for (i = 0; i < ND_COUNT; i++) {
+        gen_expr_tbl[i] = gen_expr_error;
+    }
+    gen_expr_tbl[ND_INT_LIT] = gen_expr_int_lit;
+    gen_expr_tbl[ND_FLOAT_LIT] = gen_expr_float_lit;
+    gen_expr_tbl[ND_CAST] = gen_expr_cast;
+    gen_expr_tbl[ND_IDENT] = gen_expr_ident;
+    gen_expr_tbl[ND_ASSIGN] = gen_expr_assign;
+    gen_expr_tbl[ND_UNARY] = gen_expr_unary;
+    gen_expr_tbl[ND_BINARY] = gen_expr_binary;
+    gen_expr_tbl[ND_CALL] = gen_expr_call;
+    gen_expr_tbl[ND_STR_LIT] = gen_expr_str_lit;
+    gen_expr_tbl[ND_CALL_INDIRECT] = gen_expr_call_indirect;
+    gen_expr_tbl[ND_MEMBER] = gen_expr_member;
+    gen_expr_tbl[ND_SIZEOF] = gen_expr_sizeof;
+    gen_expr_tbl[ND_SUBSCRIPT] = gen_expr_subscript;
+    gen_expr_tbl[ND_POST_INC] = gen_expr_post_inc_dec;
+    gen_expr_tbl[ND_POST_DEC] = gen_expr_post_inc_dec;
+    gen_expr_tbl[ND_TERNARY] = gen_expr_ternary;
+}
+
+void init_gen_stmt_tbl(void) {
+    int i;
+    gen_stmt_tbl = (GenStmtFn *)malloc(ND_COUNT * sizeof(void *));
+    for (i = 0; i < ND_COUNT; i++) {
+        gen_stmt_tbl[i] = gen_stmt_error;
+    }
+    gen_stmt_tbl[ND_RETURN] = gen_stmt_return;
+    gen_stmt_tbl[ND_VAR_DECL] = gen_stmt_var_decl;
+    gen_stmt_tbl[ND_EXPR_STMT] = gen_stmt_expr_stmt;
+    gen_stmt_tbl[ND_IF] = gen_stmt_if;
+    gen_stmt_tbl[ND_WHILE] = gen_stmt_while;
+    gen_stmt_tbl[ND_FOR] = gen_stmt_for;
+    gen_stmt_tbl[ND_DO_WHILE] = gen_stmt_do_while;
+    gen_stmt_tbl[ND_BREAK] = gen_stmt_break;
+    gen_stmt_tbl[ND_CONTINUE] = gen_stmt_continue;
+    gen_stmt_tbl[ND_BLOCK] = gen_stmt_block;
+    gen_stmt_tbl[ND_SWITCH] = gen_stmt_switch;
 }
 
 /* --- Function codegen --- */
@@ -4124,6 +4696,51 @@ void gen_module(struct Node *prog) {
     printf("(memory (export \"memory\") 256)\n");
     emit_indent();
     printf("\n");
+
+    /* function pointer type declarations and table */
+    if (fn_table_count > 0) {
+        int fti;
+        int need_types[17]; /* need_types[nparams] = bitmask: bit0=i32 result, bit1=void */
+        for (fti = 0; fti < 17; fti++) need_types[fti] = 0;
+        /* scan fnptr_vars to collect needed type signatures */
+        for (fti = 0; fti < nfnptr_vars; fti++) {
+            int np;
+            int vd;
+            np = fnptr_vars[fti]->fp_nparams;
+            vd = fnptr_vars[fti]->fp_is_void;
+            if (np <= 16) {
+                need_types[np] = need_types[np] | (1 << vd);
+            }
+        }
+        /* emit type declarations */
+        for (fti = 0; fti <= 16; fti++) {
+            if (need_types[fti] & 1) {
+                int pi;
+                emit_indent();
+                printf("(type $__fntype_%d_i32 (func", fti);
+                for (pi = 0; pi < fti; pi++) printf(" (param i32)");
+                printf(" (result i32)))\n");
+            }
+            if (need_types[fti] & 2) {
+                int pi;
+                emit_indent();
+                printf("(type $__fntype_%d_void (func", fti);
+                for (pi = 0; pi < fti; pi++) printf(" (param i32)");
+                printf("))\n");
+            }
+        }
+        /* table and elem */
+        emit_indent();
+        printf("(table %d funcref)\n", fn_table_count);
+        emit_indent();
+        printf("(elem (i32.const 0)");
+        for (fti = 0; fti < fn_table_count; fti++) {
+            printf(" $%s", fn_table_names[fti]);
+        }
+        printf(")\n");
+        emit_indent();
+        printf("\n");
+    }
 
     /* static data section */
     for (i = 0; i < nstrings; i++) {
@@ -5323,17 +5940,70 @@ void gen_module(struct Node *prog) {
     emit_indent();
     printf("\n");
 
-    /* _start */
-    emit_indent();
-    printf("(func $_start (export \"_start\")\n");
-    indent_level++;
-    emit_indent();
-    printf("call $main\n");
-    emit_indent();
-    printf("call $__proc_exit\n");
-    indent_level--;
-    emit_indent();
-    printf(")\n");
+    /* _start — calls __init if needed, then main */
+    {
+        int need_init;
+        int gi2;
+        need_init = 0;
+        for (gi2 = 0; gi2 < nglobals; gi2++) {
+            if (globals_tbl[gi2]->gv_arr_len > 0 && globals_tbl[gi2]->gv_arr_str_ids != (int *)0) {
+                need_init = 1;
+            }
+        }
+        if (need_init) {
+            emit_indent();
+            printf("(func $__init\n");
+            indent_level++;
+            emit_indent();
+            printf("(local $__ptr i32)\n");
+            for (gi2 = 0; gi2 < nglobals; gi2++) {
+                if (globals_tbl[gi2]->gv_arr_len > 0 && globals_tbl[gi2]->gv_arr_str_ids != (int *)0) {
+                    int ai2;
+                    /* allocate arr_len * 4 bytes */
+                    emit_indent();
+                    printf("i32.const %d\n", globals_tbl[gi2]->gv_arr_len * 4);
+                    emit_indent();
+                    printf("call $malloc\n");
+                    emit_indent();
+                    printf("local.tee $__ptr\n");
+                    emit_indent();
+                    printf("global.set $%s\n", globals_tbl[gi2]->name);
+                    /* store each element */
+                    for (ai2 = 0; ai2 < globals_tbl[gi2]->gv_arr_len; ai2++) {
+                        emit_indent();
+                        printf("local.get $__ptr\n");
+                        if (ai2 > 0) {
+                            emit_indent();
+                            printf("i32.const %d\n", ai2 * 4);
+                            emit_indent();
+                            printf("i32.add\n");
+                        }
+                        emit_indent();
+                        printf("i32.const %d\n", str_table[globals_tbl[gi2]->gv_arr_str_ids[ai2]]->offset);
+                        emit_indent();
+                        printf("i32.store\n");
+                    }
+                }
+            }
+            indent_level--;
+            emit_indent();
+            printf(")\n");
+        }
+        emit_indent();
+        printf("(func $_start (export \"_start\")\n");
+        indent_level++;
+        if (need_init) {
+            emit_indent();
+            printf("call $__init\n");
+        }
+        emit_indent();
+        printf("call $main\n");
+        emit_indent();
+        printf("call $__proc_exit\n");
+        indent_level--;
+        emit_indent();
+        printf(")\n");
+    }
 
     indent_level--;
     emit_indent();
@@ -5437,10 +6107,10 @@ void bv_section(struct ByteVec *out, int id, struct ByteVec *content) {
 #define MAX_TYPE_PARAMS 16
 
 struct BinTypeEntry {
-    int nparams;
-    int has_result;
+    int bt_nparams;
+    int bt_has_result;
     int result_is_float;
-    int *param_is_float;  /* malloc'd array of per-param float flags */
+    int *bt_pif;  /* malloc'd array of per-param float flags */
 };
 
 struct BinTypeEntry **bin_types;
@@ -5451,12 +6121,12 @@ int bin_find_or_add_type_f(int nparams, int *pif, int has_result, int rif) {
     int j;
     int match;
     for (i = 0; i < bin_ntypes; i++) {
-        if (bin_types[i]->nparams != nparams) continue;
-        if (bin_types[i]->has_result != has_result) continue;
+        if (bin_types[i]->bt_nparams != nparams) continue;
+        if (bin_types[i]->bt_has_result != has_result) continue;
         if (bin_types[i]->result_is_float != rif) continue;
         match = 1;
         for (j = 0; j < nparams && j < 16; j++) {
-            if (bin_types[i]->param_is_float[j] != pif[j]) { match = 0; break; }
+            if (bin_types[i]->bt_pif[j] != pif[j]) { match = 0; break; }
         }
         if (match) return i;
     }
@@ -5465,12 +6135,12 @@ int bin_find_or_add_type_f(int nparams, int *pif, int has_result, int rif) {
         exit(1);
     }
     bin_types[bin_ntypes] = (struct BinTypeEntry *)malloc(sizeof(struct BinTypeEntry));
-    bin_types[bin_ntypes]->nparams = nparams;
-    bin_types[bin_ntypes]->has_result = has_result;
+    bin_types[bin_ntypes]->bt_nparams = nparams;
+    bin_types[bin_ntypes]->bt_has_result = has_result;
     bin_types[bin_ntypes]->result_is_float = rif;
-    bin_types[bin_ntypes]->param_is_float = (int *)malloc(16 * sizeof(int));
+    bin_types[bin_ntypes]->bt_pif = (int *)malloc(16 * sizeof(int));
     for (j = 0; j < nparams && j < 16; j++) {
-        bin_types[bin_ntypes]->param_is_float[j] = pif[j];
+        bin_types[bin_ntypes]->bt_pif[j] = pif[j];
     }
     bin_ntypes++;
     return bin_ntypes - 1;
@@ -5490,8 +6160,8 @@ int bin_find_or_add_type(int nparams, int has_result) {
 struct BinFuncEntry {
     char *name;
     int idx;
-    int nparams;
-    int has_result;
+    int bf_nparams;
+    int bf_has_result;
     int type_idx;
 };
 
@@ -5508,8 +6178,8 @@ int bin_add_func(char *name, int nparams, int has_result) {
     bin_funcs[bin_nfuncs] = (struct BinFuncEntry *)malloc(sizeof(struct BinFuncEntry));
     bin_funcs[bin_nfuncs]->name = name;
     bin_funcs[bin_nfuncs]->idx = bin_nfuncs;
-    bin_funcs[bin_nfuncs]->nparams = nparams;
-    bin_funcs[bin_nfuncs]->has_result = has_result;
+    bin_funcs[bin_nfuncs]->bf_nparams = nparams;
+    bin_funcs[bin_nfuncs]->bf_has_result = has_result;
     bin_funcs[bin_nfuncs]->type_idx = ti;
     bin_nfuncs++;
     return bin_nfuncs - 1;
@@ -5525,8 +6195,8 @@ int bin_add_func_f(char *name, int nparams, int *pif, int has_result, int rif) {
     bin_funcs[bin_nfuncs] = (struct BinFuncEntry *)malloc(sizeof(struct BinFuncEntry));
     bin_funcs[bin_nfuncs]->name = name;
     bin_funcs[bin_nfuncs]->idx = bin_nfuncs;
-    bin_funcs[bin_nfuncs]->nparams = nparams;
-    bin_funcs[bin_nfuncs]->has_result = has_result;
+    bin_funcs[bin_nfuncs]->bf_nparams = nparams;
+    bin_funcs[bin_nfuncs]->bf_has_result = has_result;
     bin_funcs[bin_nfuncs]->type_idx = ti;
     bin_nfuncs++;
     return bin_nfuncs - 1;
@@ -5632,716 +6302,812 @@ void emit_f64_const_bin(struct ByteVec *o, char *s) {
 
 /* --- Binary expression codegen --- */
 
-void gen_expr_bin(struct ByteVec *o, struct Node *n) {
+/* --- Binary expression codegen --- */
+
+typedef void (*GenExprBinFn)(struct ByteVec *, struct Node *);
+GenExprBinFn *gen_expr_bin_tbl;
+
+void gen_expr_bin(struct ByteVec *o, struct Node *n);
+
+void gen_expr_bin_int_lit(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_float_lit(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_cast(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_ident(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_assign(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_unary(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_binary(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_call(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_str_lit(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_call_indirect(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_member(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_sizeof(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_subscript(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_post_inc_dec(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_ternary(struct ByteVec *o, struct Node *n);
+void gen_expr_bin_error(struct ByteVec *o, struct Node *n);
+
+void gen_expr_bin_int_lit(struct ByteVec *o, struct Node *n) {
+    bv_push(o, 0x41); bv_i32(o, n->ival);
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_float_lit(struct ByteVec *o, struct Node *n) {
+    emit_f64_const_bin(o, n->sval);
+    bin_last_float = 2;
+}
+
+void gen_expr_bin_cast(struct ByteVec *o, struct Node *n) {
+    gen_expr_bin(o, n->c0);
+    if (n->ival >= 1 && !bin_last_float) {
+        bv_push(o, 0xB7); /* f64.convert_i32_s */
+        bin_last_float = 2;
+    } else if (n->ival == 0 && bin_last_float) {
+        bv_push(o, 0xAA); /* i32.trunc_f64_s */
+        bin_last_float = 0;
+    }
+}
+
+void gen_expr_bin_ident(struct ByteVec *o, struct Node *n) {
+    if (find_global(n->sval) >= 0) {
+        bv_push(o, 0x23); bv_u32(o, bin_global_idx(n->sval));
+    } else {
+        bv_push(o, 0x20); bv_u32(o, find_local(n->sval));
+    }
+    bin_last_float = var_is_float(n->sval);
+}
+
+void gen_expr_bin_assign(struct ByteVec *o, struct Node *n) {
     struct Node *tgt;
     char *name;
     int is_global;
     int off;
     int esz;
+    int li;
+
+    tgt = n->c0;
+    if (tgt->kind == ND_IDENT) {
+        int tgt_float;
+        int ftmp_li;
+        int atmp_li;
+        name = tgt->sval;
+        is_global = (find_global(name) >= 0);
+        tgt_float = var_is_float(name);
+        if (n->ival == TOK_EQ) {
+            gen_expr_bin(o, n->c1);
+            /* convert if needed */
+            if (tgt_float && !bin_last_float) {
+                bv_push(o, 0xB7); /* f64.convert_i32_s */
+                bin_last_float = 2;
+            } else if (!tgt_float && bin_last_float) {
+                bv_push(o, 0xAA); /* i32.trunc_f64_s */
+                bin_last_float = 0;
+            }
+        } else if (n->ival == TOK_PLUS_EQ) {
+            if (is_global) {
+                bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+            } else {
+                bv_push(o, 0x20); bv_u32(o, find_local(name));
+            }
+            gen_expr_bin(o, n->c1);
+            if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
+            else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
+            if (tgt_float) { bv_push(o, 0xA0); } else { bv_push(o, 0x6A); }
+        } else if (n->ival == TOK_MINUS_EQ) {
+            if (is_global) {
+                bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+            } else {
+                bv_push(o, 0x20); bv_u32(o, find_local(name));
+            }
+            gen_expr_bin(o, n->c1);
+            if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
+            else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
+            if (tgt_float) { bv_push(o, 0xA1); } else { bv_push(o, 0x6B); }
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            if (is_global) {
+                bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
+            } else {
+                bv_push(o, 0x20); bv_u32(o, find_local(name));
+            }
+            gen_expr_bin(o, n->c1);
+            if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+            else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+            else { bv_push(o, 0x75); }
+        }
+        if (is_global) {
+            if (tgt_float) {
+                ftmp_li = find_local("__ftmp");
+                bv_push(o, 0x21); bv_u32(o, ftmp_li);
+                bv_push(o, 0x20); bv_u32(o, ftmp_li);
+                bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
+                bv_push(o, 0x20); bv_u32(o, ftmp_li);
+            } else {
+                atmp_li = find_local("__atmp");
+                bv_push(o, 0x21); bv_u32(o, atmp_li);
+                bv_push(o, 0x20); bv_u32(o, atmp_li);
+                bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
+                bv_push(o, 0x20); bv_u32(o, atmp_li);
+            }
+        } else {
+            if (tgt_float) {
+                bv_push(o, 0x21); bv_u32(o, find_local(name)); /* local.set */
+                bv_push(o, 0x20); bv_u32(o, find_local(name)); /* local.get */
+            } else {
+                bv_push(o, 0x22); bv_u32(o, find_local(name)); /* local.tee */
+            }
+        }
+        bin_last_float = tgt_float;
+    } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
+        esz = expr_elem_size(tgt->c0);
+        if (n->ival == TOK_EQ) {
+            gen_expr_bin(o, n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6A);
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6B);
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+            else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+            else { bv_push(o, 0x75); }
+        }
+        li = find_local("__atmp");
+        bv_push(o, 0x21); bv_u32(o, li);
+        gen_expr_bin(o, tgt->c0);
+        bv_push(o, 0x20); bv_u32(o, li);
+        if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x20); bv_u32(o, li);
+    } else if (tgt->kind == ND_MEMBER) {
+        off = resolve_field_offset(tgt->sval);
+        if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
+        if (n->ival == TOK_EQ) {
+            gen_expr_bin(o, n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6A);
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6B);
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+            gen_expr_bin(o, n->c1);
+            if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+            else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+            else { bv_push(o, 0x75); }
+        }
+        li = find_local("__atmp");
+        bv_push(o, 0x21); bv_u32(o, li);
+        gen_expr_bin(o, tgt->c0);
+        if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+        bv_push(o, 0x20); bv_u32(o, li);
+        bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+        bv_push(o, 0x20); bv_u32(o, li);
+    } else if (tgt->kind == ND_SUBSCRIPT) {
+        esz = expr_elem_size(tgt->c0);
+        if (n->ival == TOK_EQ) {
+            gen_expr_bin(o, n->c1);
+        } else if (n->ival == TOK_PLUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            gen_expr_bin(o, tgt->c1);
+            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6A);
+        } else if (n->ival == TOK_MINUS_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            gen_expr_bin(o, tgt->c1);
+            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            bv_push(o, 0x6B);
+        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
+                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
+                   n->ival == TOK_RSHIFT_EQ) {
+            gen_expr_bin(o, tgt->c0);
+            gen_expr_bin(o, tgt->c1);
+            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+            bv_push(o, 0x6A);
+            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+            gen_expr_bin(o, n->c1);
+            if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
+            else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
+            else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
+            else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
+            else { bv_push(o, 0x75); }
+        }
+        li = find_local("__atmp");
+        bv_push(o, 0x21); bv_u32(o, li);
+        gen_expr_bin(o, tgt->c0);
+        gen_expr_bin(o, tgt->c1);
+        if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        bv_push(o, 0x20); bv_u32(o, li);
+        if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x20); bv_u32(o, li);
+    }
+}
+
+void gen_expr_bin_unary(struct ByteVec *o, struct Node *n) {
+    int esz;
+
+    if (n->ival == TOK_MINUS) {
+        int atmp_neg;
+        gen_expr_bin(o, n->c0);
+        if (bin_last_float) {
+            bv_push(o, 0x9A); /* f64.neg */
+        } else {
+            atmp_neg = find_local("__atmp");
+            bv_push(o, 0x21); bv_u32(o, atmp_neg); /* local.set __atmp */
+            bv_push(o, 0x41); bv_i32(o, 0);        /* i32.const 0 */
+            bv_push(o, 0x20); bv_u32(o, atmp_neg); /* local.get __atmp */
+            bv_push(o, 0x6B);                      /* i32.sub */
+            bin_last_float = 0;
+        }
+    } else if (n->ival == TOK_BANG) {
+        gen_expr_bin(o, n->c0);
+        bv_push(o, 0x45);
+    } else if (n->ival == TOK_TILDE) {
+        bv_push(o, 0x41); bv_i32(o, -1);
+        gen_expr_bin(o, n->c0);
+        bv_push(o, 0x73);
+    } else if (n->ival == TOK_STAR) {
+        esz = expr_elem_size(n->c0);
+        gen_expr_bin(o, n->c0);
+        if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+    } else if (n->ival == TOK_AMP) {
+        error(n->nline, n->ncol, "cannot take address of this expression");
+    }
+}
+
+void gen_expr_bin_binary(struct ByteVec *o, struct Node *n) {
+    int left_float;
+    int right_float;
+    int ftmp_bin;
+    gen_expr_bin(o, n->c0);
+    left_float = bin_last_float;
+    gen_expr_bin(o, n->c1);
+    right_float = bin_last_float;
+    if (left_float || right_float) {
+        if (left_float && !right_float) {
+            /* stack: [f64, i32] - convert right(i32) to f64 */
+            bv_push(o, 0xB7); /* f64.convert_i32_s */
+        } else if (!left_float && right_float) {
+            /* stack: [i32, f64] - save right, convert left, restore right */
+            ftmp_bin = find_local("__ftmp");
+            bv_push(o, 0x21); bv_u32(o, ftmp_bin); /* local.set __ftmp = right */
+            bv_push(o, 0xB7); /* f64.convert_i32_s converts left */
+            bv_push(o, 0x20); bv_u32(o, ftmp_bin); /* local.get __ftmp */
+        }
+        if (n->ival == TOK_PLUS) { bv_push(o, 0xA0); bin_last_float = 2; }
+        else if (n->ival == TOK_MINUS) { bv_push(o, 0xA1); bin_last_float = 2; }
+        else if (n->ival == TOK_STAR) { bv_push(o, 0xA2); bin_last_float = 2; }
+        else if (n->ival == TOK_SLASH) { bv_push(o, 0xA3); bin_last_float = 2; }
+        else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x61); bin_last_float = 0; }
+        else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x62); bin_last_float = 0; }
+        else if (n->ival == TOK_LT) { bv_push(o, 0x63); bin_last_float = 0; }
+        else if (n->ival == TOK_GT) { bv_push(o, 0x64); bin_last_float = 0; }
+        else if (n->ival == TOK_LT_EQ) { bv_push(o, 0x65); bin_last_float = 0; }
+        else if (n->ival == TOK_GT_EQ) { bv_push(o, 0x66); bin_last_float = 0; }
+        else { error(n->nline, n->ncol, "unsupported float binary op"); }
+    } else {
+        if (n->ival == TOK_PLUS) { bv_push(o, 0x6A); }
+        else if (n->ival == TOK_MINUS) { bv_push(o, 0x6B); }
+        else if (n->ival == TOK_STAR) { bv_push(o, 0x6C); }
+        else if (n->ival == TOK_SLASH) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x6E); } else { bv_push(o, 0x6D); } }
+        else if (n->ival == TOK_PERCENT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x70); } else { bv_push(o, 0x6F); } }
+        else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x46); }
+        else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x47); }
+        else if (n->ival == TOK_LT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x49); } else { bv_push(o, 0x48); } }
+        else if (n->ival == TOK_GT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4B); } else { bv_push(o, 0x4A); } }
+        else if (n->ival == TOK_LT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4D); } else { bv_push(o, 0x4C); } }
+        else if (n->ival == TOK_GT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4F); } else { bv_push(o, 0x4E); } }
+        else if (n->ival == TOK_AMP_AMP) { bv_push(o, 0x71); }
+        else if (n->ival == TOK_PIPE_PIPE) { bv_push(o, 0x72); }
+        else if (n->ival == TOK_AMP) { bv_push(o, 0x71); }
+        else if (n->ival == TOK_PIPE) { bv_push(o, 0x72); }
+        else if (n->ival == TOK_LSHIFT) { bv_push(o, 0x74); }
+        else if (n->ival == TOK_RSHIFT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x76); } else { bv_push(o, 0x75); } }
+        else if (n->ival == TOK_CARET) { bv_push(o, 0x73); }
+        else { error(n->nline, n->ncol, "unsupported binary operator"); }
+        bin_last_float = 0;
+    }
+}
+
+void gen_expr_bin_call(struct ByteVec *o, struct Node *n) {
     char *fmt;
     int flen;
     int ai;
     int fi;
     int sid;
     int i;
-    int li;
 
-    switch (n->kind) {
-    case ND_INT_LIT:
-        bv_push(o, 0x41); bv_i32(o, n->ival);
-        bin_last_float = 0;
-        break;
-    case ND_FLOAT_LIT:
-        emit_f64_const_bin(o, n->sval);
-        bin_last_float = 2;
-        break;
-    case ND_CAST:
-        gen_expr_bin(o, n->c0);
-        if (n->ival >= 1 && !bin_last_float) {
-            bv_push(o, 0xB7); /* f64.convert_i32_s */
-            bin_last_float = 2;
-        } else if (n->ival == 0 && bin_last_float) {
-            bv_push(o, 0xAA); /* i32.trunc_f64_s */
-            bin_last_float = 0;
+    if (strcmp(n->sval, "printf") == 0) {
+        if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
+            error(n->nline, n->ncol, "printf requires string literal format");
         }
-        break;
-    case ND_IDENT:
-        if (find_global(n->sval) >= 0) {
-            bv_push(o, 0x23); bv_u32(o, bin_global_idx(n->sval));
-        } else {
-            bv_push(o, 0x20); bv_u32(o, find_local(n->sval));
-        }
-        bin_last_float = var_is_float(n->sval);
-        break;
-    case ND_ASSIGN:
-        tgt = n->c0;
-        if (tgt->kind == ND_IDENT) {
-            int tgt_float;
-            int ftmp_li;
-            int atmp_li;
-            name = tgt->sval;
-            is_global = (find_global(name) >= 0);
-            tgt_float = var_is_float(name);
-            if (n->ival == TOK_EQ) {
-                gen_expr_bin(o, n->c1);
-                /* convert if needed */
-                if (tgt_float && !bin_last_float) {
-                    bv_push(o, 0xB7); /* f64.convert_i32_s */
-                    bin_last_float = 2;
-                } else if (!tgt_float && bin_last_float) {
-                    bv_push(o, 0xAA); /* i32.trunc_f64_s */
-                    bin_last_float = 0;
-                }
-            } else if (n->ival == TOK_PLUS_EQ) {
-                if (is_global) {
-                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
-                } else {
-                    bv_push(o, 0x20); bv_u32(o, find_local(name));
-                }
-                gen_expr_bin(o, n->c1);
-                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
-                else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
-                if (tgt_float) { bv_push(o, 0xA0); } else { bv_push(o, 0x6A); }
-            } else if (n->ival == TOK_MINUS_EQ) {
-                if (is_global) {
-                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
-                } else {
-                    bv_push(o, 0x20); bv_u32(o, find_local(name));
-                }
-                gen_expr_bin(o, n->c1);
-                if (tgt_float && !bin_last_float) { bv_push(o, 0xB7); } /* int->f64 */
-                else if (!tgt_float && bin_last_float) { bv_push(o, 0xAA); } /* f64->int */
-                if (tgt_float) { bv_push(o, 0xA1); } else { bv_push(o, 0x6B); }
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                if (is_global) {
-                    bv_push(o, 0x23); bv_u32(o, bin_global_idx(name));
-                } else {
-                    bv_push(o, 0x20); bv_u32(o, find_local(name));
-                }
-                gen_expr_bin(o, n->c1);
-                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
-                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
-                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
-                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
-                else { bv_push(o, 0x75); }
-            }
-            if (is_global) {
-                if (tgt_float) {
-                    ftmp_li = find_local("__ftmp");
-                    bv_push(o, 0x21); bv_u32(o, ftmp_li);
-                    bv_push(o, 0x20); bv_u32(o, ftmp_li);
-                    bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
-                    bv_push(o, 0x20); bv_u32(o, ftmp_li);
-                } else {
-                    atmp_li = find_local("__atmp");
-                    bv_push(o, 0x21); bv_u32(o, atmp_li);
-                    bv_push(o, 0x20); bv_u32(o, atmp_li);
-                    bv_push(o, 0x24); bv_u32(o, bin_global_idx(name));
-                    bv_push(o, 0x20); bv_u32(o, atmp_li);
-                }
-            } else {
-                if (tgt_float) {
-                    bv_push(o, 0x21); bv_u32(o, find_local(name)); /* local.set */
-                    bv_push(o, 0x20); bv_u32(o, find_local(name)); /* local.get */
-                } else {
-                    bv_push(o, 0x22); bv_u32(o, find_local(name)); /* local.tee */
-                }
-            }
-            bin_last_float = tgt_float;
-        } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
-            esz = expr_elem_size(tgt->c0);
-            if (n->ival == TOK_EQ) {
-                gen_expr_bin(o, n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6A);
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6B);
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
-                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
-                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
-                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
-                else { bv_push(o, 0x75); }
-            }
-            li = find_local("__atmp");
-            bv_push(o, 0x21); bv_u32(o, li);
-            gen_expr_bin(o, tgt->c0);
-            bv_push(o, 0x20); bv_u32(o, li);
-            if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, li);
-        } else if (tgt->kind == ND_MEMBER) {
-            off = resolve_field_offset(tgt->sval);
-            if (off < 0) error(tgt->nline, tgt->ncol, "unknown struct field");
-            if (n->ival == TOK_EQ) {
-                gen_expr_bin(o, n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6A);
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6B);
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-                bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-                gen_expr_bin(o, n->c1);
-                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
-                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
-                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
-                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
-                else { bv_push(o, 0x75); }
-            }
-            li = find_local("__atmp");
-            bv_push(o, 0x21); bv_u32(o, li);
-            gen_expr_bin(o, tgt->c0);
-            if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-            bv_push(o, 0x20); bv_u32(o, li);
-            bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
-            bv_push(o, 0x20); bv_u32(o, li);
-        } else if (tgt->kind == ND_SUBSCRIPT) {
-            esz = expr_elem_size(tgt->c0);
-            if (n->ival == TOK_EQ) {
-                gen_expr_bin(o, n->c1);
-            } else if (n->ival == TOK_PLUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                gen_expr_bin(o, tgt->c1);
-                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-                bv_push(o, 0x6A);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6A);
-            } else if (n->ival == TOK_MINUS_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                gen_expr_bin(o, tgt->c1);
-                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-                bv_push(o, 0x6A);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                bv_push(o, 0x6B);
-            } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
-                       n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
-                       n->ival == TOK_RSHIFT_EQ) {
-                gen_expr_bin(o, tgt->c0);
-                gen_expr_bin(o, tgt->c1);
-                if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-                bv_push(o, 0x6A);
-                if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-                else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-                else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-                gen_expr_bin(o, n->c1);
-                if (n->ival == TOK_PIPE_EQ) { bv_push(o, 0x72); }
-                else if (n->ival == TOK_AMP_EQ) { bv_push(o, 0x71); }
-                else if (n->ival == TOK_CARET_EQ) { bv_push(o, 0x73); }
-                else if (n->ival == TOK_LSHIFT_EQ) { bv_push(o, 0x74); }
-                else { bv_push(o, 0x75); }
-            }
-            li = find_local("__atmp");
-            bv_push(o, 0x21); bv_u32(o, li);
-            gen_expr_bin(o, tgt->c0);
-            gen_expr_bin(o, tgt->c1);
-            if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-            bv_push(o, 0x6A);
-            bv_push(o, 0x20); bv_u32(o, li);
-            if (esz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (esz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, li);
-        }
-        break;
-    case ND_UNARY:
-        if (n->ival == TOK_MINUS) {
-            int atmp_neg;
-            gen_expr_bin(o, n->c0);
-            if (bin_last_float) {
-                bv_push(o, 0x9A); /* f64.neg */
-            } else {
-                atmp_neg = find_local("__atmp");
-                bv_push(o, 0x21); bv_u32(o, atmp_neg); /* local.set __atmp */
-                bv_push(o, 0x41); bv_i32(o, 0);        /* i32.const 0 */
-                bv_push(o, 0x20); bv_u32(o, atmp_neg); /* local.get __atmp */
-                bv_push(o, 0x6B);                      /* i32.sub */
-                bin_last_float = 0;
-            }
-        } else if (n->ival == TOK_BANG) {
-            gen_expr_bin(o, n->c0);
-            bv_push(o, 0x45);
-        } else if (n->ival == TOK_TILDE) {
-            bv_push(o, 0x41); bv_i32(o, -1);
-            gen_expr_bin(o, n->c0);
-            bv_push(o, 0x73);
-        } else if (n->ival == TOK_STAR) {
-            esz = expr_elem_size(n->c0);
-            gen_expr_bin(o, n->c0);
-            if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-        } else if (n->ival == TOK_AMP) {
-            error(n->nline, n->ncol, "cannot take address of this expression");
-        }
-        break;
-    case ND_BINARY: {
-        int left_float;
-        int right_float;
-        int ftmp_bin;
-        gen_expr_bin(o, n->c0);
-        left_float = bin_last_float;
-        gen_expr_bin(o, n->c1);
-        right_float = bin_last_float;
-        if (left_float || right_float) {
-            if (left_float && !right_float) {
-                /* stack: [f64, i32] - convert right(i32) to f64 */
-                bv_push(o, 0xB7); /* f64.convert_i32_s */
-            } else if (!left_float && right_float) {
-                /* stack: [i32, f64] - save right, convert left, restore right */
-                ftmp_bin = find_local("__ftmp");
-                bv_push(o, 0x21); bv_u32(o, ftmp_bin); /* local.set __ftmp = right */
-                bv_push(o, 0xB7); /* f64.convert_i32_s converts left */
-                bv_push(o, 0x20); bv_u32(o, ftmp_bin); /* local.get __ftmp */
-            }
-            if (n->ival == TOK_PLUS) { bv_push(o, 0xA0); bin_last_float = 2; }
-            else if (n->ival == TOK_MINUS) { bv_push(o, 0xA1); bin_last_float = 2; }
-            else if (n->ival == TOK_STAR) { bv_push(o, 0xA2); bin_last_float = 2; }
-            else if (n->ival == TOK_SLASH) { bv_push(o, 0xA3); bin_last_float = 2; }
-            else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x61); bin_last_float = 0; }
-            else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x62); bin_last_float = 0; }
-            else if (n->ival == TOK_LT) { bv_push(o, 0x63); bin_last_float = 0; }
-            else if (n->ival == TOK_GT) { bv_push(o, 0x64); bin_last_float = 0; }
-            else if (n->ival == TOK_LT_EQ) { bv_push(o, 0x65); bin_last_float = 0; }
-            else if (n->ival == TOK_GT_EQ) { bv_push(o, 0x66); bin_last_float = 0; }
-            else { error(n->nline, n->ncol, "unsupported float binary op"); }
-        } else {
-            if (n->ival == TOK_PLUS) { bv_push(o, 0x6A); }
-            else if (n->ival == TOK_MINUS) { bv_push(o, 0x6B); }
-            else if (n->ival == TOK_STAR) { bv_push(o, 0x6C); }
-            else if (n->ival == TOK_SLASH) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x6E); } else { bv_push(o, 0x6D); } }
-            else if (n->ival == TOK_PERCENT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x70); } else { bv_push(o, 0x6F); } }
-            else if (n->ival == TOK_EQ_EQ) { bv_push(o, 0x46); }
-            else if (n->ival == TOK_BANG_EQ) { bv_push(o, 0x47); }
-            else if (n->ival == TOK_LT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x49); } else { bv_push(o, 0x48); } }
-            else if (n->ival == TOK_GT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4B); } else { bv_push(o, 0x4A); } }
-            else if (n->ival == TOK_LT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4D); } else { bv_push(o, 0x4C); } }
-            else if (n->ival == TOK_GT_EQ) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x4F); } else { bv_push(o, 0x4E); } }
-            else if (n->ival == TOK_AMP_AMP) { bv_push(o, 0x71); }
-            else if (n->ival == TOK_PIPE_PIPE) { bv_push(o, 0x72); }
-            else if (n->ival == TOK_AMP) { bv_push(o, 0x71); }
-            else if (n->ival == TOK_PIPE) { bv_push(o, 0x72); }
-            else if (n->ival == TOK_LSHIFT) { bv_push(o, 0x74); }
-            else if (n->ival == TOK_RSHIFT) { if (expr_is_unsigned(n->c0)) { bv_push(o, 0x76); } else { bv_push(o, 0x75); } }
-            else if (n->ival == TOK_CARET) { bv_push(o, 0x73); }
-            else { error(n->nline, n->ncol, "unsupported binary operator"); }
-            bin_last_float = 0;
-        }
-        break;
-    }
-    case ND_CALL:
-        if (strcmp(n->sval, "printf") == 0) {
-            if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
-                error(n->nline, n->ncol, "printf requires string literal format");
-            }
-            sid = n->list[0]->ival;
-            fmt = str_table[sid]->data;
-            flen = str_table[sid]->len;
-            ai = 1;
-            for (fi = 0; fi < flen; fi++) {
-                if (fmt[fi] == '%' && fi + 1 < flen) {
-                    fi++;
-                    if (fmt[fi] == 'd') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_int"));
-                    } else if (fmt[fi] == 's') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_str"));
-                    } else if (fmt[fi] == 'c') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
-                        bv_push(o, 0x1A);
-                    } else if (fmt[fi] == 'x') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_hex"));
-                    } else if (fmt[fi] == 'f') {
-                        if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
-                        gen_expr_bin(o, n->list[ai]);
-                        ai++;
-                        if (!bin_last_float) {
-                            bv_push(o, 0xB7); /* f64.convert_i32_s */
-                        }
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_float"));
-                    } else if (fmt[fi] == '%') {
-                        bv_push(o, 0x41); bv_i32(o, 37);
-                        bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
-                        bv_push(o, 0x1A);
-                    } else {
-                        error(n->nline, n->ncol, "unsupported printf format");
-                    }
-                } else {
-                    bv_push(o, 0x41); bv_i32(o, fmt[fi] & 255);
+        sid = n->list[0]->ival;
+        fmt = str_table[sid]->data;
+        flen = str_table[sid]->len;
+        ai = 1;
+        for (fi = 0; fi < flen; fi++) {
+            if (fmt[fi] == '%' && fi + 1 < flen) {
+                fi++;
+                if (fmt[fi] == 'd') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %d");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_int"));
+                } else if (fmt[fi] == 's') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %s");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_str"));
+                } else if (fmt[fi] == 'c') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %c");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
                     bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
                     bv_push(o, 0x1A);
+                } else if (fmt[fi] == 'x') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %x");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_hex"));
+                } else if (fmt[fi] == 'f') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "printf: missing arg for %f");
+                    gen_expr_bin(o, n->list[ai]);
+                    ai++;
+                    if (!bin_last_float) {
+                        bv_push(o, 0xB7); /* f64.convert_i32_s */
+                    }
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("__print_float"));
+                } else if (fmt[fi] == '%') {
+                    bv_push(o, 0x41); bv_i32(o, 37);
+                    bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+                    bv_push(o, 0x1A);
+                } else {
+                    error(n->nline, n->ncol, "unsupported printf format");
                 }
+            } else {
+                bv_push(o, 0x41); bv_i32(o, fmt[fi] & 255);
+                bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+                bv_push(o, 0x1A);
             }
+        }
+        bv_push(o, 0x41); bv_i32(o, 0);
+        bin_last_float = 0;
+    } else if (strcmp(n->sval, "putchar") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
+    } else if (strcmp(n->sval, "getchar") == 0) {
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("getchar"));
+    } else if (strcmp(n->sval, "exit") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, 0);
+        bv_push(o, 0x41); bv_i32(o, 0);
+    } else if (strcmp(n->sval, "malloc") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
+    } else if (strcmp(n->sval, "free") == 0) {
+        if (n->ival2 > 0) {
+            gen_expr_bin(o, n->list[0]);
+        } else {
+            bv_push(o, 0x41); bv_i32(o, 0);
+        }
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("free"));
+        bv_push(o, 0x41); bv_i32(o, 0);
+    } else if (strcmp(n->sval, "strlen") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strlen"));
+    } else if (strcmp(n->sval, "strcmp") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strcmp"));
+    } else if (strcmp(n->sval, "strncpy") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strncpy"));
+    } else if (strcmp(n->sval, "memcpy") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memcpy"));
+    } else if (strcmp(n->sval, "memset") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memset"));
+    } else if (strcmp(n->sval, "memcmp") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memcmp"));
+    /* --- new libc builtins (binary) --- */
+    } else if (strcmp(n->sval, "isdigit") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isdigit"));
+    } else if (strcmp(n->sval, "isalpha") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isalpha"));
+    } else if (strcmp(n->sval, "isalnum") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isalnum"));
+    } else if (strcmp(n->sval, "isspace") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isspace"));
+    } else if (strcmp(n->sval, "isupper") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isupper"));
+    } else if (strcmp(n->sval, "islower") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("islower"));
+    } else if (strcmp(n->sval, "isprint") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isprint"));
+    } else if (strcmp(n->sval, "ispunct") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("ispunct"));
+    } else if (strcmp(n->sval, "isxdigit") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("isxdigit"));
+    } else if (strcmp(n->sval, "toupper") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("toupper"));
+    } else if (strcmp(n->sval, "tolower") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("tolower"));
+    } else if (strcmp(n->sval, "abs") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("abs"));
+    } else if (strcmp(n->sval, "atoi") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("atoi"));
+    } else if (strcmp(n->sval, "puts") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("puts"));
+    } else if (strcmp(n->sval, "srand") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("srand"));
+        bv_push(o, 0x41); bv_i32(o, 0);
+    } else if (strcmp(n->sval, "rand") == 0) {
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("rand"));
+    } else if (strcmp(n->sval, "strcpy") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strcpy"));
+    } else if (strcmp(n->sval, "strcat") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strcat"));
+    } else if (strcmp(n->sval, "strchr") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strchr"));
+    } else if (strcmp(n->sval, "strrchr") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strrchr"));
+    } else if (strcmp(n->sval, "strstr") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strstr"));
+    } else if (strcmp(n->sval, "calloc") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("calloc"));
+    } else if (strcmp(n->sval, "strncmp") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strncmp"));
+    } else if (strcmp(n->sval, "strncat") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strncat"));
+    } else if (strcmp(n->sval, "memmove") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memmove"));
+    } else if (strcmp(n->sval, "memchr") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("memchr"));
+    } else if (strcmp(n->sval, "strtol") == 0) {
+        gen_expr_bin(o, n->list[0]);
+        gen_expr_bin(o, n->list[1]);
+        gen_expr_bin(o, n->list[2]);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("strtol"));
+    } else {
+        for (i = 0; i < n->ival2; i++) {
+            gen_expr_bin(o, n->list[i]);
+            if (func_param_is_float(n->sval, i) && !bin_last_float) {
+                bv_push(o, 0xB7); /* f64.convert_i32_s */
+            } else if (!func_param_is_float(n->sval, i) && bin_last_float) {
+                bv_push(o, 0xAA); /* i32.trunc_f64_s */
+            }
+        }
+        bv_push(o, 0x10); bv_u32(o, bin_find_func(n->sval));
+        if (func_is_void(n->sval)) {
             bv_push(o, 0x41); bv_i32(o, 0);
             bin_last_float = 0;
-        } else if (strcmp(n->sval, "putchar") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("putchar"));
-        } else if (strcmp(n->sval, "getchar") == 0) {
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("getchar"));
-        } else if (strcmp(n->sval, "exit") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, 0);
-            bv_push(o, 0x41); bv_i32(o, 0);
-        } else if (strcmp(n->sval, "malloc") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
-        } else if (strcmp(n->sval, "free") == 0) {
-            if (n->ival2 > 0) {
-                gen_expr_bin(o, n->list[0]);
-            } else {
-                bv_push(o, 0x41); bv_i32(o, 0);
-            }
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("free"));
-            bv_push(o, 0x41); bv_i32(o, 0);
-        } else if (strcmp(n->sval, "strlen") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strlen"));
-        } else if (strcmp(n->sval, "strcmp") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcmp"));
-        } else if (strcmp(n->sval, "strncpy") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncpy"));
-        } else if (strcmp(n->sval, "memcpy") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memcpy"));
-        } else if (strcmp(n->sval, "memset") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memset"));
-        } else if (strcmp(n->sval, "memcmp") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memcmp"));
-        /* --- new libc builtins (binary) --- */
-        } else if (strcmp(n->sval, "isdigit") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isdigit"));
-        } else if (strcmp(n->sval, "isalpha") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isalpha"));
-        } else if (strcmp(n->sval, "isalnum") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isalnum"));
-        } else if (strcmp(n->sval, "isspace") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isspace"));
-        } else if (strcmp(n->sval, "isupper") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isupper"));
-        } else if (strcmp(n->sval, "islower") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("islower"));
-        } else if (strcmp(n->sval, "isprint") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isprint"));
-        } else if (strcmp(n->sval, "ispunct") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("ispunct"));
-        } else if (strcmp(n->sval, "isxdigit") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("isxdigit"));
-        } else if (strcmp(n->sval, "toupper") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("toupper"));
-        } else if (strcmp(n->sval, "tolower") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("tolower"));
-        } else if (strcmp(n->sval, "abs") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("abs"));
-        } else if (strcmp(n->sval, "atoi") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("atoi"));
-        } else if (strcmp(n->sval, "puts") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("puts"));
-        } else if (strcmp(n->sval, "srand") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("srand"));
-            bv_push(o, 0x41); bv_i32(o, 0);
-        } else if (strcmp(n->sval, "rand") == 0) {
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("rand"));
-        } else if (strcmp(n->sval, "strcpy") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcpy"));
-        } else if (strcmp(n->sval, "strcat") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strcat"));
-        } else if (strcmp(n->sval, "strchr") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strchr"));
-        } else if (strcmp(n->sval, "strrchr") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strrchr"));
-        } else if (strcmp(n->sval, "strstr") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strstr"));
-        } else if (strcmp(n->sval, "calloc") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("calloc"));
-        } else if (strcmp(n->sval, "strncmp") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncmp"));
-        } else if (strcmp(n->sval, "strncat") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strncat"));
-        } else if (strcmp(n->sval, "memmove") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memmove"));
-        } else if (strcmp(n->sval, "memchr") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("memchr"));
-        } else if (strcmp(n->sval, "strtol") == 0) {
-            gen_expr_bin(o, n->list[0]);
-            gen_expr_bin(o, n->list[1]);
-            gen_expr_bin(o, n->list[2]);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("strtol"));
         } else {
-            for (i = 0; i < n->ival2; i++) {
-                gen_expr_bin(o, n->list[i]);
-                if (func_param_is_float(n->sval, i) && !bin_last_float) {
-                    bv_push(o, 0xB7); /* f64.convert_i32_s */
-                } else if (!func_param_is_float(n->sval, i) && bin_last_float) {
-                    bv_push(o, 0xAA); /* i32.trunc_f64_s */
-                }
-            }
-            bv_push(o, 0x10); bv_u32(o, bin_find_func(n->sval));
-            if (func_is_void(n->sval)) {
-                bv_push(o, 0x41); bv_i32(o, 0);
-                bin_last_float = 0;
-            } else {
-                bin_last_float = func_ret_is_float(n->sval);
-            }
+            bin_last_float = func_ret_is_float(n->sval);
         }
-        break;
-    case ND_STR_LIT:
-        bv_push(o, 0x41); bv_i32(o, str_table[n->ival]->offset);
-        bin_last_float = 0;
-        break;
-    case ND_MEMBER:
-        off = resolve_field_offset(n->sval);
-        if (off < 0) error(n->nline, n->ncol, "unknown struct field");
-        gen_expr_bin(o, n->c0);
-        if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
-        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-        bin_last_float = 0;
-        break;
-    case ND_SIZEOF: {
-        struct StructDef *sd;
-        int sz;
-        if (n->ival == 1) {
-            sz = 4;
-        } else if (n->c0 != (struct Node *)0) {
-            if (n->c0->kind == ND_IDENT) {
-                sz = var_elem_size(n->c0->sval);
-            } else {
-                sz = 4;
-            }
-        } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
-            sz = 1;
-        } else if (n->sval != (char *)0) {
-            sd = find_struct(n->sval);
-            if (sd != (struct StructDef *)0) {
-                sz = sd->size;
-            } else {
-                sz = 4;
-            }
-        } else if (n->ival2 > 0) {
-            sz = n->ival2;
-        } else {
-            sz = 4;
-        }
-        bv_push(o, 0x41); bv_i32(o, sz);
-        bin_last_float = 0;
-        break;
     }
-    case ND_SUBSCRIPT:
-        esz = expr_elem_size(n->c0);
-        gen_expr_bin(o, n->c0);
-        gen_expr_bin(o, n->c1);
-        if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
-        bv_push(o, 0x6A);
-        if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-        else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+}
+
+void gen_expr_bin_str_lit(struct ByteVec *o, struct Node *n) {
+    bv_push(o, 0x41); bv_i32(o, str_table[n->ival]->offset);
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_call_indirect(struct ByteVec *o, struct Node *n) {
+    int ci_i;
+    int ci_np;
+    int ci_type_idx;
+    ci_np = n->ival;
+    /* push arguments */
+    for (ci_i = 0; ci_i < n->ival2; ci_i++) {
+        gen_expr_bin(o, n->list[ci_i]);
+    }
+    /* push table index */
+    gen_expr_bin(o, n->c0);
+    /* call_indirect type_idx table_idx(0) */
+    ci_type_idx = bin_find_or_add_type(ci_np, n->ival3 ? 0 : 1);
+    bv_push(o, 0x11); /* call_indirect */
+    bv_u32(o, ci_type_idx);
+    bv_u32(o, 0); /* table index 0 */
+    if (n->ival3) {
+        /* void fn — push dummy i32 */
+        bv_push(o, 0x41); bv_i32(o, 0);
+    }
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_member(struct ByteVec *o, struct Node *n) {
+    int off;
+
+    off = resolve_field_offset(n->sval);
+    if (off < 0) error(n->nline, n->ncol, "unknown struct field");
+    gen_expr_bin(o, n->c0);
+    if (off > 0) { bv_push(o, 0x41); bv_i32(o, off); bv_push(o, 0x6A); }
+    bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_sizeof(struct ByteVec *o, struct Node *n) {
+    struct StructDef *sd;
+    int sz;
+    if (n->ival == 1) {
+        sz = 4;
+    } else if (n->c0 != (struct Node *)0) {
+        if (n->c0->kind == ND_IDENT) {
+            sz = var_elem_size(n->c0->sval);
+        } else {
+            sz = 4;
+        }
+    } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
+        sz = 1;
+    } else if (n->sval != (char *)0) {
+        sd = find_struct(n->sval);
+        if (sd != (struct StructDef *)0) {
+            sz = sd->size;
+        } else {
+            sz = 4;
+        }
+    } else if (n->ival2 > 0) {
+        sz = n->ival2;
+    } else {
+        sz = 4;
+    }
+    bv_push(o, 0x41); bv_i32(o, sz);
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_subscript(struct ByteVec *o, struct Node *n) {
+    int esz;
+
+    esz = expr_elem_size(n->c0);
+    gen_expr_bin(o, n->c0);
+    gen_expr_bin(o, n->c1);
+    if (esz > 1) { bv_push(o, 0x41); bv_i32(o, esz); bv_push(o, 0x6C); }
+    bv_push(o, 0x6A);
+    if (esz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+    else if (esz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+    else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_post_inc_dec(struct ByteVec *o, struct Node *n) {
+    int li;
+
+    struct Node *tgt2;
+    char *pname;
+    int pis_global;
+    int pesz;
+    int poff;
+    int atmp;
+    atmp = find_local("__atmp");
+    tgt2 = n->c0;
+    if (tgt2->kind == ND_IDENT) {
+        pname = tgt2->sval;
+        pis_global = (find_global(pname) >= 0);
+        if (pis_global) {
+            bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
+            bv_push(o, 0x21); bv_u32(o, atmp);
+            bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
+            bv_push(o, 0x41); bv_i32(o, 1);
+            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+            bv_push(o, 0x24); bv_u32(o, bin_global_idx(pname));
+            bv_push(o, 0x20); bv_u32(o, atmp);
+        } else {
+            li = find_local(pname);
+            bv_push(o, 0x20); bv_u32(o, li);
+            bv_push(o, 0x20); bv_u32(o, li);
+            bv_push(o, 0x41); bv_i32(o, 1);
+            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+            bv_push(o, 0x21); bv_u32(o, li);
+        }
+    } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
+        pesz = expr_elem_size(tgt2->c0);
+        gen_expr_bin(o, tgt2->c0);
+        if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
         else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-        bin_last_float = 0;
-        break;
-    case ND_POST_INC:
-    case ND_POST_DEC: {
-        struct Node *tgt2;
-        char *pname;
-        int pis_global;
-        int pesz;
-        int poff;
-        int atmp;
-        atmp = find_local("__atmp");
-        tgt2 = n->c0;
-        if (tgt2->kind == ND_IDENT) {
-            pname = tgt2->sval;
-            pis_global = (find_global(pname) >= 0);
-            if (pis_global) {
-                bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
-                bv_push(o, 0x21); bv_u32(o, atmp);
-                bv_push(o, 0x23); bv_u32(o, bin_global_idx(pname));
-                bv_push(o, 0x41); bv_i32(o, 1);
-                if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-                bv_push(o, 0x24); bv_u32(o, bin_global_idx(pname));
-                bv_push(o, 0x20); bv_u32(o, atmp);
-            } else {
-                li = find_local(pname);
-                bv_push(o, 0x20); bv_u32(o, li);
-                bv_push(o, 0x20); bv_u32(o, li);
-                bv_push(o, 0x41); bv_i32(o, 1);
-                if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-                bv_push(o, 0x21); bv_u32(o, li);
-            }
-        } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
-            pesz = expr_elem_size(tgt2->c0);
-            gen_expr_bin(o, tgt2->c0);
-            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x21); bv_u32(o, atmp);
-            gen_expr_bin(o, tgt2->c0);
-            gen_expr_bin(o, tgt2->c0);
-            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x41); bv_i32(o, 1);
-            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-            if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, atmp);
-        } else if (tgt2->kind == ND_SUBSCRIPT) {
-            pesz = expr_elem_size(tgt2->c0);
-            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
-            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
-            bv_push(o, 0x6A);
-            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x21); bv_u32(o, atmp);
-            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
-            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
-            bv_push(o, 0x6A);
-            gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
-            if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
-            bv_push(o, 0x6A);
-            if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x41); bv_i32(o, 1);
-            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-            if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
-            else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
-            else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
-            bv_push(o, 0x20); bv_u32(o, atmp);
-        } else if (tgt2->kind == ND_MEMBER) {
-            poff = resolve_field_offset(tgt2->sval);
-            if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
-            gen_expr_bin(o, tgt2->c0);
-            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
-            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-            bv_push(o, 0x21); bv_u32(o, atmp);
-            gen_expr_bin(o, tgt2->c0);
-            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
-            gen_expr_bin(o, tgt2->c0);
-            if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
-            bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
-            bv_push(o, 0x41); bv_i32(o, 1);
-            if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
-            bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
-            bv_push(o, 0x20); bv_u32(o, atmp);
-        } else {
-            error(n->nline, n->ncol, "unsupported post-inc/dec target");
-        }
-        bin_last_float = 0;
-        break;
+        bv_push(o, 0x21); bv_u32(o, atmp);
+        gen_expr_bin(o, tgt2->c0);
+        gen_expr_bin(o, tgt2->c0);
+        if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x41); bv_i32(o, 1);
+        if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+        if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x20); bv_u32(o, atmp);
+    } else if (tgt2->kind == ND_SUBSCRIPT) {
+        pesz = expr_elem_size(tgt2->c0);
+        gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+        if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x21); bv_u32(o, atmp);
+        gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+        if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        gen_expr_bin(o, tgt2->c0); gen_expr_bin(o, tgt2->c1);
+        if (pesz > 1) { bv_push(o, 0x41); bv_i32(o, pesz); bv_push(o, 0x6C); }
+        bv_push(o, 0x6A);
+        if (pesz == 1) { bv_push(o, 0x2D); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x2E); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x41); bv_i32(o, 1);
+        if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+        if (pesz == 1) { bv_push(o, 0x3A); bv_u32(o, 0); bv_u32(o, 0); }
+        else if (pesz == 2) { bv_push(o, 0x3B); bv_u32(o, 1); bv_u32(o, 0); }
+        else { bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0); }
+        bv_push(o, 0x20); bv_u32(o, atmp);
+    } else if (tgt2->kind == ND_MEMBER) {
+        poff = resolve_field_offset(tgt2->sval);
+        if (poff < 0) error(tgt2->nline, tgt2->ncol, "unknown struct field");
+        gen_expr_bin(o, tgt2->c0);
+        if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+        bv_push(o, 0x21); bv_u32(o, atmp);
+        gen_expr_bin(o, tgt2->c0);
+        if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+        gen_expr_bin(o, tgt2->c0);
+        if (poff > 0) { bv_push(o, 0x41); bv_i32(o, poff); bv_push(o, 0x6A); }
+        bv_push(o, 0x28); bv_u32(o, 2); bv_u32(o, 0);
+        bv_push(o, 0x41); bv_i32(o, 1);
+        if (n->kind == ND_POST_INC) { bv_push(o, 0x6A); } else { bv_push(o, 0x6B); }
+        bv_push(o, 0x36); bv_u32(o, 2); bv_u32(o, 0);
+        bv_push(o, 0x20); bv_u32(o, atmp);
+    } else {
+        error(n->nline, n->ncol, "unsupported post-inc/dec target");
     }
-    case ND_TERNARY:
-        gen_expr_bin(o, n->c0);
-        bv_push(o, 0x04); bv_push(o, 0x7F); bin_lbl_sp++;
-        gen_expr_bin(o, n->c1);
-        bv_push(o, 0x05);
-        gen_expr_bin(o, n->c2);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        bin_last_float = 0;
-        break;
-    default:
-        error(n->nline, n->ncol, "unsupported expression in codegen");
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_ternary(struct ByteVec *o, struct Node *n) {
+    gen_expr_bin(o, n->c0);
+    bv_push(o, 0x04); bv_push(o, 0x7F); bin_lbl_sp++;
+    gen_expr_bin(o, n->c1);
+    bv_push(o, 0x05);
+    gen_expr_bin(o, n->c2);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bin_last_float = 0;
+}
+
+void gen_expr_bin_error(struct ByteVec *o, struct Node *n) {
+    error(n->nline, n->ncol, "unsupported expression in binary codegen");
+}
+
+void init_gen_expr_bin_tbl(void) {
+    int tbl_i;
+    gen_expr_bin_tbl = (GenExprBinFn *)malloc(ND_COUNT * sizeof(GenExprBinFn));
+    for (tbl_i = 0; tbl_i < ND_COUNT; tbl_i++) {
+        gen_expr_bin_tbl[tbl_i] = gen_expr_bin_error;
     }
+    gen_expr_bin_tbl[ND_ASSIGN] = gen_expr_bin_assign;
+    gen_expr_bin_tbl[ND_BINARY] = gen_expr_bin_binary;
+    gen_expr_bin_tbl[ND_CALL] = gen_expr_bin_call;
+    gen_expr_bin_tbl[ND_CALL_INDIRECT] = gen_expr_bin_call_indirect;
+    gen_expr_bin_tbl[ND_CAST] = gen_expr_bin_cast;
+    gen_expr_bin_tbl[ND_FLOAT_LIT] = gen_expr_bin_float_lit;
+    gen_expr_bin_tbl[ND_IDENT] = gen_expr_bin_ident;
+    gen_expr_bin_tbl[ND_INT_LIT] = gen_expr_bin_int_lit;
+    gen_expr_bin_tbl[ND_MEMBER] = gen_expr_bin_member;
+    gen_expr_bin_tbl[ND_POST_DEC] = gen_expr_bin_post_inc_dec;
+    gen_expr_bin_tbl[ND_POST_INC] = gen_expr_bin_post_inc_dec;
+    gen_expr_bin_tbl[ND_SIZEOF] = gen_expr_bin_sizeof;
+    gen_expr_bin_tbl[ND_STR_LIT] = gen_expr_bin_str_lit;
+    gen_expr_bin_tbl[ND_SUBSCRIPT] = gen_expr_bin_subscript;
+    gen_expr_bin_tbl[ND_TERNARY] = gen_expr_bin_ternary;
+    gen_expr_bin_tbl[ND_UNARY] = gen_expr_bin_unary;
+}
+
+void gen_expr_bin(struct ByteVec *o, struct Node *n) {
+    GenExprBinFn efn;
+    if (n->kind < 0 || n->kind >= ND_COUNT) {
+        error(n->nline, n->ncol, "unsupported expression in binary codegen");
+    }
+    efn = gen_expr_bin_tbl[n->kind];
+    efn(o, n);
 }
 
 /* --- Binary statement codegen --- */
@@ -6359,253 +7125,312 @@ void gen_body_bin(struct ByteVec *o, struct Node *n) {
     }
 }
 
-void gen_stmt_bin(struct ByteVec *o, struct Node *n) {
-    int lbl;
-    int i;
+/* --- Binary statement codegen --- */
+
+typedef void (*GenStmtBinFn)(struct ByteVec *, struct Node *);
+GenStmtBinFn *gen_stmt_bin_tbl;
+
+void gen_stmt_bin_return(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_var_decl(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_expr_stmt(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_if(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_while(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_for(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_do_while(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_break(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_continue(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_block(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_switch(struct ByteVec *o, struct Node *n);
+void gen_stmt_bin_error(struct ByteVec *o, struct Node *n);
+
+void gen_stmt_bin_return(struct ByteVec *o, struct Node *n) {
+    if (n->c0 != (struct Node *)0) {
+        gen_expr_bin(o, n->c0);
+    }
+    bv_push(o, 0x0F);
+}
+
+void gen_stmt_bin_var_decl(struct ByteVec *o, struct Node *n) {
     int bsz;
     int decl_float;
 
-    switch (n->kind) {
-    case ND_RETURN:
-        if (n->c0 != (struct Node *)0) {
-            gen_expr_bin(o, n->c0);
-        }
-        bv_push(o, 0x0F);
-        break;
-    case ND_VAR_DECL:
-        if (n->ival > 0) {
-            bsz = n->ival * n->ival2;
-            bv_push(o, 0x41); bv_i32(o, bsz);
-            bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
-            bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
-        } else if (n->c0 != (struct Node *)0) {
-            decl_float = var_is_float(n->sval);
-            gen_expr_bin(o, n->c0);
-            if (decl_float && !bin_last_float) {
-                bv_push(o, 0xB7); /* f64.convert_i32_s */
-            } else if (!decl_float && bin_last_float) {
-                bv_push(o, 0xAA); /* i32.trunc_f64_s */
-            }
-            bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
-        }
-        break;
-    case ND_EXPR_STMT:
+    if (n->ival > 0) {
+        bsz = n->ival * n->ival2;
+        bv_push(o, 0x41); bv_i32(o, bsz);
+        bv_push(o, 0x10); bv_u32(o, bin_find_func("malloc"));
+        bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
+    } else if (n->c0 != (struct Node *)0) {
+        decl_float = var_is_float(n->sval);
         gen_expr_bin(o, n->c0);
-        bv_push(o, 0x1A);
-        break;
-    case ND_IF:
-        gen_expr_bin(o, n->c0);
-        if (n->c2 != (struct Node *)0) {
-            bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
-            gen_body_bin(o, n->c1);
-            bv_push(o, 0x05);
-            gen_body_bin(o, n->c2);
-            bv_push(o, 0x0B); bin_lbl_sp--;
-        } else {
-            bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
-            gen_body_bin(o, n->c1);
-            bv_push(o, 0x0B); bin_lbl_sp--;
+        if (decl_float && !bin_last_float) {
+            bv_push(o, 0xB7); /* f64.convert_i32_s */
+        } else if (!decl_float && bin_last_float) {
+            bv_push(o, 0xAA); /* i32.trunc_f64_s */
         }
-        break;
-    case ND_WHILE:
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        bin_brk_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        bin_loop_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
-        loop_sp++;
-        gen_expr_bin(o, n->c0);
-        bv_push(o, 0x45);
-        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
-        bin_cont_at[loop_sp - 1] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+        bv_push(o, 0x21); bv_u32(o, find_local(n->sval));
+    }
+}
+
+void gen_stmt_bin_expr_stmt(struct ByteVec *o, struct Node *n) {
+    gen_expr_bin(o, n->c0);
+    bv_push(o, 0x1A);
+}
+
+void gen_stmt_bin_if(struct ByteVec *o, struct Node *n) {
+    gen_expr_bin(o, n->c0);
+    if (n->c2 != (struct Node *)0) {
+        bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
+        gen_body_bin(o, n->c1);
+        bv_push(o, 0x05);
+        gen_body_bin(o, n->c2);
+        bv_push(o, 0x0B); bin_lbl_sp--;
+    } else {
+        bv_push(o, 0x04); bv_push(o, 0x40); bin_lbl_sp++;
         gen_body_bin(o, n->c1);
         bv_push(o, 0x0B); bin_lbl_sp--;
-        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        loop_sp--;
-        break;
-    case ND_FOR:
-        if (n->c0 != (struct Node *)0) {
-            gen_stmt_bin(o, n->c0);
-        }
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        bin_brk_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        bin_loop_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
-        loop_sp++;
-        if (n->c1 != (struct Node *)0) {
-            gen_expr_bin(o, n->c1);
-            bv_push(o, 0x45);
-            bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
-        }
-        bin_cont_at[loop_sp - 1] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        gen_body_bin(o, n->c3);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        if (n->c2 != (struct Node *)0) {
-            gen_expr_bin(o, n->c2);
-            bv_push(o, 0x1A);
-        }
-        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        loop_sp--;
-        break;
-    case ND_DO_WHILE:
-        lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = lbl;
-        cont_lbl[loop_sp] = lbl;
-        bin_brk_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        bin_loop_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
-        bin_cont_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        loop_sp++;
-        gen_body_bin(o, n->c0);
-        bv_push(o, 0x0B); bin_lbl_sp--;
+    }
+}
+
+void gen_stmt_bin_while(struct ByteVec *o, struct Node *n) {
+    int lbl;
+
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    bin_brk_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    bin_loop_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+    loop_sp++;
+    gen_expr_bin(o, n->c0);
+    bv_push(o, 0x45);
+    bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+    bin_cont_at[loop_sp - 1] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    gen_body_bin(o, n->c1);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    loop_sp--;
+}
+
+void gen_stmt_bin_for(struct ByteVec *o, struct Node *n) {
+    int lbl;
+
+    if (n->c0 != (struct Node *)0) {
+        gen_stmt_bin(o, n->c0);
+    }
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    bin_brk_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    bin_loop_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+    loop_sp++;
+    if (n->c1 != (struct Node *)0) {
         gen_expr_bin(o, n->c1);
-        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        bv_push(o, 0x0B); bin_lbl_sp--;
-        loop_sp--;
-        break;
-    case ND_BREAK:
-        if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
+        bv_push(o, 0x45);
+        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+    }
+    bin_cont_at[loop_sp - 1] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    gen_body_bin(o, n->c3);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    if (n->c2 != (struct Node *)0) {
+        gen_expr_bin(o, n->c2);
+        bv_push(o, 0x1A);
+    }
+    bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    loop_sp--;
+}
+
+void gen_stmt_bin_do_while(struct ByteVec *o, struct Node *n) {
+    int lbl;
+
+    lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = lbl;
+    cont_lbl[loop_sp] = lbl;
+    bin_brk_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    bin_loop_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x03); bv_push(o, 0x40); bin_lbl_sp++;
+    bin_cont_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    loop_sp++;
+    gen_body_bin(o, n->c0);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    gen_expr_bin(o, n->c1);
+    bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - bin_loop_at[loop_sp - 1] - 1);
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    bv_push(o, 0x0B); bin_lbl_sp--;
+    loop_sp--;
+}
+
+void gen_stmt_bin_break(struct ByteVec *o, struct Node *n) {
+    if (loop_sp <= 0) error(n->nline, n->ncol, "break outside loop");
+    bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
+}
+
+void gen_stmt_bin_continue(struct ByteVec *o, struct Node *n) {
+    if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
+    if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
+    bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_cont_at[loop_sp - 1] - 1);
+}
+
+void gen_stmt_bin_block(struct ByteVec *o, struct Node *n) {
+    int i;
+
+    for (i = 0; i < n->ival2; i++) {
+        gen_stmt_bin(o, n->list[i]);
+    }
+}
+
+void gen_stmt_bin_switch(struct ByteVec *o, struct Node *n) {
+    int case_vals[256];
+    int case_start[256];
+    int case_depth[256];
+    int nc;
+    int dflt_pos;
+    int has_dflt;
+    int k;
+    int j;
+    int next_start;
+    int sw_lbl;
+    int si;
+    int last_case_pos;
+    int dflt_depth;
+
+    nc = 0;
+    dflt_pos = -1;
+    has_dflt = 0;
+    for (si = 0; si < n->ival2; si++) {
+        if (n->list[si]->kind == ND_CASE) {
+            if (nc >= MAX_CASES) {
+                error(n->nline, n->ncol, "too many cases in switch");
+            }
+            case_vals[nc] = n->list[si]->ival;
+            case_start[nc] = si;
+            nc++;
+        } else if (n->list[si]->kind == ND_DEFAULT) {
+            dflt_pos = si;
+            has_dflt = 1;
+        }
+    }
+
+    if (has_dflt) {
+        last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
+        if (dflt_pos < last_case_pos) {
+            error(n->c0->nline, n->c0->ncol,
+                  "default must appear after all case labels");
+        }
+    }
+
+    sw_lbl = label_cnt;
+    label_cnt++;
+    brk_lbl[loop_sp] = sw_lbl;
+    if (loop_sp > 0) {
+        cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
+        bin_cont_at[loop_sp] = bin_cont_at[loop_sp - 1];
+    } else {
+        cont_lbl[loop_sp] = -1;
+    }
+
+    gen_expr_bin(o, n->c0);
+    bv_push(o, 0x21); bv_u32(o, find_local("__stmp"));
+
+    bin_brk_at[loop_sp] = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+
+    dflt_depth = bin_lbl_sp;
+    bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+
+    for (k = nc - 1; k >= 0; k--) {
+        case_depth[k] = bin_lbl_sp;
+        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
+    }
+
+    loop_sp++;
+
+    for (k = 0; k < nc; k++) {
+        bv_push(o, 0x20); bv_u32(o, find_local("__stmp"));
+        bv_push(o, 0x41); bv_i32(o, case_vals[k]);
+        bv_push(o, 0x46);
+        bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - case_depth[k] - 1);
+    }
+    if (has_dflt) {
+        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - dflt_depth - 1);
+    } else {
         bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
-        break;
-    case ND_CONTINUE:
-        if (loop_sp <= 0) error(n->nline, n->ncol, "continue outside loop");
-        if (cont_lbl[loop_sp - 1] < 0) error(n->nline, n->ncol, "continue not inside a loop");
-        bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_cont_at[loop_sp - 1] - 1);
-        break;
-    case ND_BLOCK:
-        for (i = 0; i < n->ival2; i++) {
-            gen_stmt_bin(o, n->list[i]);
-        }
-        break;
-    case ND_SWITCH: {
-        int case_vals[256];
-        int case_start[256];
-        int case_depth[256];
-        int nc;
-        int dflt_pos;
-        int has_dflt;
-        int k;
-        int j;
-        int next_start;
-        int sw_lbl;
-        int si;
-        int last_case_pos;
-        int dflt_depth;
-
-        nc = 0;
-        dflt_pos = -1;
-        has_dflt = 0;
-        for (si = 0; si < n->ival2; si++) {
-            if (n->list[si]->kind == ND_CASE) {
-                if (nc >= MAX_CASES) {
-                    error(n->nline, n->ncol, "too many cases in switch");
-                }
-                case_vals[nc] = n->list[si]->ival;
-                case_start[nc] = si;
-                nc++;
-            } else if (n->list[si]->kind == ND_DEFAULT) {
-                dflt_pos = si;
-                has_dflt = 1;
-            }
-        }
-
-        if (has_dflt) {
-            last_case_pos = (nc > 0) ? case_start[nc - 1] : -1;
-            if (dflt_pos < last_case_pos) {
-                error(n->c0->nline, n->c0->ncol,
-                      "default must appear after all case labels");
-            }
-        }
-
-        sw_lbl = label_cnt;
-        label_cnt++;
-        brk_lbl[loop_sp] = sw_lbl;
-        if (loop_sp > 0) {
-            cont_lbl[loop_sp] = cont_lbl[loop_sp - 1];
-            bin_cont_at[loop_sp] = bin_cont_at[loop_sp - 1];
-        } else {
-            cont_lbl[loop_sp] = -1;
-        }
-
-        gen_expr_bin(o, n->c0);
-        bv_push(o, 0x21); bv_u32(o, find_local("__stmp"));
-
-        bin_brk_at[loop_sp] = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-
-        dflt_depth = bin_lbl_sp;
-        bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-
-        for (k = nc - 1; k >= 0; k--) {
-            case_depth[k] = bin_lbl_sp;
-            bv_push(o, 0x02); bv_push(o, 0x40); bin_lbl_sp++;
-        }
-
-        loop_sp++;
-
-        for (k = 0; k < nc; k++) {
-            bv_push(o, 0x20); bv_u32(o, find_local("__stmp"));
-            bv_push(o, 0x41); bv_i32(o, case_vals[k]);
-            bv_push(o, 0x46);
-            bv_push(o, 0x0D); bv_u32(o, bin_lbl_sp - case_depth[k] - 1);
-        }
-        if (has_dflt) {
-            bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - dflt_depth - 1);
-        } else {
-            bv_push(o, 0x0C); bv_u32(o, bin_lbl_sp - bin_brk_at[loop_sp - 1] - 1);
-        }
-
-        for (k = 0; k < nc; k++) {
-            bv_push(o, 0x0B); bin_lbl_sp--;
-            if (k + 1 < nc) {
-                next_start = case_start[k + 1];
-            } else if (has_dflt) {
-                next_start = dflt_pos;
-            } else {
-                next_start = n->ival2;
-            }
-            for (j = case_start[k] + 1; j < next_start; j++) {
-                if (n->list[j]->kind == ND_CASE) continue;
-                if (n->list[j]->kind == ND_DEFAULT) continue;
-                gen_stmt_bin(o, n->list[j]);
-            }
-        }
-
-        bv_push(o, 0x0B); bin_lbl_sp--;
-
-        if (has_dflt) {
-            for (j = dflt_pos + 1; j < n->ival2; j++) {
-                if (n->list[j]->kind == ND_CASE) continue;
-                if (n->list[j]->kind == ND_DEFAULT) continue;
-                gen_stmt_bin(o, n->list[j]);
-            }
-        }
-
-        bv_push(o, 0x0B); bin_lbl_sp--;
-
-        loop_sp--;
-        break;
     }
-    default:
-        error(n->nline, n->ncol, "unsupported statement in codegen");
+
+    for (k = 0; k < nc; k++) {
+        bv_push(o, 0x0B); bin_lbl_sp--;
+        if (k + 1 < nc) {
+            next_start = case_start[k + 1];
+        } else if (has_dflt) {
+            next_start = dflt_pos;
+        } else {
+            next_start = n->ival2;
+        }
+        for (j = case_start[k] + 1; j < next_start; j++) {
+            if (n->list[j]->kind == ND_CASE) continue;
+            if (n->list[j]->kind == ND_DEFAULT) continue;
+            gen_stmt_bin(o, n->list[j]);
+        }
     }
+
+    bv_push(o, 0x0B); bin_lbl_sp--;
+
+    if (has_dflt) {
+        for (j = dflt_pos + 1; j < n->ival2; j++) {
+            if (n->list[j]->kind == ND_CASE) continue;
+            if (n->list[j]->kind == ND_DEFAULT) continue;
+            gen_stmt_bin(o, n->list[j]);
+        }
+    }
+
+    bv_push(o, 0x0B); bin_lbl_sp--;
+
+    loop_sp--;
+}
+
+void gen_stmt_bin_error(struct ByteVec *o, struct Node *n) {
+    error(n->nline, n->ncol, "unsupported statement in binary codegen");
+}
+
+void init_gen_stmt_bin_tbl(void) {
+    int tbl_i;
+    gen_stmt_bin_tbl = (GenStmtBinFn *)malloc(ND_COUNT * sizeof(GenStmtBinFn));
+    for (tbl_i = 0; tbl_i < ND_COUNT; tbl_i++) {
+        gen_stmt_bin_tbl[tbl_i] = gen_stmt_bin_error;
+    }
+    gen_stmt_bin_tbl[ND_BLOCK] = gen_stmt_bin_block;
+    gen_stmt_bin_tbl[ND_BREAK] = gen_stmt_bin_break;
+    gen_stmt_bin_tbl[ND_CONTINUE] = gen_stmt_bin_continue;
+    gen_stmt_bin_tbl[ND_DO_WHILE] = gen_stmt_bin_do_while;
+    gen_stmt_bin_tbl[ND_EXPR_STMT] = gen_stmt_bin_expr_stmt;
+    gen_stmt_bin_tbl[ND_FOR] = gen_stmt_bin_for;
+    gen_stmt_bin_tbl[ND_IF] = gen_stmt_bin_if;
+    gen_stmt_bin_tbl[ND_RETURN] = gen_stmt_bin_return;
+    gen_stmt_bin_tbl[ND_SWITCH] = gen_stmt_bin_switch;
+    gen_stmt_bin_tbl[ND_VAR_DECL] = gen_stmt_bin_var_decl;
+    gen_stmt_bin_tbl[ND_WHILE] = gen_stmt_bin_while;
+}
+
+void gen_stmt_bin(struct ByteVec *o, struct Node *n) {
+    GenStmtBinFn sfn;
+    if (n->kind < 0 || n->kind >= ND_COUNT) {
+        error(n->nline, n->ncol, "unsupported statement in binary codegen");
+    }
+    sfn = gen_stmt_bin_tbl[n->kind];
+    sfn(o, n);
 }
 
 /* --- Binary function codegen --- */
@@ -8501,15 +9326,15 @@ void gen_module_bin(struct Node *prog) {
     bv_u32(sec, bin_ntypes);
     for (i = 0; i < bin_ntypes; i++) {
         bv_push(sec, 0x60);
-        bv_u32(sec, bin_types[i]->nparams);
-        for (j = 0; j < bin_types[i]->nparams; j++) {
-            if (j < 16 && bin_types[i]->param_is_float[j]) {
+        bv_u32(sec, bin_types[i]->bt_nparams);
+        for (j = 0; j < bin_types[i]->bt_nparams; j++) {
+            if (j < 16 && bin_types[i]->bt_pif[j]) {
                 bv_push(sec, 0x7C); /* f64 */
             } else {
                 bv_push(sec, 0x7F); /* i32 */
             }
         }
-        if (bin_types[i]->has_result) {
+        if (bin_types[i]->bt_has_result) {
             bv_u32(sec, 1);
             if (bin_types[i]->result_is_float) {
                 bv_push(sec, 0x7C); /* f64 */
@@ -8547,6 +9372,16 @@ void gen_module_bin(struct Node *prog) {
         bv_u32(sec, bin_funcs[i]->type_idx);
     }
     bv_section(out, 3, sec);
+
+    /* Table section (id=4) — only if function pointers are used */
+    if (fn_table_count > 0) {
+        bv_reset(sec);
+        bv_u32(sec, 1); /* one table */
+        bv_push(sec, 0x70); /* funcref */
+        bv_push(sec, 0x00); /* limits: min only */
+        bv_u32(sec, fn_table_count);
+        bv_section(out, 4, sec);
+    }
 
     /* Memory section (id=5) */
     bv_reset(sec);
@@ -8590,6 +9425,20 @@ void gen_module_bin(struct Node *prog) {
     bv_push(sec, 0x00);
     bv_u32(sec, bin_find_func("_start"));
     bv_section(out, 7, sec);
+
+    /* Element section (id=9) — only if function pointers are used */
+    if (fn_table_count > 0) {
+        int eli;
+        bv_reset(sec);
+        bv_u32(sec, 1); /* one elem segment */
+        bv_u32(sec, 0); /* table index 0 */
+        bv_push(sec, 0x41); bv_i32(sec, 0); bv_push(sec, 0x0B); /* offset = i32.const 0; end */
+        bv_u32(sec, fn_table_count);
+        for (eli = 0; eli < fn_table_count; eli++) {
+            bv_u32(sec, bin_find_func(fn_table_names[eli]));
+        }
+        bv_section(out, 9, sec);
+    }
 
     /* Code section (id=10) */
     bv_reset(sec);
@@ -8640,7 +9489,44 @@ void gen_module_bin(struct Node *prog) {
     }
     /* _start body */
     bv_reset(fb);
-    bv_u32(fb, 0);
+    {
+        int need_init_bin;
+        int gi3;
+        need_init_bin = 0;
+        for (gi3 = 0; gi3 < nglobals; gi3++) {
+            if (globals_tbl[gi3]->gv_arr_len > 0 && globals_tbl[gi3]->gv_arr_str_ids != (int *)0) {
+                need_init_bin = 1;
+            }
+        }
+        if (need_init_bin) {
+            bv_u32(fb, 1); /* 1 local declaration group */
+            bv_u32(fb, 1); /* 1 local of type i32 */
+            bv_push(fb, 0x7F);
+            for (gi3 = 0; gi3 < nglobals; gi3++) {
+                if (globals_tbl[gi3]->gv_arr_len > 0 && globals_tbl[gi3]->gv_arr_str_ids != (int *)0) {
+                    int ai3;
+                    /* malloc(arr_len * 4) */
+                    bv_push(fb, 0x41); bv_i32(fb, globals_tbl[gi3]->gv_arr_len * 4);
+                    bv_push(fb, 0x10); bv_u32(fb, bin_find_func("malloc"));
+                    /* tee to local 0, then set global */
+                    bv_push(fb, 0x22); bv_u32(fb, 0); /* local.tee 0 */
+                    bv_push(fb, 0x24); bv_u32(fb, bin_global_idx(globals_tbl[gi3]->name));
+                    /* store each element */
+                    for (ai3 = 0; ai3 < globals_tbl[gi3]->gv_arr_len; ai3++) {
+                        bv_push(fb, 0x20); bv_u32(fb, 0); /* local.get 0 */
+                        if (ai3 > 0) {
+                            bv_push(fb, 0x41); bv_i32(fb, ai3 * 4);
+                            bv_push(fb, 0x6A); /* i32.add */
+                        }
+                        bv_push(fb, 0x41); bv_i32(fb, str_table[globals_tbl[gi3]->gv_arr_str_ids[ai3]]->offset);
+                        bv_push(fb, 0x36); bv_u32(fb, 2); bv_u32(fb, 0); /* i32.store align=2 offset=0 */
+                    }
+                }
+            }
+        } else {
+            bv_u32(fb, 0); /* no locals */
+        }
+    }
     bv_push(fb, 0x10); bv_u32(fb, bin_find_func("main"));
     bv_push(fb, 0x10); bv_u32(fb, 0);
     bv_push(fb, 0x0B);
@@ -8677,15 +9563,21 @@ void gen_module_bin(struct Node *prog) {
 int main(void) {
     struct Node *prog;
 
+    init_kw_table();
     init_macros();
     init_strings();
     init_structs();
     init_globals();
     init_func_sigs();
+    init_fnptr_registry();
     init_enum_consts();
     init_type_aliases();
     init_local_tracking();
     init_loop_labels();
+    init_gen_expr_tbl();
+    init_gen_stmt_tbl();
+    init_gen_expr_bin_tbl();
+    init_gen_stmt_bin_tbl();
 
     read_source();
     lex_init();
