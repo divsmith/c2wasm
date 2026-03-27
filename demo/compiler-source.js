@@ -5186,6 +5186,16 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        case TOK_LT_EQ:   out(expr_is_unsigned(n->c0) ? \"i32.le_u\\n\" : \"i32.le_s\\n\"); break;\n" +
   "        case TOK_GT_EQ:   out(expr_is_unsigned(n->c0) ? \"i32.ge_u\\n\" : \"i32.ge_s\\n\"); break;\n" +
   "        case TOK_AMP_AMP:\n" +
+  "            /* Logical AND: normalize both operands to 0/1 before bitwise AND.\n" +
+  "               Stack is [left, right]. Save right, normalize left, restore right,\n" +
+  "               normalize right, then AND. */\n" +
+  "            out(\"local.set $__atmp\\n\");\n" +
+  "            emit_indent(); out(\"i32.eqz\\n\");\n" +
+  "            emit_indent(); out(\"i32.eqz\\n\");\n" +
+  "            emit_indent(); out(\"local.get $__atmp\\n\");\n" +
+  "            emit_indent(); out(\"i32.eqz\\n\");\n" +
+  "            emit_indent(); out(\"i32.eqz\\n\");\n" +
+  "            emit_indent(); out(\"i32.and\\n\"); break;\n" +
   "        case TOK_AMP:     out(\"i32.and\\n\"); break;\n" +
   "        case TOK_PIPE_PIPE:\n" +
   "        case TOK_PIPE:    out(\"i32.or\\n\"); break;\n" +

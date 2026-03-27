@@ -624,6 +624,16 @@ void gen_expr_binary(struct Node *n) {
         case TOK_LT_EQ:   out(expr_is_unsigned(n->c0) ? "i32.le_u\n" : "i32.le_s\n"); break;
         case TOK_GT_EQ:   out(expr_is_unsigned(n->c0) ? "i32.ge_u\n" : "i32.ge_s\n"); break;
         case TOK_AMP_AMP:
+            /* Logical AND: normalize both operands to 0/1 before bitwise AND.
+               Stack is [left, right]. Save right, normalize left, restore right,
+               normalize right, then AND. */
+            out("local.set $__atmp\n");
+            emit_indent(); out("i32.eqz\n");
+            emit_indent(); out("i32.eqz\n");
+            emit_indent(); out("local.get $__atmp\n");
+            emit_indent(); out("i32.eqz\n");
+            emit_indent(); out("i32.eqz\n");
+            emit_indent(); out("i32.and\n"); break;
         case TOK_AMP:     out("i32.and\n"); break;
         case TOK_PIPE_PIPE:
         case TOK_PIPE:    out("i32.or\n"); break;
