@@ -74,7 +74,16 @@ wasm-emcc: $(SRC)
 		-s EXIT_RUNTIME=0 \
 		-s SINGLE_FILE=1
 
-wasm: wasm-wasi
+wasm: wasm-wasi wasm-assembler
+
+wasm-assembler: src/assembler_main.c
+	@if [ -z "$(WASI_SDK)" ]; then \
+		echo "Error: wasi-sdk not found. Install it and set WASI_SDK=/path/to/wasi-sdk, or place it at /opt/wasi-sdk or ~/.local/wasi-sdk"; \
+		exit 1; \
+	fi
+	mkdir -p $(DEMO)
+	$(WASI_SDK)/bin/clang src/assembler_main.c -Isrc -O2 -o $(DEMO)/assembler.wasm \
+		--sysroot=$(WASI_SDK)/share/wasi-sysroot
 
 bundle-source:
 	node tools/bundle-source.js

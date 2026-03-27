@@ -1452,24 +1452,7 @@
     setButtonState('compiling');
     setStatus('Compiling…');
 
-    // When a custom compiler is active, first compile with it to verify
-    // the user's compiler changes work, then use the reference compiler
-    // for binary execution (custom compiler outputs WAT, not binary).
-    var customCompileStep;
-    if (CompilerAPI.hasCustomCompiler() && CompilerAPI.getMode() === 'custom') {
-      customCompileStep = CompilerAPI.compile(source).then(function (wat) {
-        writeConsole('Custom compiler: OK (' + wat.length + ' chars WAT)\n', 'output-info');
-      }).catch(function (err) {
-        writeConsole('Custom compiler error: ' + (err.message || err) + '\n', 'output-error');
-      });
-    } else {
-      customCompileStep = Promise.resolve();
-    }
-
-    customCompileStep
-      .then(function () {
-        return CompilerAPI.compileBinary(source);
-      })
+    CompilerAPI.compileBinary(source)
       .then(function (bytes) {
         return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       })

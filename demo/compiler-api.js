@@ -13,6 +13,7 @@
  */
 var CompilerAPI = (function () {
   var referenceModule = null;
+  var assemblerModule = null;
   var customModule = null;
   var currentMode = 'reference';
   var loading = null;
@@ -21,17 +22,19 @@ var CompilerAPI = (function () {
     if (referenceModule) return Promise.resolve();
     if (loading) return loading;
 
-    loading = fetch('compiler.wasm')
-      .then(function (response) {
-        if (!response.ok) throw new Error('compiler.wasm not found (HTTP ' + response.status + ').\nBuild it with: make wasm');
-        return response.arrayBuffer();
-      })
-      .then(function (bytes) {
-        return WebAssembly.compile(bytes);
-      })
-      .then(function (mod) {
-        referenceModule = mod;
-      });
+    loading = Promise.all([
+      fetch('compiler.wasm').then(function (r) {
+        if (!r.ok) throw new Error('compiler.wasm not found (HTTP ' + r.status + ').\nBuild it with: make wasm');
+        return r.arrayBuffer();
+      }).then(function (b) { return WebAssembly.compile(b); }),
+      fetch('assembler.wasm').then(function (r) {
+        if (!r.ok) throw new Error('assembler.wasm not found (HTTP ' + r.status + ').\nBuild it with: make wasm');
+        return r.arrayBuffer();
+      }).then(function (b) { return WebAssembly.compile(b); })
+    ]).then(function (mods) {
+      referenceModule = mods[0];
+      assemblerModule = mods[1];
+    });
 
     loading.catch(function () { loading = null; });
     return loading;
@@ -293,19 +296,37 @@ var CompilerAPI = (function () {
 
   /**
    * Compile C source to WASM binary bytes.
-   * Always uses the reference compiler (which has binary_mode=1) to ensure
-   * correct binary output. The custom compiler outputs WAT, not binary.
+   *
+   * In reference mode: reference compiler (binary_mode=1) compiles directly.
+   * In custom mode: custom compiler (WAT mode) produces WAT text, then
+   * assembler.wasm converts WAT → WASM binary.
+   *
    * Returns a Promise<Uint8Array>.
    */
   function compileBinary(cSource) {
     return init().then(function () {
-      var ctx = runCompiler(referenceModule, cSource, true, null);
+      if (currentMode === 'custom' && customModule) {
+        // Custom compiler produces WAT text
+        var watCtx = runCompiler(customModule, cSource, false, null);
+        var wat = watCtx.stdout;
+        if (!wat) {
+          throw new Error(watCtx.stderr || 'Custom compiler produced no output');
+        }
+        // Assemble WAT → WASM binary via standalone assembler
+        var asmCtx = runCompiler(assemblerModule, wat, true, null);
+        var bytes = asmCtx.stdoutBytes;
+        if (bytes.length === 0) {
+          throw new Error(asmCtx.stderr || 'Assembler produced no output');
+        }
+        return bytes;
+      }
 
+      // Reference compiler produces binary directly
+      var ctx = runCompiler(referenceModule, cSource, true, null);
       var bytes = ctx.stdoutBytes;
       if (bytes.length === 0) {
         throw new Error(ctx.stderr || 'Compiler produced no output');
       }
-
       return bytes;
     });
   }

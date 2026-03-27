@@ -31,8 +31,12 @@ jobs:
           tar xzf "wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
           sudo mv "wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" /opt/wasi-sdk
 
-      - name: Build compiler.wasm
+      - name: Build compiler.wasm and assembler.wasm
         run: make wasm
+
+      - name: Bundle compiler source for demo
+        run: |
+          node tools/bundle-source.js
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
