@@ -909,6 +909,36 @@
       'end:\n' +
       '    printf("done\\n");\n' +
       '    return 0;\n' +
+      '}\n',
+
+    func_macros:
+      '// Function-like macros with stringify and token paste\n' +
+      '#define MAX(a, b) ((a) > (b) ? (a) : (b))\n' +
+      '#define DOUBLE(x) ((x) * 2)\n' +
+      '#define STR(x) #x\n' +
+      '#define PASTE(a, b) a##b\n' +
+      '\n' +
+      'int main() {\n' +
+      '    int val1;\n' +
+      '    int val2;\n' +
+      '    int xy;\n' +
+      '\n' +
+      '    val1 = MAX(10, 20);\n' +
+      '    val2 = DOUBLE(val1);\n' +
+      '    printf("MAX(10,20) = %d\\n", val1);\n' +
+      '    printf("DOUBLE(%d) = %d\\n", val1, val2);\n' +
+      '\n' +
+      '    /* Nested macro calls */\n' +
+      '    printf("MAX(DOUBLE(3), 5) = %d\\n", MAX(DOUBLE(3), 5));\n' +
+      '\n' +
+      '    /* Stringify operator */\n' +
+      '    printf("STR(hello) = %s\\n", STR(hello));\n' +
+      '\n' +
+      '    /* Token paste operator */\n' +
+      '    xy = 42;\n' +
+      '    printf("PASTE(x,y) = %d\\n", PASTE(x, y));\n' +
+      '\n' +
+      '    return 0;\n' +
       '}\n'
   };
 

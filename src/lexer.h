@@ -11,6 +11,7 @@ struct IncludeStack {
     int is_lex_pos;
     int is_lex_line;
     int is_lex_col;
+    int macro_idx; /* -1 for file includes, macro index for expansions */
 };
 
 struct Token {
@@ -24,6 +25,11 @@ struct Token {
 struct Macro {
     char *name;
     int value;
+    int is_func_macro;
+    int param_count;
+    char **param_names;
+    char *body;
+    int expanding;
 };
 
 struct StringEntry {

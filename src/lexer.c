@@ -131,6 +131,10 @@ int hex_val(char c) {
     return 0;
 }
 
+/* Forward declaration of macro table (needed by include_pop for macro expansion cleanup) */
+struct Macro **macros;
+int nmacros;
+
 void include_push(void) {
     struct IncludeStack *frame;
     if (inc_depth >= MAX_INCLUDE_DEPTH) {
@@ -142,6 +146,7 @@ void include_push(void) {
     frame->is_lex_pos = lex_pos;
     frame->is_lex_line = lex_line;
     frame->is_lex_col = lex_col;
+    frame->macro_idx = -1;
     inc_stack[inc_depth] = frame;
     inc_depth++;
 }
@@ -151,6 +156,10 @@ int include_pop(void) {
     if (inc_depth <= 0) return 0;
     inc_depth--;
     frame = inc_stack[inc_depth];
+    /* if this frame was a macro expansion, clear expanding flag */
+    if (frame->macro_idx >= 0 && frame->macro_idx < nmacros) {
+        macros[frame->macro_idx]->expanding = 0;
+    }
     src = frame->is_src;
     src_len = frame->is_src_len;
     lex_pos = frame->is_lex_pos;
@@ -220,9 +229,6 @@ int kw_lookup(char *s) {
  * Macro table for #define
  * ================================================================ */
 
-struct Macro **macros;
-int nmacros;
-
 void init_macros(void) {
     macros = (struct Macro **)malloc(MAX_MACROS * sizeof(void *));
     nmacros = 0;
@@ -230,6 +236,11 @@ void init_macros(void) {
     macros[0] = (struct Macro *)malloc(sizeof(struct Macro));
     macros[0]->name = strdupn("__STDC__", 8);
     macros[0]->value = 1;
+    macros[0]->is_func_macro = 0;
+    macros[0]->param_count = 0;
+    macros[0]->param_names = (char **)0;
+    macros[0]->body = (char *)0;
+    macros[0]->expanding = 0;
     nmacros = 1;
 }
 
@@ -680,35 +691,91 @@ struct Token *next_token(void) {
                 }
             }
             name[ni] = '\0';
-            while (lp() == ' ' || lp() == '\t') la();
-            neg = 0;
-            if (lp() == '-') {
-                neg = 1;
-                la();
-                while (lp() == ' ') la();
-            }
-            val = 0;
-            if (lp() == '0' && (lex_pos + 1 < src_len) && (src[lex_pos + 1] == 'x' || src[lex_pos + 1] == 'X')) {
-                la();
-                la();
-                while (is_xdigit(lp())) {
-                    d = la();
-                    if (d <= '9') {
-                        val = val * 16 + (d - '0');
-                    } else {
-                        val = val * 16 + ((d | 32) - 'a' + 10);
+            /* Check for function-like macro: '(' immediately after name (no space) */
+            if (lp() == '(') {
+                /* function-like macro */
+                char **pnames;
+                int np;
+                char *mbody;
+                int mbi;
+                pnames = (char **)malloc(16 * sizeof(void *));
+                np = 0;
+                la(); /* consume '(' */
+                while (lp() != ')' && lp() != '\n' && lex_pos < src_len) {
+                    while (lp() == ' ' || lp() == '\t') la();
+                    if (lp() == ')') break;
+                    {
+                        char *pn;
+                        int pi;
+                        pn = (char *)malloc(128);
+                        pi = 0;
+                        while (is_alnum(lp()) || lp() == '_') {
+                            if (pi < 127) { pn[pi] = la(); pi++; } else { la(); }
+                        }
+                        pn[pi] = '\0';
+                        if (np < 16) { pnames[np] = pn; np++; }
                     }
+                    while (lp() == ' ' || lp() == '\t') la();
+                    if (lp() == ',') la();
+                }
+                if (lp() == ')') la(); /* consume ')' */
+                /* skip whitespace after params */
+                while (lp() == ' ' || lp() == '\t') la();
+                /* capture body until end of line */
+                mbody = (char *)malloc(4096);
+                mbi = 0;
+                while (lp() != '\n' && lex_pos < src_len) {
+                    if (mbi < 4095) { mbody[mbi] = la(); mbi++; } else { la(); }
+                }
+                mbody[mbi] = '\0';
+                if (nmacros < MAX_MACROS) {
+                    macros[nmacros] = (struct Macro *)malloc(sizeof(struct Macro));
+                    macros[nmacros]->name = name;
+                    macros[nmacros]->value = 0;
+                    macros[nmacros]->is_func_macro = 1;
+                    macros[nmacros]->param_count = np;
+                    macros[nmacros]->param_names = pnames;
+                    macros[nmacros]->body = mbody;
+                    macros[nmacros]->expanding = 0;
+                    nmacros++;
                 }
             } else {
-                while (is_digit(lp())) {
-                    val = val * 10 + (la() - '0');
+                /* object-like macro (existing behavior) */
+                while (lp() == ' ' || lp() == '\t') la();
+                neg = 0;
+                if (lp() == '-') {
+                    neg = 1;
+                    la();
+                    while (lp() == ' ') la();
                 }
+                val = 0;
+                if (lp() == '0' && (lex_pos + 1 < src_len) && (src[lex_pos + 1] == 'x' || src[lex_pos + 1] == 'X')) {
+                    la();
+                    la();
+                    while (is_xdigit(lp())) {
+                        d = la();
+                        if (d <= '9') {
+                            val = val * 16 + (d - '0');
+                        } else {
+                            val = val * 16 + ((d | 32) - 'a' + 10);
+                        }
+                    }
+                } else {
+                    while (is_digit(lp())) {
+                        val = val * 10 + (la() - '0');
+                    }
+                }
+                if (neg) val = -val;
+                macros[nmacros] = (struct Macro *)malloc(sizeof(struct Macro));
+                macros[nmacros]->name = name;
+                macros[nmacros]->value = val;
+                macros[nmacros]->is_func_macro = 0;
+                macros[nmacros]->param_count = 0;
+                macros[nmacros]->param_names = (char **)0;
+                macros[nmacros]->body = (char *)0;
+                macros[nmacros]->expanding = 0;
+                nmacros++;
             }
-            if (neg) val = -val;
-            macros[nmacros] = (struct Macro *)malloc(sizeof(struct Macro));
-            macros[nmacros]->name = name;
-            macros[nmacros]->value = val;
-            nmacros++;
         } else if (dlen == 7 && memcmp(src + s, "include", 7) == 0) {
             /* #include "filename" */
             char *inc_name;
@@ -814,7 +881,183 @@ struct Token *next_token(void) {
         /* macro substitution */
         if (t->kind == TOK_IDENT) {
             mi = find_macro(t->text);
-            if (mi >= 0) {
+            if (mi >= 0 && macros[mi]->is_func_macro && !macros[mi]->expanding) {
+                /* function-like macro: check for '(' */
+                /* skip whitespace to find '(' */
+                {
+                    int look_pos;
+                    look_pos = lex_pos;
+                    while (look_pos < src_len && (src[look_pos] == ' ' || src[look_pos] == '\t')) look_pos++;
+                    if (look_pos < src_len && src[look_pos] == '(') {
+                        /* collect arguments */
+                        char *args[16];
+                        int nargs;
+                        int depth;
+                        int arg_start;
+                        int arg_len;
+                        char *expanded;
+                        int exp_len;
+                        int bi;
+                        int ai;
+                        int pi;
+                        int match;
+                        lex_pos = look_pos + 1; /* skip past '(' */
+                        nargs = 0;
+                        depth = 1;
+                        arg_start = lex_pos;
+                        while (lex_pos < src_len && depth > 0) {
+                            if (src[lex_pos] == '(') {
+                                depth++;
+                                lex_pos++;
+                            } else if (src[lex_pos] == ')') {
+                                depth--;
+                                if (depth == 0) {
+                                    arg_len = lex_pos - arg_start;
+                                    if (nargs < 16) {
+                                        args[nargs] = (char *)malloc(arg_len + 1);
+                                        memcpy(args[nargs], src + arg_start, arg_len);
+                                        args[nargs][arg_len] = '\0';
+                                        nargs++;
+                                    }
+                                    lex_pos++; /* skip ')' */
+                                } else {
+                                    lex_pos++;
+                                }
+                            } else if (src[lex_pos] == ',' && depth == 1) {
+                                arg_len = lex_pos - arg_start;
+                                if (nargs < 16) {
+                                    args[nargs] = (char *)malloc(arg_len + 1);
+                                    memcpy(args[nargs], src + arg_start, arg_len);
+                                    args[nargs][arg_len] = '\0';
+                                    nargs++;
+                                }
+                                lex_pos++;
+                                /* skip leading whitespace of next arg */
+                                while (lex_pos < src_len && (src[lex_pos] == ' ' || src[lex_pos] == '\t')) lex_pos++;
+                                arg_start = lex_pos;
+                            } else if (src[lex_pos] == '\'' || src[lex_pos] == '"') {
+                                /* skip string/char literals inside args */
+                                {
+                                    char q;
+                                    q = src[lex_pos];
+                                    lex_pos++;
+                                    while (lex_pos < src_len && src[lex_pos] != q) {
+                                        if (src[lex_pos] == '\\') lex_pos++;
+                                        lex_pos++;
+                                    }
+                                    if (lex_pos < src_len) lex_pos++;
+                                }
+                            } else {
+                                lex_pos++;
+                            }
+                        }
+                        /* handle zero-arg macro: if param_count==0, don't count empty arg */
+                        if (macros[mi]->param_count == 0 && nargs == 1 && args[0][0] == '\0') {
+                            nargs = 0;
+                        }
+                        /* substitute params in body */
+                        expanded = (char *)malloc(8192);
+                        exp_len = 0;
+                        bi = 0;
+                        while (macros[mi]->body[bi] != '\0') {
+                            /* check for # (stringify) */
+                            if (macros[mi]->body[bi] == '#' && macros[mi]->body[bi + 1] != '#') {
+                                bi++;
+                                while (macros[mi]->body[bi] == ' ') bi++;
+                                /* match param name */
+                                match = -1;
+                                for (pi = 0; pi < macros[mi]->param_count; pi++) {
+                                    {
+                                        int pnl;
+                                        pnl = 0;
+                                        while (macros[mi]->param_names[pi][pnl]) pnl++;
+                                        if (memcmp(macros[mi]->body + bi, macros[mi]->param_names[pi], pnl) == 0 &&
+                                            !is_alnum(macros[mi]->body[bi + pnl]) && macros[mi]->body[bi + pnl] != '_') {
+                                            match = pi;
+                                            bi += pnl;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (match >= 0 && match < nargs) {
+                                    expanded[exp_len] = '"';
+                                    exp_len++;
+                                    {
+                                        int si;
+                                        for (si = 0; args[match][si]; si++) {
+                                            if (args[match][si] == '"' || args[match][si] == '\\') {
+                                                expanded[exp_len] = '\\';
+                                                exp_len++;
+                                            }
+                                            expanded[exp_len] = args[match][si];
+                                            exp_len++;
+                                        }
+                                    }
+                                    expanded[exp_len] = '"';
+                                    exp_len++;
+                                } else {
+                                    expanded[exp_len] = '#';
+                                    exp_len++;
+                                }
+                            }
+                            /* check for ## (token paste) */
+                            else if (macros[mi]->body[bi] == '#' && macros[mi]->body[bi + 1] == '#') {
+                                /* remove trailing whitespace from expanded */
+                                while (exp_len > 0 && (expanded[exp_len - 1] == ' ' || expanded[exp_len - 1] == '\t')) exp_len--;
+                                bi += 2;
+                                /* skip leading whitespace after ## */
+                                while (macros[mi]->body[bi] == ' ' || macros[mi]->body[bi] == '\t') bi++;
+                            }
+                            /* check for param name */
+                            else if (is_alpha(macros[mi]->body[bi]) || macros[mi]->body[bi] == '_') {
+                                {
+                                    int ws;
+                                    ws = bi;
+                                    while (is_alnum(macros[mi]->body[bi]) || macros[mi]->body[bi] == '_') bi++;
+                                    match = -1;
+                                    for (pi = 0; pi < macros[mi]->param_count; pi++) {
+                                        {
+                                            int pnl;
+                                            pnl = 0;
+                                            while (macros[mi]->param_names[pi][pnl]) pnl++;
+                                            if (pnl == bi - ws && memcmp(macros[mi]->body + ws, macros[mi]->param_names[pi], pnl) == 0) {
+                                                match = pi;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (match >= 0 && match < nargs) {
+                                        /* substitute argument text */
+                                        ai = 0;
+                                        while (args[match][ai]) {
+                                            expanded[exp_len] = args[match][ai];
+                                            exp_len++;
+                                            ai++;
+                                        }
+                                    } else {
+                                        /* copy identifier as-is */
+                                        memcpy(expanded + exp_len, macros[mi]->body + ws, bi - ws);
+                                        exp_len += bi - ws;
+                                    }
+                                }
+                            } else {
+                                expanded[exp_len] = macros[mi]->body[bi];
+                                exp_len++;
+                                bi++;
+                            }
+                        }
+                        expanded[exp_len] = '\0';
+                        /* push current source onto include stack and lex from expanded text */
+                        macros[mi]->expanding = 1;
+                        include_push();
+                        inc_stack[inc_depth - 1]->macro_idx = mi;
+                        src = expanded;
+                        src_len = exp_len;
+                        lex_pos = 0;
+                        return next_token();
+                    }
+                }
+            } else if (mi >= 0 && !macros[mi]->is_func_macro) {
                 t->kind = TOK_INT_LIT;
                 t->int_val = macros[mi]->value;
             } else if (strcmp(t->text, "__LINE__") == 0) {
