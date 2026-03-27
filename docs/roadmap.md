@@ -11,12 +11,13 @@
 6. [x] More data types
 7. [ ] Full C89 compatibility
 8. [x] libc available in browser demo
-9. [ ] Remove WAT output from demo
-10. [ ] pull src and test directories out of compilers to project root
+9. [x] Remove WAT output from demo
+10. [x] pull src and test directories out of compilers to project root
     * The demo should be an accessory to the main compiler, not an equivalent level
 11. [ ] debugger / live code visualizer
 12. [ ] use wasm f64 if not already
 13. [x] implement C features that would make the self-hosting compiler easier to implement itself, then iteratively do so
-14. [ ] break compiler up into components. maintain self-hosting requirement.
+14. [ ] break compiler up into multiple components instead of one massive file. maintain self-hosting requirement and use newly supported language features to simplify where possible.
 15. [ ] build out full compiler toolchain, i.e. source -> wat, and wat -> wasm, instead of separate source -> wat and source -> wasm / binary modes
 16. [ ] Add a linker, separate out the libc methods within the compiler to a real version of libc that's linked and included
+17. [ ] real random source form browser

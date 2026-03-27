@@ -113,6 +113,8 @@ var CompilerAPI = (function () {
         fd_seek: function () { return 8; },
         fd_prestat_get: function () { return 8; },
         fd_prestat_dir_name: function () { return 8; },
+        fd_fdstat_set_flags: function () { return 0; },
+        path_open: function () { return 44; /* ENOENT — no filesystem in browser */ },
         fd_fdstat_get: function (fd, fdstat_ptr) {
           var view = new DataView(state.memory.buffer);
           view.setUint8(fdstat_ptr, fd <= 2 ? 2 : 4);

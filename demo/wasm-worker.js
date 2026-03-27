@@ -77,6 +77,9 @@ function runWasm(wasmBytes) {
         return 0;
       },
 
+      fd_close: function () { return 0; },
+      path_open: function () { return 44; /* ENOENT — no filesystem */ },
+
       fd_read: function (fd, iovs, iovs_len, nread_ptr) {
         var view = new DataView(memory.buffer);
         var bytes = new Uint8Array(memory.buffer);
