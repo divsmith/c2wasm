@@ -672,6 +672,91 @@
       '    printf("  product: %d\\n", fold(mul, nums, 5));\n' +
       '\n' +
       '    return 0;\n' +
+      '}\n',
+
+    compound_assign:
+      '// Compound assignment operators: *=, /=, %=\n' +
+      'int main() {\n' +
+      '    int a;\n' +
+      '    int b;\n' +
+      '    int c;\n' +
+      '\n' +
+      '    a = 6;\n' +
+      '    a *= 7;\n' +
+      '    printf("6 *= 7  = %d\\n", a);\n' +
+      '\n' +
+      '    b = 100;\n' +
+      '    b /= 3;\n' +
+      '    printf("100 /= 3 = %d\\n", b);\n' +
+      '\n' +
+      '    c = 47;\n' +
+      '    c %%= 10;\n' +
+      '    printf("47 %%%%= 10 = %d\\n", c);\n' +
+      '\n' +
+      '    // Works with arrays too\n' +
+      '    {\n' +
+      '        int arr[3];\n' +
+      '        arr[0] = 2;\n' +
+      '        arr[1] = 100;\n' +
+      '        arr[2] = 17;\n' +
+      '        arr[0] *= 21;\n' +
+      '        arr[1] /= 4;\n' +
+      '        arr[2] %%= 5;\n' +
+      '        printf("arr: %d, %d, %d\\n", arr[0], arr[1], arr[2]);\n' +
+      '    }\n' +
+      '\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    string_concat:
+      '// Adjacent string literal concatenation\n' +
+      'int main() {\n' +
+      '    char *greeting;\n' +
+      '    char *multi;\n' +
+      '\n' +
+      '    greeting = "Hello" ", " "World!";\n' +
+      '    printf("%s\\n", greeting);\n' +
+      '\n' +
+      '    // Multi-line string concatenation\n' +
+      '    multi = "This is a "\n' +
+      '            "long string "\n' +
+      '            "split across lines.";\n' +
+      '    printf("%s\\n", multi);\n' +
+      '\n' +
+      '    // With escape sequences\n' +
+      '    printf("Bell: \\\\a = %d\\n", \'\\a\');\n' +
+      '    printf("Backspace: \\\\b = %d\\n", \'\\b\');\n' +
+      '    printf("Form feed: \\\\f = %d\\n", \'\\f\');\n' +
+      '    printf("Vtab: \\\\v = %d\\n", \'\\v\');\n' +
+      '    printf("Hex A: \\\\x41 = %c\\n", \'\\x41\');\n' +
+      '\n' +
+      '    return 0;\n' +
+      '}\n',
+
+    comma_operator:
+      '// Comma operator and for-loop idioms\n' +
+      'int main() {\n' +
+      '    int x;\n' +
+      '    int y;\n' +
+      '    int i;\n' +
+      '    int j;\n' +
+      '\n' +
+      '    // Comma evaluates left, discards, returns right\n' +
+      '    x = (1, 2, 42);\n' +
+      '    printf("(1, 2, 42) = %d\\n", x);\n' +
+      '\n' +
+      '    // Multiple variables in for-loop\n' +
+      '    printf("i, j:\\n");\n' +
+      '    for (i = 0, j = 10; i < 5; i++, j--) {\n' +
+      '        printf("  %d, %d\\n", i, j);\n' +
+      '    }\n' +
+      '\n' +
+      '    // Side effects in comma expression\n' +
+      '    x = 0;\n' +
+      '    y = (x = 10, x + 32);\n' +
+      '    printf("x=%d, y=%d\\n", x, y);\n' +
+      '\n' +
+      '    return 0;\n' +
       '}\n'
   };
 

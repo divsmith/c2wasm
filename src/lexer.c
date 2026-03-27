@@ -118,6 +118,13 @@ int is_xdigit(char c) {
     return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
+int hex_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return 0;
+}
+
 void include_push(void) {
     struct IncludeStack *frame;
     if (inc_depth >= MAX_INCLUDE_DEPTH) {
@@ -272,6 +279,9 @@ struct Token *next_token(void) {
     int ni;
     int dlen;
     char *__s;
+    int sc_pos;
+    int sc_line;
+    int sc_col;
 
     skip_ws();
     t = (struct Token *)malloc(sizeof(struct Token));
@@ -487,19 +497,40 @@ struct Token *next_token(void) {
             la();
             ch = lp();
             if (ch == 'n') {
-                ch = '\n';
+                ch = '\n'; la();
             } else if (ch == 'r') {
-                ch = '\r';
+                ch = '\r'; la();
             } else if (ch == 't') {
-                ch = '\t';
-            } else if (ch == '0') {
-                ch = '\0';
+                ch = '\t'; la();
             } else if (ch == '\\') {
-                ch = '\\';
+                ch = '\\'; la();
             } else if (ch == '\'') {
-                ch = '\'';
+                ch = '\''; la();
+            } else if (ch == '"') {
+                ch = '"'; la();
+            } else if (ch == 'a') {
+                ch = 7; la();
+            } else if (ch == 'b') {
+                ch = 8; la();
+            } else if (ch == 'f') {
+                ch = 12; la();
+            } else if (ch == 'v') {
+                ch = 11; la();
+            } else if (ch == '?') {
+                ch = 63; la();
+            } else if (ch == 'x') {
+                la(); /* consume 'x' */
+                ch = 0;
+                if (is_xdigit(lp())) { ch = hex_val(la()); }
+                if (is_xdigit(lp())) { ch = ch * 16 + hex_val(la()); }
+            } else if (ch >= '0' && ch <= '7') {
+                ch = ch - '0';
+                la();
+                if (lp() >= '0' && lp() <= '7') { ch = ch * 8 + (la() - '0'); }
+                if (lp() >= '0' && lp() <= '7') { ch = ch * 8 + (la() - '0'); }
+            } else {
+                la();
             }
-            la();
         } else {
             ch = la();
         }
@@ -516,43 +547,75 @@ struct Token *next_token(void) {
     /* string literal */
     if (c == '"') {
         la();
-        __s = (char *)malloc(512);
+        __s = (char *)malloc(2048);
         t->text = __s;
         i = 0;
-        while (lex_pos < src_len && lp() != '"') {
-            if (lp() == '\\') {
-                la();
-                ch = lp();
-                if (ch == 'n') {
-                    __s[i] = '\n';
-                    i++;
-                } else if (ch == 'r') {
-                    __s[i] = '\r';
-                    i++;
-                } else if (ch == 't') {
-                    __s[i] = '\t';
-                    i++;
-                } else if (ch == '0') {
-                    __s[i] = '\0';
-                    i++;
-                } else if (ch == '\\') {
-                    __s[i] = '\\';
-                    i++;
-                } else if (ch == '"') {
-                    __s[i] = '"';
-                    i++;
+        for (;;) {
+            /* parse one string segment */
+            while (lex_pos < src_len && lp() != '"') {
+                if (lp() == '\\') {
+                    la();
+                    ch = lp();
+                    if (ch == 'n') {
+                        __s[i] = '\n'; i++; la();
+                    } else if (ch == 'r') {
+                        __s[i] = '\r'; i++; la();
+                    } else if (ch == 't') {
+                        __s[i] = '\t'; i++; la();
+                    } else if (ch == '\\') {
+                        __s[i] = '\\'; i++; la();
+                    } else if (ch == '"') {
+                        __s[i] = '"'; i++; la();
+                    } else if (ch == '\'') {
+                        __s[i] = '\''; i++; la();
+                    } else if (ch == 'a') {
+                        __s[i] = 7; i++; la();
+                    } else if (ch == 'b') {
+                        __s[i] = 8; i++; la();
+                    } else if (ch == 'f') {
+                        __s[i] = 12; i++; la();
+                    } else if (ch == 'v') {
+                        __s[i] = 11; i++; la();
+                    } else if (ch == '?') {
+                        __s[i] = 63; i++; la();
+                    } else if (ch == 'x') {
+                        la(); /* consume 'x' */
+                        ch = 0;
+                        if (is_xdigit(lp())) { ch = hex_val(la()); }
+                        if (is_xdigit(lp())) { ch = ch * 16 + hex_val(la()); }
+                        __s[i] = ch; i++;
+                    } else if (ch >= '0' && ch <= '7') {
+                        ch = ch - '0';
+                        la();
+                        if (lp() >= '0' && lp() <= '7') { ch = ch * 8 + (la() - '0'); }
+                        if (lp() >= '0' && lp() <= '7') { ch = ch * 8 + (la() - '0'); }
+                        __s[i] = ch; i++;
+                    } else {
+                        __s[i] = lp(); i++; la();
+                    }
                 } else {
-                    __s[i] = lp();
-                    i++;
+                    __s[i] = la(); i++;
                 }
-                la();
-            } else {
-                __s[i] = la();
-                i++;
+                if (i >= 2046) break;
             }
-            if (i >= 511) break;
+            if (lp() == '"') la();
+            /* check for adjacent string literal concatenation */
+            sc_pos = lex_pos;
+            sc_line = lex_line;
+            sc_col = lex_col;
+            while (lex_pos < src_len && (lp() == ' ' || lp() == '\t' || lp() == '\n' || lp() == '\r')) {
+                la();
+            }
+            if (lex_pos < src_len && lp() == '"') {
+                la(); /* consume opening quote of next segment */
+            } else {
+                /* not a string — restore position */
+                lex_pos = sc_pos;
+                lex_line = sc_line;
+                lex_col = sc_col;
+                break;
+            }
         }
-        if (lp() == '"') la();
         __s[i] = '\0';
         t->int_val = i;
         t->kind = TOK_STR_LIT;
@@ -603,11 +666,26 @@ struct Token *next_token(void) {
             t->kind = TOK_MINUS;
         }
     } else if (c == '*') {
-        t->kind = TOK_STAR;
+        if (lp() == '=') {
+            la();
+            t->kind = TOK_STAR_EQ;
+        } else {
+            t->kind = TOK_STAR;
+        }
     } else if (c == '/') {
-        t->kind = TOK_SLASH;
+        if (lp() == '=') {
+            la();
+            t->kind = TOK_SLASH_EQ;
+        } else {
+            t->kind = TOK_SLASH;
+        }
     } else if (c == '%') {
-        t->kind = TOK_PERCENT;
+        if (lp() == '=') {
+            la();
+            t->kind = TOK_PERCENT_EQ;
+        } else {
+            t->kind = TOK_PERCENT;
+        }
     } else if (c == '&') {
         if (lp() == '&') {
             la();

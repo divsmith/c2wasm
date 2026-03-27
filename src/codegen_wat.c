@@ -156,6 +156,46 @@ void gen_expr_assign(struct Node *n) {
                 out("i32.sub\n");
                 last_expr_is_float = 0;
             }
+        } else if (n->ival == TOK_STAR_EQ || n->ival == TOK_SLASH_EQ ||
+                   n->ival == TOK_PERCENT_EQ) {
+            emit_indent();
+            if (is_global) {
+                out("global.get $"); out(name); out("\n");
+            } else {
+                out("local.get $"); out(name); out("\n");
+            }
+            gen_expr(n->c1);
+            if (tgt_float && n->ival != TOK_PERCENT_EQ) {
+                if (!last_expr_is_float) {
+                    emit_indent();
+                    out("f64.convert_i32_s\n");
+                }
+                emit_indent();
+                if (n->ival == TOK_STAR_EQ) {
+                    out("f64.mul\n");
+                } else {
+                    out("f64.div\n");
+                }
+                last_expr_is_float = 2;
+            } else {
+                emit_indent();
+                if (n->ival == TOK_STAR_EQ) {
+                    out("i32.mul\n");
+                } else if (n->ival == TOK_SLASH_EQ) {
+                    if (expr_is_unsigned(tgt)) {
+                        out("i32.div_u\n");
+                    } else {
+                        out("i32.div_s\n");
+                    }
+                } else {
+                    if (expr_is_unsigned(tgt)) {
+                        out("i32.rem_u\n");
+                    } else {
+                        out("i32.rem_s\n");
+                    }
+                }
+                last_expr_is_float = 0;
+            }
         } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                    n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                    n->ival == TOK_RSHIFT_EQ) {
@@ -213,6 +253,20 @@ void gen_expr_assign(struct Node *n) {
             gen_expr(n->c1);
             emit_indent();
             out("i32.sub\n");
+        } else if (n->ival == TOK_STAR_EQ || n->ival == TOK_SLASH_EQ ||
+                   n->ival == TOK_PERCENT_EQ) {
+            gen_expr(tgt->c0);
+            emit_indent();
+            emit_load(esz);
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_STAR_EQ) {
+                out("i32.mul\n");
+            } else if (n->ival == TOK_SLASH_EQ) {
+                out("i32.div_s\n");
+            } else {
+                out("i32.rem_s\n");
+            }
         } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                    n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                    n->ival == TOK_RSHIFT_EQ) {
@@ -274,6 +328,26 @@ void gen_expr_assign(struct Node *n) {
             gen_expr(n->c1);
             emit_indent();
             out("i32.sub\n");
+        } else if (n->ival == TOK_STAR_EQ || n->ival == TOK_SLASH_EQ ||
+                   n->ival == TOK_PERCENT_EQ) {
+            gen_expr(tgt->c0);
+            if (off > 0) {
+                emit_indent();
+                out("i32.const "); out_d(off); out("\n");
+                emit_indent();
+                out("i32.add\n");
+            }
+            emit_indent();
+            out("i32.load\n");
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_STAR_EQ) {
+                out("i32.mul\n");
+            } else if (n->ival == TOK_SLASH_EQ) {
+                out("i32.div_s\n");
+            } else {
+                out("i32.rem_s\n");
+            }
         } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                    n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                    n->ival == TOK_RSHIFT_EQ) {
@@ -341,6 +415,29 @@ void gen_expr_assign(struct Node *n) {
             gen_expr(n->c1);
             emit_indent();
             out("i32.sub\n");
+        } else if (n->ival == TOK_STAR_EQ || n->ival == TOK_SLASH_EQ ||
+                   n->ival == TOK_PERCENT_EQ) {
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (esz > 1) {
+                emit_indent();
+                out("i32.const "); out_d(esz); out("\n");
+                emit_indent();
+                out("i32.mul\n");
+            }
+            emit_indent();
+            out("i32.add\n");
+            emit_indent();
+            emit_load(esz);
+            gen_expr(n->c1);
+            emit_indent();
+            if (n->ival == TOK_STAR_EQ) {
+                out("i32.mul\n");
+            } else if (n->ival == TOK_SLASH_EQ) {
+                out("i32.div_s\n");
+            } else {
+                out("i32.rem_s\n");
+            }
         } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||
                    n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||
                    n->ival == TOK_RSHIFT_EQ) {
@@ -446,6 +543,14 @@ void gen_expr_binary(struct Node *n) {
     int left_float;
     int right_float;
     int op_float;
+    /* comma operator: evaluate left, discard, evaluate right */
+    if (n->ival == TOK_COMMA) {
+        gen_expr(n->c0);
+        emit_indent();
+        out("drop\n");
+        gen_expr(n->c1);
+        return;
+    }
     gen_expr(n->c0);
     left_float = last_expr_is_float;
     gen_expr(n->c1);

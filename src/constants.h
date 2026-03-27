@@ -77,7 +77,10 @@ enum {
     TOK_LONG = 70,
     TOK_FLOAT_LIT = 71,
     TOK_FLOAT = 72,
-    TOK_DOUBLE = 73
+    TOK_DOUBLE = 73,
+    TOK_STAR_EQ = 74,
+    TOK_SLASH_EQ = 75,
+    TOK_PERCENT_EQ = 76
 };
 
 /* Node kinds */

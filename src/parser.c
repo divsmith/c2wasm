@@ -60,9 +60,15 @@ int last_rbp;
 
 int infix_bp(int op) {
     switch (op) {
+    case TOK_COMMA:
+        last_rbp = 1;
+        return 0;
     case TOK_EQ:
     case TOK_PLUS_EQ:
     case TOK_MINUS_EQ:
+    case TOK_STAR_EQ:
+    case TOK_SLASH_EQ:
+    case TOK_PERCENT_EQ:
     case TOK_PIPE_EQ:
     case TOK_AMP_EQ:
     case TOK_CARET_EQ:
@@ -257,10 +263,10 @@ struct Node *parse_atom(void) {
             args->count = 0;
             args->cap = 0;
             if (!at(TOK_RPAREN)) {
-                nlist_push(args, parse_expr());
+                nlist_push(args, parse_expr_bp(2));
                 while (at(TOK_COMMA)) {
                     advance_tok();
-                    nlist_push(args, parse_expr());
+                    nlist_push(args, parse_expr_bp(2));
                 }
             }
             expect(TOK_RPAREN, "expected ')' after arguments");
@@ -459,6 +465,7 @@ struct Node *parse_expr_bp(int min_bp) {
 
         /* assignment operators */
         if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ ||
+            op == TOK_STAR_EQ || op == TOK_SLASH_EQ || op == TOK_PERCENT_EQ ||
             op == TOK_PIPE_EQ || op == TOK_AMP_EQ || op == TOK_CARET_EQ ||
             op == TOK_LSHIFT_EQ || op == TOK_RSHIFT_EQ) {
             tgt = left;
@@ -699,7 +706,7 @@ struct Node *parse_var_decl(void) {
         init_elems->count = 0;
         init_elems->cap = 0;
         while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
-            nlist_push(init_elems, parse_expr());
+            nlist_push(init_elems, parse_expr_bp(2));
             if (at(TOK_COMMA)) advance_tok();
         }
         expect(TOK_RBRACE, "expected '}'");
