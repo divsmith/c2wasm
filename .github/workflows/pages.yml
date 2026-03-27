@@ -32,7 +32,7 @@ jobs:
           sudo mv "wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux" /opt/wasi-sdk
 
       - name: Build compiler.wasm and assembler.wasm
-        run: make wasm
+        run: make
 
       - name: Bundle compiler source for demo
         run: |
