@@ -30,6 +30,7 @@ struct FuncSig {
     int ret_is_float;
     int nparam;
     int *param_is_float;
+    int is_variadic;
 };
 
 struct FnPtrVar {
@@ -65,6 +66,7 @@ void init_func_sigs(void);
 int func_is_void(char *name);
 int func_ret_is_float(char *name);
 int func_param_is_float(char *name, int idx);
+int func_is_variadic(char *name);
 void init_fnptr_registry(void);
 void register_fnptr_var(char *name, int nparams, int is_void);
 struct FnPtrVar *find_fnptr_var(char *name);

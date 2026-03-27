@@ -61,6 +61,7 @@ c2wasm supports a carefully chosen subset of C89/C90:
 | Preprocessor | `#define`, `#include`, `#ifdef`/`#ifndef`/`#if`/`#elif`/`#else`/`#endif`, `#undef`, `#error`, `#pragma`, `defined()`, `__LINE__`, `__FILE__`, `__STDC__` |
 | Initializers | Local/global array initializers, global `char *arr[] = {"..."}` string arrays |
 | Storage class | `static` (function-scope with persistent state), `extern`, `register`/`auto`/`volatile` (accepted, ignored) |
+| Variadic | `va_list`, `va_start`, `va_arg`, `va_end`, `...` in function params |
 
 Integer types map to `i32`. Float types use `f64` in WASM (WAT mode). Unsigned types use appropriate unsigned WASM opcodes.
 

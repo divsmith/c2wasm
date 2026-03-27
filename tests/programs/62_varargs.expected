@@ -1,0 +1,6 @@
+sum(4, 10,20,30,40) = 100
+sum(1, 99) = 99
+sum(0) = 0
+max_of(5, 3,7,2,9,1) = 9
+count_positives = 3
+Hello Alice, age 30

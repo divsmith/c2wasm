@@ -5,6 +5,7 @@ int uses_realloc;
 int uses_sprintf;
 int uses_qsort;
 int uses_bsearch;
+int uses_varargs;
 
 void emit_indent(void) {
     int i;
@@ -643,6 +644,28 @@ void gen_expr_call(struct Node *n) {
     int sid;
     int i;
 
+    /* va_start(ap, last) — set ap = __va_ptr */
+    if (strcmp(n->sval, "va_start") == 0) {
+        if (n->ival2 < 1 || n->list[0]->kind != ND_IDENT)
+            error(n->nline, n->ncol, "va_start requires identifier");
+        emit_indent();
+        out("local.get $__va_ptr\n");
+        emit_indent();
+        out("local.set $"); out(n->list[0]->sval); out("\n");
+        emit_indent();
+        out("i32.const 0\n");
+        last_expr_is_float = 0;
+        return;
+    }
+
+    /* va_end(ap) — no-op */
+    if (strcmp(n->sval, "va_end") == 0) {
+        emit_indent();
+        out("i32.const 0\n");
+        last_expr_is_float = 0;
+        return;
+    }
+
     if (strcmp(n->sval, "printf") == 0) {
         if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {
             error(n->nline, n->ncol, "printf requires string literal format");
@@ -1053,6 +1076,63 @@ void gen_expr_call(struct Node *n) {
         out("call $__close_file\n");
         emit_indent();
         out("i32.const 0\n");
+    } else if (func_is_variadic(n->sval)) {
+        /* variadic call: push fixed args, pack va args, push va_area */
+        int fixed;
+        int va_off;
+        fixed = 0;
+        {
+            int vi;
+            for (vi = 0; vi < nfunc_sigs; vi++) {
+                if (strcmp(func_sigs[vi]->name, n->sval) == 0) {
+                    fixed = func_sigs[vi]->nparam;
+                    break;
+                }
+            }
+        }
+        /* push fixed (named) args */
+        for (i = 0; i < fixed && i < n->ival2; i++) {
+            gen_expr(n->list[i]);
+            if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
+                emit_indent();
+                out("f64.convert_i32_s\n");
+            } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
+                emit_indent();
+                out("i32.trunc_f64_s\n");
+            }
+        }
+        /* pack variadic args into __va_area */
+        va_off = 0;
+        for (i = fixed; i < n->ival2; i++) {
+            emit_indent();
+            out("global.get $__va_area\n");
+            if (va_off > 0) {
+                emit_indent();
+                out("i32.const "); out_d(va_off); out("\n");
+                emit_indent();
+                out("i32.add\n");
+            }
+            gen_expr(n->list[i]);
+            if (last_expr_is_float) {
+                emit_indent();
+                out("i32.trunc_f64_s\n");
+            }
+            emit_indent();
+            out("i32.store\n");
+            va_off = va_off + 4;
+        }
+        /* push va_area pointer as hidden last param */
+        emit_indent();
+        out("global.get $__va_area\n");
+        emit_indent();
+        out("call $"); out(n->sval); out("\n");
+        if (func_is_void(n->sval)) {
+            emit_indent();
+            out("i32.const 0\n");
+            last_expr_is_float = 0;
+        } else {
+            last_expr_is_float = func_ret_is_float(n->sval);
+        }
     } else {
         for (i = 0; i < n->ival2; i++) {
             gen_expr(n->list[i]);
@@ -1074,6 +1154,33 @@ void gen_expr_call(struct Node *n) {
         } else {
             last_expr_is_float = func_ret_is_float(n->sval);
         }
+    }
+}
+
+void gen_expr_va_arg(struct Node *n) {
+    /* va_arg(ap, type): load from ap address, advance ap by sizeof(type) */
+    char *ap_name;
+    ap_name = n->c0->sval;
+    /* stack: push current ap value (the load address) */
+    emit_indent();
+    out("local.get $"); out(ap_name); out("\n");
+    /* advance ap: ap = ap + sizeof(type) */
+    emit_indent();
+    out("local.get $"); out(ap_name); out("\n");
+    emit_indent();
+    out("i32.const "); out_d(n->ival); out("\n");
+    emit_indent();
+    out("i32.add\n");
+    emit_indent();
+    out("local.set $"); out(ap_name); out("\n");
+    /* load from the original address (still on stack) */
+    emit_indent();
+    if (n->ival3) {
+        out("f64.load\n");
+        last_expr_is_float = 1;
+    } else {
+        out("i32.load\n");
+        last_expr_is_float = 0;
     }
 }
 
@@ -1742,6 +1849,7 @@ void init_gen_expr_tbl(void) {
     gen_expr_tbl[ND_POST_INC] = gen_expr_post_inc_dec;
     gen_expr_tbl[ND_POST_DEC] = gen_expr_post_inc_dec;
     gen_expr_tbl[ND_TERNARY] = gen_expr_ternary;
+    gen_expr_tbl[ND_VA_ARG] = gen_expr_va_arg;
 }
 
 void init_gen_stmt_tbl(void) {
@@ -1961,6 +2069,10 @@ void gen_func(struct Node *n) {
     for (i = 0; i < n->ival2; i++) {
         add_local(n->list[i]->sval, n->list[i]->ival2, n->list[i]->ival3 & 0xF, n->list[i]->ival3 >> 4);
     }
+    /* hidden va_ptr param for variadic functions */
+    if (func_is_variadic(n->sval)) {
+        add_local("__va_ptr", 4, 0, 0);
+    }
     nparam_locals = nlocals;
     collect_locals(n->c0);
 
@@ -1971,6 +2083,9 @@ void gen_func(struct Node *n) {
         } else {
             out(" (param $"); out(n->list[i]->sval); out(" i32)");
         }
+    }
+    if (func_is_variadic(n->sval)) {
+        out(" (param $__va_ptr i32)");
     }
     if (n->ival == 1) {
         /* void */
@@ -2069,6 +2184,7 @@ void gen_module(struct Node *prog) {
     uses_sprintf = 0;
     uses_qsort = 0;
     uses_bsearch = 0;
+    uses_varargs = 0;
 
     emit_indent();
     out("(module\n");
@@ -2144,6 +2260,13 @@ void gen_module(struct Node *prog) {
     }
 
     /* static data section */
+    /* check if any variadic functions exist; reserve va_area if so */
+    {
+        int vi;
+        for (vi = 0; vi < nfunc_sigs; vi++) {
+            if (func_sigs[vi]->is_variadic) { uses_varargs = 1; break; }
+        }
+    }
     for (i = 0; i < nstrings; i++) {
         out("  (data (i32.const "); out_d(str_table[i]->offset); out(") \"");
         emit_wat_string(str_table[i]->data, str_table[i]->len);
@@ -2152,6 +2275,13 @@ void gen_module(struct Node *prog) {
     if (nstrings > 0) {
         emit_indent();
         out("\n");
+    }
+
+    /* varargs area: reserve 4096 bytes between data and heap if needed */
+    if (uses_varargs) {
+        emit_indent();
+        out("(global $__va_area (mut i32) (i32.const "); out_d(data_ptr); out("))\n");
+        data_ptr = data_ptr + 4096;
     }
 
     /* heap pointer */

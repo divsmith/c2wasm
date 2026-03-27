@@ -1285,7 +1285,13 @@ struct Token *next_token(void) {
     } else if (c == ',') {
         t->kind = TOK_COMMA;
     } else if (c == '.') {
-        t->kind = TOK_DOT;
+        if (lp() == '.' && src[lex_pos + 1] == '.') {
+            la();
+            la();
+            t->kind = TOK_ELLIPSIS;
+        } else {
+            t->kind = TOK_DOT;
+        }
     } else if (c == '+') {
         if (lp() == '+') {
             la();

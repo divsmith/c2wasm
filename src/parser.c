@@ -45,6 +45,7 @@ struct Node *parse_expr(void);
 struct Node *parse_expr_bp(int min_bp);
 struct Node *parse_stmt(void);
 struct Node *parse_block(void);
+int parse_type(void);
 
 /* Precedence climbing helpers */
 int prefix_bp(int op) {
@@ -263,6 +264,24 @@ struct Node *parse_atom(void) {
             } else {
                 c = node_new(ND_CALL, n->nline, n->ncol);
                 c->sval = n->sval;
+            }
+            /* special case: va_arg(ap, type) */
+            if (strcmp(n->sval, "va_arg") == 0) {
+                struct Node *va_ap;
+                int va_float;
+                c->kind = ND_VA_ARG;
+                va_ap = parse_expr_bp(2);
+                expect(TOK_COMMA, "expected ',' in va_arg");
+                parse_type();
+                va_float = last_type_is_float;
+                while (at(TOK_STAR)) { va_float = 0; advance_tok(); }
+                expect(TOK_RPAREN, "expected ')' after va_arg");
+                c->c0 = va_ap;
+                c->ival = va_float ? 8 : 4;
+                c->ival3 = va_float;
+                c->ival2 = 0;
+                c->list = (struct Node **)0;
+                return c;
             }
             args = (struct NList *)malloc(sizeof(struct NList));
             args->items = (struct Node **)0;
@@ -1243,6 +1262,7 @@ struct Node *parse_func(void) {
         func_sigs[nfunc_sigs]->ret_is_float = ret_float;
         func_sigs[nfunc_sigs]->nparam = 0;
         func_sigs[nfunc_sigs]->param_is_float = (int *)malloc(MAX_LOCALS * sizeof(int));
+        func_sigs[nfunc_sigs]->is_variadic = 0;
         nfunc_sigs++;
     }
     advance_tok();
@@ -1276,6 +1296,7 @@ struct Node *parse_func(void) {
                 expect(TOK_RPAREN, "expected ')' in fnptr param");
                 expect(TOK_LPAREN, "expected '(' for fnptr param types");
                 while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+                    if (at(TOK_ELLIPSIS)) { advance_tok(); break; }
                     while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
                     if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np++; } }
                     else {
@@ -1312,6 +1333,12 @@ struct Node *parse_func(void) {
             }
             while (at(TOK_COMMA)) {
                 advance_tok();
+                /* variadic: ... at end of parameter list */
+                if (at(TOK_ELLIPSIS)) {
+                    if (sig_idx >= 0) func_sigs[sig_idx]->is_variadic = 1;
+                    advance_tok();
+                    break;
+                }
                 pty = parse_type();
                 while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
                 /* function pointer parameter in subsequent position */
@@ -1331,6 +1358,7 @@ struct Node *parse_func(void) {
                     expect(TOK_RPAREN, "expected ')' in fnptr param");
                     expect(TOK_LPAREN, "expected '(' for fnptr param types");
                     while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
+                        if (at(TOK_ELLIPSIS)) { advance_tok(); break; }
                         while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
                         if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np2++; } }
                         else {

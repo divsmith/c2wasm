@@ -92,6 +92,14 @@ int func_param_is_float(char *name, int idx) {
     return 0;
 }
 
+int func_is_variadic(char *name) {
+    int i;
+    for (i = 0; i < nfunc_sigs; i++) {
+        if (strcmp(func_sigs[i]->name, name) == 0) return func_sigs[i]->is_variadic;
+    }
+    return 0;
+}
+
 /* ================================================================
  * Function Pointer Registry
  * ================================================================ */
@@ -188,6 +196,15 @@ void init_type_aliases(void) {
     ntype_aliases = 0;
     last_type_is_ptr = 0;
     last_type_is_float = 0;
+    /* register va_list as built-in alias for int */
+    type_aliases[0] = (struct TypeAlias *)malloc(sizeof(struct TypeAlias));
+    type_aliases[0]->alias = strdupn("va_list", 7);
+    type_aliases[0]->resolved_kind = 0;
+    type_aliases[0]->is_ptr = 0;
+    type_aliases[0]->is_fnptr = 0;
+    type_aliases[0]->fnptr_nparams = 0;
+    type_aliases[0]->fnptr_is_void = 0;
+    ntype_aliases = 1;
 }
 
 int find_type_alias(char *name) {

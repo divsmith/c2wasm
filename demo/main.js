@@ -1005,6 +1005,43 @@
       '\n' +
       '    free(arr);\n' +
       '    return 0;\n' +
+      '}\n',
+
+    varargs:
+      '// Variadic functions: va_list, va_start, va_arg, va_end\n' +
+      '\n' +
+      'int sum(int n, ...) {\n' +
+      '    va_list ap;\n' +
+      '    int total;\n' +
+      '    int i;\n' +
+      '    total = 0;\n' +
+      '    va_start(ap, n);\n' +
+      '    for (i = 0; i < n; i++)\n' +
+      '        total = total + va_arg(ap, int);\n' +
+      '    va_end(ap);\n' +
+      '    return total;\n' +
+      '}\n' +
+      '\n' +
+      'int max_of(int n, ...) {\n' +
+      '    va_list ap;\n' +
+      '    int best;\n' +
+      '    int val;\n' +
+      '    int i;\n' +
+      '    va_start(ap, n);\n' +
+      '    best = va_arg(ap, int);\n' +
+      '    for (i = 1; i < n; i++) {\n' +
+      '        val = va_arg(ap, int);\n' +
+      '        if (val > best) best = val;\n' +
+      '    }\n' +
+      '    va_end(ap);\n' +
+      '    return best;\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    printf("sum(3, 10, 20, 30) = %d\\n", sum(3, 10, 20, 30));\n' +
+      '    printf("sum(5, 1,2,3,4,5) = %d\\n", sum(5, 1, 2, 3, 4, 5));\n' +
+      '    printf("max of (3,7,2,9,1) = %d\\n", max_of(5, 3, 7, 2, 9, 1));\n' +
+      '    return 0;\n' +
       '}\n'
   };
 
