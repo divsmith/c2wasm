@@ -9,7 +9,7 @@
 | Phase 3: Output Abstraction | ✅ Complete | `out()`/`out_d()`/`out_c()`/`out_x()` replace 953 printf calls |
 | Phase 4: WAT Assembler | ✅ Complete | Two-pass WAT→WASM assembler (~1,860 lines), all 50 tests pass in binary mode |
 | Phase 5: Remove Binary Codegen | ✅ Complete | Deleted codegen_bin.c (3,458 lines), self-compiled WAT shrunk 37% |
-| Phase 6: Simplification | ⬜ Not started | Optional polish: switch statements, ternary cleanup |
+| Phase 6: Simplification | ✅ Complete | switch in gen_expr_unary/binary, emit_load/emit_store helpers, ternary cleanup; WAT -773 lines |
 | Phase 7: Documentation & CI | ✅ Complete | README.md updated with new architecture and project structure |
 
 ## Problem
