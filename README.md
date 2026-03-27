@@ -148,11 +148,13 @@ A clean diff proves that the compiler, when run inside WebAssembly, produces byt
 
 There are **three binaries** in this project:
 
-| Binary | What it is | How to build |
-|--------|-----------|-------------|
-| `build/c2wasm` | Native compiler — WAT output by default, binary with `-b` | `make` |
-| `build/c2wasm-asm` | Standalone WAT → WASM assembler | `make build/c2wasm-asm` |
-| `demo/compiler.wasm` | Browser compiler — same as native, compiled to WASM | `WASI_SDK=... make wasm` |
+| Binary | What it is |
+|--------|-----------|
+| `build/c2wasm` | Native compiler — WAT output by default, binary with `-b` |
+| `build/c2wasm-asm` | Standalone WAT → WASM assembler |
+| `demo/compiler.wasm` | Browser compiler — same as native, compiled to WASM |
+
+All three are built by a single `make` (WASM requires wasi-sdk).
 
 `demo/compiler.wasm` is gitignored — a fresh clone won't have it. You only need to rebuild it if you're working on the demo or changed the compiler and want to update the deployed binary.
 
@@ -186,14 +188,14 @@ mv wasi-sdk-25.0-x86_64-linux ~/.local/wasi-sdk
 
 You can also use a different path — just pass it explicitly: `WASI_SDK=/your/path make wasm`.
 
-### Build the native compiler
+### Build everything
 
 ```bash
-make           # builds build/c2wasm from src/c2wasm.c
-make clean     # force a clean rebuild next time
+make        # builds native compiler, native assembler, and demo/compiler.wasm (if wasi-sdk found)
+make clean  # remove all build artifacts
 ```
 
-> `make` prints `Nothing to be done for 'all'` when `build/c2wasm` is already up to date — that's correct. Run `make clean && make` to force a full rebuild.
+> Without wasi-sdk, `make` still builds the native binaries and prints a notice. Run `make clean && make` to force a full rebuild.
 
 ### Run the tests
 
@@ -211,9 +213,7 @@ make bootstrap     # run the 3-stage bootstrap check alone
 Only needed when you change `src/c2wasm.c` and want to update the demo:
 
 ```bash
-make wasm
-# auto-detects wasi-sdk at /opt/wasi-sdk or ~/.local/wasi-sdk
-# produces demo/compiler.wasm (229 KB)
+make        # rebuilds compiler.wasm if source files changed (requires wasi-sdk)
 ```
 
 

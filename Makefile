@@ -15,9 +15,19 @@ ifeq ($(WASI_SDK),)
   endif
 endif
 
-.PHONY: all clean test test-binary test-pipeline bootstrap wasm wasm-wasi wasm-assembler serve
+# Include WASM targets in 'all' only when wasi-sdk is available
+ifneq ($(WASI_SDK),)
+  WASM_TARGETS = $(DEMO)/compiler.wasm $(DEMO)/assembler.wasm
+endif
 
-all: $(BIN)
+.PHONY: all clean test test-binary test-pipeline bootstrap bundle-source serve
+
+all: $(BIN) $(BIN)-asm $(WASM_TARGETS)
+ifeq ($(WASI_SDK),)
+	@echo ""
+	@echo "Note: wasi-sdk not found — skipping demo/compiler.wasm build."
+	@echo "      Install it to /opt/wasi-sdk or ~/.local/wasi-sdk to enable."
+endif
 
 $(BIN): $(SRC) $(FILE_IO) $(CLI_MAIN)
 	mkdir -p $(dir $(BIN))
@@ -28,6 +38,20 @@ $(BIN): $(SRC) $(FILE_IO) $(CLI_MAIN)
 $(BIN)-asm: src/assembler_main.c
 	mkdir -p $(dir $(BIN))
 	$(CC) $(CFLAGS) -Isrc -o $@ $<
+
+$(DEMO)/compiler.wasm: $(SRC) $(FILE_IO) $(CLI_MAIN)
+	mkdir -p $(DEMO)
+	$(WASI_SDK)/bin/clang -Dmain=_c2wasm_main -c $(SRC) -Isrc -O2 \
+		--sysroot=$(WASI_SDK)/share/wasi-sysroot -o build/_wasm_core.o
+	$(WASI_SDK)/bin/clang -o $@ \
+		build/_wasm_core.o $(FILE_IO) $(CLI_MAIN) -Isrc -O2 \
+		--sysroot=$(WASI_SDK)/share/wasi-sysroot
+	@rm -f build/_wasm_core.o
+
+$(DEMO)/assembler.wasm: src/assembler_main.c
+	mkdir -p $(DEMO)
+	$(WASI_SDK)/bin/clang src/assembler_main.c -Isrc -O2 -o $@ \
+		--sysroot=$(WASI_SDK)/share/wasi-sysroot
 
 test: $(BIN)
 	bash tests/run_tests.sh
@@ -49,32 +73,6 @@ test-pipeline: $(BIN) $(BIN)-asm
 bootstrap: $(BIN)
 	bash tools/bootstrap.sh
 
-# ── WASM build targets ──
-
-wasm-wasi: $(SRC) $(CLI_MAIN)
-	@if [ -z "$(WASI_SDK)" ]; then \
-		echo "Error: wasi-sdk not found. Install it and set WASI_SDK=/path/to/wasi-sdk, or place it at /opt/wasi-sdk or ~/.local/wasi-sdk"; \
-		exit 1; \
-	fi
-	mkdir -p $(DEMO)
-	$(WASI_SDK)/bin/clang -Dmain=_c2wasm_main -c $(SRC) -Isrc -O2 \
-		--sysroot=$(WASI_SDK)/share/wasi-sysroot -o build/_wasm_core.o
-	$(WASI_SDK)/bin/clang -o $(DEMO)/compiler.wasm \
-		build/_wasm_core.o $(FILE_IO) $(CLI_MAIN) -Isrc -O2 \
-		--sysroot=$(WASI_SDK)/share/wasi-sysroot
-	@rm -f build/_wasm_core.o
-
-wasm: wasm-wasi wasm-assembler
-
-wasm-assembler: src/assembler_main.c
-	@if [ -z "$(WASI_SDK)" ]; then \
-		echo "Error: wasi-sdk not found. Install it and set WASI_SDK=/path/to/wasi-sdk, or place it at /opt/wasi-sdk or ~/.local/wasi-sdk"; \
-		exit 1; \
-	fi
-	mkdir -p $(DEMO)
-	$(WASI_SDK)/bin/clang src/assembler_main.c -Isrc -O2 -o $(DEMO)/assembler.wasm \
-		--sysroot=$(WASI_SDK)/share/wasi-sysroot
-
 bundle-source:
 	node tools/bundle-source.js
 
@@ -82,4 +80,4 @@ serve:
 	cd $(DEMO) && python3 server.py
 
 clean:
-	rm -f $(BIN) $(BIN)-asm
+	rm -f $(BIN) $(BIN)-asm $(DEMO)/compiler.wasm $(DEMO)/assembler.wasm
