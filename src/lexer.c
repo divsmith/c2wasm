@@ -193,6 +193,11 @@ void init_kw_table(void) {
     kw_add("long", TOK_LONG);
     kw_add("float", TOK_FLOAT);
     kw_add("double", TOK_DOUBLE);
+    kw_add("register", TOK_REGISTER);
+    kw_add("auto", TOK_AUTO);
+    kw_add("volatile", TOK_VOLATILE);
+    kw_add("static", TOK_STATIC);
+    kw_add("extern", TOK_EXTERN);
 }
 
 int kw_lookup(char *s) {

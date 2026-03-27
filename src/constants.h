@@ -80,7 +80,12 @@ enum {
     TOK_DOUBLE = 73,
     TOK_STAR_EQ = 74,
     TOK_SLASH_EQ = 75,
-    TOK_PERCENT_EQ = 76
+    TOK_PERCENT_EQ = 76,
+    TOK_REGISTER = 77,
+    TOK_AUTO = 78,
+    TOK_VOLATILE = 79,
+    TOK_STATIC = 80,
+    TOK_EXTERN = 81
 };
 
 /* Node kinds */
@@ -135,5 +140,6 @@ enum {
 #define MAX_INCLUDE_DEPTH 32
 #define MAX_INCLUDES 64
 #define MAX_INCLUDE_SRC 262144
+#define MAX_STATIC_LOCALS 64
 
 #define ND_COUNT 31

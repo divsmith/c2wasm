@@ -68,8 +68,13 @@ void gen_expr_cast(struct Node *n) {
 
 void gen_expr_ident(struct Node *n) {
     int vf;
+    char *sg;
     vf = var_is_float(n->sval);
-    if (find_global(n->sval) >= 0) {
+    sg = find_static_global(n->sval);
+    if (sg != (char *)0) {
+        emit_indent();
+        out("global.get $"); out(sg); out("\n");
+    } else if (find_global(n->sval) >= 0) {
         emit_indent();
         out("global.get $"); out(n->sval); out("\n");
     } else {
@@ -92,6 +97,7 @@ void emit_bitwise_assign_op(int op) {
 void gen_expr_assign(struct Node *n) {
     struct Node *tgt;
     char *name;
+    char *rname;
     int is_global;
     int off;
     int esz;
@@ -99,8 +105,16 @@ void gen_expr_assign(struct Node *n) {
     tgt = n->c0;
     if (tgt->kind == ND_IDENT) {
         int tgt_float;
+        char *sg;
         name = tgt->sval;
-        is_global = (find_global(name) >= 0);
+        sg = find_static_global(name);
+        if (sg != (char *)0) {
+            rname = sg;
+            is_global = 1;
+        } else {
+            rname = name;
+            is_global = (find_global(name) >= 0);
+        }
         tgt_float = var_is_float(name);
         if (n->ival == TOK_EQ) {
             gen_expr(n->c1);
@@ -117,9 +131,9 @@ void gen_expr_assign(struct Node *n) {
         } else if (n->ival == TOK_PLUS_EQ) {
             emit_indent();
             if (is_global) {
-                out("global.get $"); out(name); out("\n");
+                out("global.get $"); out(rname); out("\n");
             } else {
-                out("local.get $"); out(name); out("\n");
+                out("local.get $"); out(rname); out("\n");
             }
             gen_expr(n->c1);
             if (tgt_float) {
@@ -138,9 +152,9 @@ void gen_expr_assign(struct Node *n) {
         } else if (n->ival == TOK_MINUS_EQ) {
             emit_indent();
             if (is_global) {
-                out("global.get $"); out(name); out("\n");
+                out("global.get $"); out(rname); out("\n");
             } else {
-                out("local.get $"); out(name); out("\n");
+                out("local.get $"); out(rname); out("\n");
             }
             gen_expr(n->c1);
             if (tgt_float) {
@@ -160,9 +174,9 @@ void gen_expr_assign(struct Node *n) {
                    n->ival == TOK_PERCENT_EQ) {
             emit_indent();
             if (is_global) {
-                out("global.get $"); out(name); out("\n");
+                out("global.get $"); out(rname); out("\n");
             } else {
-                out("local.get $"); out(name); out("\n");
+                out("local.get $"); out(rname); out("\n");
             }
             gen_expr(n->c1);
             if (tgt_float && n->ival != TOK_PERCENT_EQ) {
@@ -201,9 +215,9 @@ void gen_expr_assign(struct Node *n) {
                    n->ival == TOK_RSHIFT_EQ) {
             emit_indent();
             if (is_global) {
-                out("global.get $"); out(name); out("\n");
+                out("global.get $"); out(rname); out("\n");
             } else {
-                out("local.get $"); out(name); out("\n");
+                out("local.get $"); out(rname); out("\n");
             }
             gen_expr(n->c1);
             emit_indent();
@@ -217,7 +231,7 @@ void gen_expr_assign(struct Node *n) {
                 emit_indent();
                 out("local.get $__ftmp\n");
                 emit_indent();
-                out("global.set $"); out(name); out("\n");
+                out("global.set $"); out(rname); out("\n");
                 emit_indent();
                 out("local.get $__ftmp\n");
             } else {
@@ -226,13 +240,13 @@ void gen_expr_assign(struct Node *n) {
                 emit_indent();
                 out("local.get $__atmp\n");
                 emit_indent();
-                out("global.set $"); out(name); out("\n");
+                out("global.set $"); out(rname); out("\n");
                 emit_indent();
                 out("local.get $__atmp\n");
             }
         } else {
             emit_indent();
-            out("local.tee $"); out(name); out("\n");
+            out("local.tee $"); out(rname); out("\n");
         }
         last_expr_is_float = tgt_float;
     } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
@@ -1006,21 +1020,30 @@ void gen_expr_subscript(struct Node *n) {
 void gen_expr_post_inc_dec(struct Node *n) {
     struct Node *tgt2;
     char *pname;
+    char *prname;
     int pis_global;
     int pesz;
     int poff;
+    char *psg;
     tgt2 = n->c0;
     if (tgt2->kind == ND_IDENT) {
         pname = tgt2->sval;
-        pis_global = (find_global(pname) >= 0);
+        psg = find_static_global(pname);
+        if (psg != (char *)0) {
+            prname = psg;
+            pis_global = 1;
+        } else {
+            prname = pname;
+            pis_global = (find_global(pname) >= 0);
+        }
         if (pis_global) {
-            emit_indent(); out("global.get $"); out(pname); out("\n");
+            emit_indent(); out("global.get $"); out(prname); out("\n");
             emit_indent(); out("local.set $__atmp\n");
-            emit_indent(); out("global.get $"); out(pname); out("\n");
+            emit_indent(); out("global.get $"); out(prname); out("\n");
             emit_indent(); out("i32.const 1\n");
             emit_indent();
             out(n->kind == ND_POST_INC ? "i32.add\n" : "i32.sub\n");
-            emit_indent(); out("global.set $"); out(pname); out("\n");
+            emit_indent(); out("global.set $"); out(prname); out("\n");
             emit_indent(); out("local.get $__atmp\n");
         } else {
             emit_indent(); out("local.get $"); out(pname); out("\n");
@@ -1153,7 +1176,11 @@ void gen_stmt_return(struct Node *n) {
 void gen_stmt_var_decl(struct Node *n) {
     int bsz;
     int vd_is_flt;
-    vd_is_flt = n->ival3 >> 4;
+    /* static local: no runtime init needed (global handles it) */
+    if (n->ival3 & 0x100) return;
+    /* extern local: no codegen needed */
+    if (n->ival3 & 0x200) return;
+    vd_is_flt = (n->ival3 >> 4) & 0xF;
     if (n->ival > 0) {
         /* Array: allocate n->ival elements of elem_size bytes */
         bsz = n->ival * n->ival2;
@@ -1582,6 +1609,8 @@ void gen_func(struct Node *n) {
     if (n->c0 == (struct Node *)0) return;
 
     nlocals = 0;
+    nstatic_map = 0;
+    codegen_func_name = n->sval;
     label_cnt = 0;
     loop_sp = 0;
     ret_float = n->ival3; /* 0=int, 1=float, 2=double */

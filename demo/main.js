@@ -757,6 +757,39 @@
       '    printf("x=%d, y=%d\\n", x, y);\n' +
       '\n' +
       '    return 0;\n' +
+      '}\n',
+
+    storage_classes:
+      '// Storage classes: static, register, auto, volatile, extern\n' +
+      '#include "libc.h"\n' +
+      '\n' +
+      'int counter(void) {\n' +
+      '    static int n = 0;\n' +
+      '    n = n + 1;\n' +
+      '    return n;\n' +
+      '}\n' +
+      '\n' +
+      'int accumulator(int val) {\n' +
+      '    static int total = 0;\n' +
+      '    total = total + val;\n' +
+      '    return total;\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    register int i;\n' +
+      '\n' +
+      '    printf("Counter demo (static local variable):\\n");\n' +
+      '    for (i = 0; i < 5; i++) {\n' +
+      '        printf("  call %d: counter() = %d\\n", i + 1, counter());\n' +
+      '    }\n' +
+      '\n' +
+      '    printf("\\nAccumulator demo:\\n");\n' +
+      '    printf("  add 10: total = %d\\n", accumulator(10));\n' +
+      '    printf("  add 20: total = %d\\n", accumulator(20));\n' +
+      '    printf("  add 12: total = %d\\n", accumulator(12));\n' +
+      '    printf("  Final total: %d\\n", accumulator(0));\n' +
+      '\n' +
+      '    return 0;\n' +
       '}\n'
   };
 

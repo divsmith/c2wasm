@@ -17,12 +17,14 @@ int main(void) {
     init_type_aliases();
     init_local_tracking();
     init_loop_labels();
+    init_static_map();
     init_gen_expr_tbl();
     init_gen_stmt_tbl();
 
     read_source();
     lex_init();
     advance_tok();
+    parse_current_func = (char *)0;
 
     prog = parse_program();
     if (binary_mode) {

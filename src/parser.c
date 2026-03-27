@@ -3,6 +3,7 @@
  * ================================================================ */
 
 struct Token *cur;
+char *parse_current_func;
 
 void advance_tok(void) {
     cur = next_token();
@@ -19,6 +20,11 @@ void expect(int kind, char *msg) {
 
 int is_type_token(void) {
     if (at(TOK_CONST)) return 1;
+    if (at(TOK_REGISTER)) return 1;
+    if (at(TOK_AUTO)) return 1;
+    if (at(TOK_VOLATILE)) return 1;
+    if (at(TOK_STATIC)) return 1;
+    if (at(TOK_EXTERN)) return 1;
     if (at(TOK_INT)) return 1;
     if (at(TOK_CHAR_KW)) return 1;
     if (at(TOK_VOID)) return 1;
@@ -157,7 +163,7 @@ struct Node *parse_atom(void) {
         is_ptr = 0;
         if (at(TOK_LPAREN)) {
             advance_tok(); /* consume '(' */
-            while (at(TOK_CONST)) advance_tok(); /* skip const */
+            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok(); /* skip qualifiers */
             if (at(TOK_STRUCT)) {
                 advance_tok();
                 if (at(TOK_IDENT)) {
@@ -209,7 +215,7 @@ struct Node *parse_atom(void) {
                         n->sval = (char *)0;
                     }
                     n->ival2 = sz_esz;
-                    while (at(TOK_CONST)) advance_tok();
+                    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
                     while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }
                 }
             } else {
@@ -290,7 +296,7 @@ struct Node *parse_atom(void) {
             int cast_to_int;
             cast_to_float = 0;
             cast_to_int = 0;
-            while (at(TOK_CONST)) advance_tok();
+            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
             if (at(TOK_FLOAT)) {
                 cast_to_float = 1;
                 advance_tok();
@@ -520,6 +526,8 @@ struct Node *parse_var_decl(void) {
     int ei;
     int tai_vd;
     int had_mod_vd;
+    int is_static_var;
+    int is_extern_var;
 
     line = cur->line;
     col = cur->col;
@@ -532,6 +540,8 @@ struct Node *parse_var_decl(void) {
     arr_size = 0;
     tai_vd = -1;
     had_mod_vd = 0;
+    is_static_var = 0;
+    is_extern_var = 0;
     blk = (struct Node *)0;
     size_node = (struct Node *)0;
     idx_lit = (struct Node *)0;
@@ -542,7 +552,17 @@ struct Node *parse_var_decl(void) {
     blk_stmts = (struct NList *)0;
     init_elems = (struct NList *)0;
     ei = 0;
-    while (at(TOK_CONST)) advance_tok();
+    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
+    if (at(TOK_STATIC)) {
+        is_static_var = 1;
+        advance_tok();
+        while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
+    }
+    if (at(TOK_EXTERN)) {
+        is_extern_var = 1;
+        advance_tok();
+        while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
+    }
     if (at(TOK_STRUCT)) {
         advance_tok();
         advance_tok();
@@ -649,7 +669,7 @@ struct Node *parse_var_decl(void) {
         /* parse parameter type list */
         expect(TOK_LPAREN, "expected '(' for function pointer parameters");
         while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
-            while (at(TOK_CONST)) advance_tok();
+            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
             if (at(TOK_VOID)) {
                 advance_tok();
                 /* void with no stars = no params; void* = one param */
@@ -742,6 +762,33 @@ struct Node *parse_var_decl(void) {
     if (arr_size == 0 && at(TOK_EQ)) {
         advance_tok();
         n->c0 = parse_expr();
+    }
+    /* static local: register as global with mangled name */
+    if (is_static_var && parse_current_func != (char *)0) {
+        char *mname;
+        int sinit;
+        mname = mangle_static(parse_current_func, n->sval);
+        sinit = 0;
+        if (n->c0 != (struct Node *)0 && n->c0->kind == ND_INT_LIT) {
+            sinit = n->c0->ival;
+            n->c0 = (struct Node *)0;
+        }
+        if (nglobals >= MAX_GLOBALS) error(line, col, "too many globals");
+        globals_tbl[nglobals] = (struct GlobalVar *)malloc(sizeof(struct GlobalVar));
+        globals_tbl[nglobals]->name = mname;
+        globals_tbl[nglobals]->init_val = sinit;
+        globals_tbl[nglobals]->gv_elem_size = vd_elem_size;
+        globals_tbl[nglobals]->gv_is_unsigned = vd_is_unsigned;
+        globals_tbl[nglobals]->gv_is_float = vd_is_float;
+        globals_tbl[nglobals]->gv_float_init = (char *)0;
+        globals_tbl[nglobals]->gv_arr_len = 0;
+        globals_tbl[nglobals]->gv_arr_str_ids = (int *)0;
+        nglobals++;
+        n->ival3 = vd_is_unsigned | (vd_is_float << 4) | (1 << 8);
+    }
+    /* extern inside function body: mark for codegen to skip */
+    if (is_extern_var && parse_current_func != (char *)0) {
+        n->ival3 = n->ival3 | (1 << 9);
     }
     expect(TOK_SEMI, "expected ';' after declaration");
     return n;
@@ -1000,7 +1047,7 @@ int parse_type(void) {
     last_type_is_fnptr = 0;
     last_type_fnptr_nparams = 0;
     last_type_fnptr_is_void = 0;
-    while (at(TOK_CONST)) advance_tok();
+    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok();
     if (at(TOK_IDENT)) {
         taidx = find_type_alias(cur->text);
         if (taidx >= 0) {
@@ -1152,7 +1199,7 @@ struct Node *parse_func(void) {
                 expect(TOK_RPAREN, "expected ')' in fnptr param");
                 expect(TOK_LPAREN, "expected '(' for fnptr param types");
                 while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
-                    while (at(TOK_CONST)) advance_tok();
+                    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
                     if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np++; } }
                     else {
                         if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
@@ -1207,7 +1254,7 @@ struct Node *parse_func(void) {
                     expect(TOK_RPAREN, "expected ')' in fnptr param");
                     expect(TOK_LPAREN, "expected '(' for fnptr param types");
                     while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
-                        while (at(TOK_CONST)) advance_tok();
+                        while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
                         if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np2++; } }
                         else {
                             if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
@@ -1252,7 +1299,9 @@ struct Node *parse_func(void) {
         advance_tok();
         n->c0 = (struct Node *)0;
     } else {
+        parse_current_func = n->sval;
         n->c0 = parse_block();
+        parse_current_func = (char *)0;
     }
     return n;
 }
@@ -1312,7 +1361,7 @@ void parse_global_var(void) {
     ptr_depth = 0;
     tai_gv = -1;
     had_mod_gv = 0;
-    while (at(TOK_CONST)) advance_tok();
+    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok();
     if (at(TOK_STRUCT) || at(TOK_ENUM)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
@@ -1385,7 +1434,7 @@ void parse_global_var(void) {
         expect(TOK_RPAREN, "expected ')' after function pointer name");
         expect(TOK_LPAREN, "expected '(' for function pointer parameters");
         while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
-            while (at(TOK_CONST)) advance_tok();
+            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
             if (at(TOK_VOID)) {
                 advance_tok();
                 if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); gfp_nparams++; }
@@ -1581,7 +1630,7 @@ void parse_typedef(void) {
     struct TypeAlias *ta;
 
     advance_tok(); /* consume 'typedef' */
-    while (at(TOK_CONST)) advance_tok();
+    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok();
     rk = 0;
     is_ptr = 0;
     if (at(TOK_STRUCT)) {
@@ -1631,7 +1680,7 @@ void parse_typedef(void) {
         expect(TOK_RPAREN, "expected ')' in function pointer typedef");
         expect(TOK_LPAREN, "expected '(' for function pointer typedef parameters");
         while (!at(TOK_RPAREN) && !at(TOK_EOF)) {
-            while (at(TOK_CONST)) advance_tok();
+            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
             if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); td_nparams++; } }
             else {
                 if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
@@ -1741,6 +1790,8 @@ struct Node *parse_program(void) {
         sl = lex_line;
         sc = lex_col;
         st = cur;
+        /* skip storage class and type qualifiers for lookahead */
+        while (at(TOK_STATIC) || at(TOK_EXTERN) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
         if (at(TOK_STRUCT) || at(TOK_ENUM)) {
             advance_tok();
             if (at(TOK_IDENT)) advance_tok();
@@ -1758,6 +1809,8 @@ struct Node *parse_program(void) {
         lex_line = sl;
         lex_col = sc;
         cur = st;
+        /* consume storage class specifiers before parsing */
+        while (at(TOK_STATIC) || at(TOK_EXTERN) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
         if (is_func) {
             nlist_push(decls, parse_func());
         } else {

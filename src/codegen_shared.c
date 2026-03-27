@@ -5,9 +5,20 @@
 struct LocalVar **local_vars;
 int nlocals;
 
+/* --- Static local variable mapping --- */
+struct StaticLocalMap **static_map;
+int nstatic_map;
+char *codegen_func_name;
+
 void init_local_tracking(void) {
     local_vars = (struct LocalVar **)malloc(MAX_LOCALS * sizeof(void *));
     nlocals = 0;
+}
+
+void init_static_map(void) {
+    static_map = (struct StaticLocalMap **)malloc(MAX_STATIC_LOCALS * sizeof(void *));
+    nstatic_map = 0;
+    codegen_func_name = (char *)0;
 }
 
 int find_local(char *name) {
@@ -16,6 +27,14 @@ int find_local(char *name) {
         if (strcmp(local_vars[i]->name, name) == 0) return i;
     }
     return -1;
+}
+
+char *find_static_global(char *name) {
+    int i;
+    for (i = 0; i < nstatic_map; i++) {
+        if (strcmp(static_map[i]->local_name, name) == 0) return static_map[i]->global_name;
+    }
+    return (char *)0;
 }
 
 void add_local(char *name, int elem_size, int is_unsigned, int is_float) {
@@ -37,7 +56,21 @@ void collect_locals(struct Node *n) {
     if (n == (struct Node *)0) return;
     switch (n->kind) {
     case ND_VAR_DECL:
-        add_local(n->sval, n->ival2, n->ival3 & 0xF, n->ival3 >> 4);
+        if (n->ival3 & 0x100) {
+            /* static local: add to static_map, not to locals */
+            if (nstatic_map < MAX_STATIC_LOCALS) {
+                char *gn;
+                gn = mangle_static(codegen_func_name, n->sval);
+                static_map[nstatic_map] = (struct StaticLocalMap *)malloc(sizeof(struct StaticLocalMap));
+                static_map[nstatic_map]->local_name = n->sval;
+                static_map[nstatic_map]->global_name = gn;
+                nstatic_map++;
+            }
+        } else if (n->ival3 & 0x200) {
+            /* extern local: skip entirely */
+        } else {
+            add_local(n->sval, n->ival2, n->ival3 & 0xF, n->ival3 >> 4);
+        }
         break;
     case ND_BLOCK:
         for (i = 0; i < n->ival2; i++) {
@@ -88,6 +121,13 @@ void init_loop_labels(void) {
 int var_elem_size(char *name) {
     int li;
     int gi;
+    char *sg;
+    sg = find_static_global(name);
+    if (sg != (char *)0) {
+        gi = find_global(sg);
+        if (gi >= 0) return globals_tbl[gi]->gv_elem_size;
+        return 4;
+    }
     li = find_local(name);
     if (li >= 0) {
         return local_vars[li]->lv_elem_size;
@@ -102,6 +142,13 @@ int var_elem_size(char *name) {
 int var_is_unsigned(char *name) {
     int li;
     int gi;
+    char *sg;
+    sg = find_static_global(name);
+    if (sg != (char *)0) {
+        gi = find_global(sg);
+        if (gi >= 0) return globals_tbl[gi]->gv_is_unsigned;
+        return 0;
+    }
     li = find_local(name);
     if (li >= 0) {
         return local_vars[li]->lv_is_unsigned;
@@ -129,6 +176,13 @@ int expr_is_unsigned(struct Node *n) {
 int var_is_float(char *name) {
     int li;
     int gi;
+    char *sg;
+    sg = find_static_global(name);
+    if (sg != (char *)0) {
+        gi = find_global(sg);
+        if (gi >= 0) return globals_tbl[gi]->gv_is_float;
+        return 0;
+    }
     li = find_local(name);
     if (li >= 0) {
         return local_vars[li]->lv_is_float;

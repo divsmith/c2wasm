@@ -50,7 +50,7 @@ c2wasm supports a carefully chosen subset of C89/C90:
 | Arithmetic | `+`, `-`, `*`, `/`, `%` (integer and floating-point) |
 | Comparison | `==`, `!=`, `<`, `<=`, `>`, `>=` |
 | Logical | `&&`, `\|\|`, `!` |
-| Assignment | `=`, `+=`, `-=` |
+| Assignment | `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `\|=`, `&=`, `^=`, `<<=`, `>>=` |
 | Pointer ops | `*` (deref), `&` (address-of), `[]` (subscript), `.`, `->` |
 | Prefix | `++`, `--`, cast `(T)` |
 | Statements | `if`/`else`, `while`, `for`, `do`/`while`, `switch`/`case`, `return`, `break`, `continue` |
@@ -60,6 +60,7 @@ c2wasm supports a carefully chosen subset of C89/C90:
 | libc | `strlen`, `strcmp`, `strcpy`, `strcat`, `strchr`, `strstr`, `memcpy`, `memset`, `memmove`, `atoi`, `abs`, `rand`/`srand`, `isdigit`, `isalpha`, `toupper`, `tolower`, and more |
 | Preprocessor | `#define NAME integer-literal`, `enum`, `typedef` (structs and function pointer types) |
 | Initializers | Local/global array initializers, global `char *arr[] = {"..."}` string arrays |
+| Storage class | `static` (function-scope with persistent state), `extern`, `register`/`auto`/`volatile` (accepted, ignored) |
 
 Integer types map to `i32`. Float types use `f64` in WASM (WAT mode). Unsigned types use appropriate unsigned WASM opcodes.
 
