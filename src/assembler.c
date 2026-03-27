@@ -733,11 +733,7 @@ void asm_encode_instr(char *kw, struct ByteVec *code) {
         if (asm_tok != WTOK_LPAREN) asm_error("expected (type ...) after call_indirect");
         asm_next(); /* "type" keyword */
         asm_next(); /* $name */
-        if (asm_tok == WTOK_NAME) {
-            type_idx = asm_find_type_by_name(asm_tok_str);
-        } else {
-            type_idx = asm_tok_int;
-        }
+        type_idx = asm_tok == WTOK_NAME ? asm_find_type_by_name(asm_tok_str) : asm_tok_int;
         asm_next(); /* ) */
         if (asm_tok == WTOK_RPAREN) asm_next();
         bv_push(code, 0x11);

@@ -9,6 +9,18 @@ void emit_indent(void) {
     }
 }
 
+void emit_load(int esz) {
+    if (esz == 1) { out("i32.load8_u\n"); }
+    else if (esz == 2) { out("i32.load16_s\n"); }
+    else { out("i32.load\n"); }
+}
+
+void emit_store(int esz) {
+    if (esz == 1) { out("i32.store8\n"); }
+    else if (esz == 2) { out("i32.store16\n"); }
+    else { out("i32.store\n"); }
+}
+
 /* --- Expression codegen --- */
 
 /* Forward declarations for dispatch table refactoring */
@@ -65,6 +77,16 @@ void gen_expr_ident(struct Node *n) {
         out("local.get $"); out(n->sval); out("\n");
     }
     last_expr_is_float = vf;
+}
+
+void emit_bitwise_assign_op(int op) {
+    switch (op) {
+    case TOK_PIPE_EQ:   out("i32.or\n");  break;
+    case TOK_AMP_EQ:    out("i32.and\n"); break;
+    case TOK_CARET_EQ:  out("i32.xor\n"); break;
+    case TOK_LSHIFT_EQ: out("i32.shl\n"); break;
+    default:            out("i32.shr_s\n"); break;
+    }
 }
 
 void gen_expr_assign(struct Node *n) {
@@ -145,11 +167,7 @@ void gen_expr_assign(struct Node *n) {
             }
             gen_expr(n->c1);
             emit_indent();
-            if (n->ival == TOK_PIPE_EQ) { out("i32.or\n"); }
-            else if (n->ival == TOK_AMP_EQ) { out("i32.and\n"); }
-            else if (n->ival == TOK_CARET_EQ) { out("i32.xor\n"); }
-            else if (n->ival == TOK_LSHIFT_EQ) { out("i32.shl\n"); }
-            else { out("i32.shr_s\n"); }
+            emit_bitwise_assign_op(n->ival);
             last_expr_is_float = 0;
         }
         if (is_global) {
@@ -184,26 +202,14 @@ void gen_expr_assign(struct Node *n) {
         } else if (n->ival == TOK_PLUS_EQ) {
             gen_expr(tgt->c0);
             emit_indent();
-            if (esz == 1) {
-                out("i32.load8_u\n");
-            } else if (esz == 2) {
-                out("i32.load16_s\n");
-            } else {
-                out("i32.load\n");
-            }
+            emit_load(esz);
             gen_expr(n->c1);
             emit_indent();
             out("i32.add\n");
         } else if (n->ival == TOK_MINUS_EQ) {
             gen_expr(tgt->c0);
             emit_indent();
-            if (esz == 1) {
-                out("i32.load8_u\n");
-            } else if (esz == 2) {
-                out("i32.load16_s\n");
-            } else {
-                out("i32.load\n");
-            }
+            emit_load(esz);
             gen_expr(n->c1);
             emit_indent();
             out("i32.sub\n");
@@ -212,20 +218,10 @@ void gen_expr_assign(struct Node *n) {
                    n->ival == TOK_RSHIFT_EQ) {
             gen_expr(tgt->c0);
             emit_indent();
-            if (esz == 1) {
-                out("i32.load8_u\n");
-            } else if (esz == 2) {
-                out("i32.load16_s\n");
-            } else {
-                out("i32.load\n");
-            }
+            emit_load(esz);
             gen_expr(n->c1);
             emit_indent();
-            if (n->ival == TOK_PIPE_EQ) { out("i32.or\n"); }
-            else if (n->ival == TOK_AMP_EQ) { out("i32.and\n"); }
-            else if (n->ival == TOK_CARET_EQ) { out("i32.xor\n"); }
-            else if (n->ival == TOK_LSHIFT_EQ) { out("i32.shl\n"); }
-            else { out("i32.shr_s\n"); }
+            emit_bitwise_assign_op(n->ival);
         }
         emit_indent();
         if (last_expr_is_float) {
@@ -243,13 +239,7 @@ void gen_expr_assign(struct Node *n) {
             emit_indent();
             out("local.get $__atmp\n");
             emit_indent();
-            if (esz == 1) {
-                out("i32.store8\n");
-            } else if (esz == 2) {
-                out("i32.store16\n");
-            } else {
-                out("i32.store\n");
-            }
+            emit_store(esz);
             emit_indent();
             out("local.get $__atmp\n");
         }
@@ -298,11 +288,7 @@ void gen_expr_assign(struct Node *n) {
             out("i32.load\n");
             gen_expr(n->c1);
             emit_indent();
-            if (n->ival == TOK_PIPE_EQ) { out("i32.or\n"); }
-            else if (n->ival == TOK_AMP_EQ) { out("i32.and\n"); }
-            else if (n->ival == TOK_CARET_EQ) { out("i32.xor\n"); }
-            else if (n->ival == TOK_LSHIFT_EQ) { out("i32.shl\n"); }
-            else { out("i32.shr_s\n"); }
+            emit_bitwise_assign_op(n->ival);
         }
         emit_indent();
         out("local.set $__atmp\n");
@@ -335,13 +321,7 @@ void gen_expr_assign(struct Node *n) {
             emit_indent();
             out("i32.add\n");
             emit_indent();
-            if (esz == 1) {
-                out("i32.load8_u\n");
-            } else if (esz == 2) {
-                out("i32.load16_s\n");
-            } else {
-                out("i32.load\n");
-            }
+            emit_load(esz);
             gen_expr(n->c1);
             emit_indent();
             out("i32.add\n");
@@ -357,13 +337,7 @@ void gen_expr_assign(struct Node *n) {
             emit_indent();
             out("i32.add\n");
             emit_indent();
-            if (esz == 1) {
-                out("i32.load8_u\n");
-            } else if (esz == 2) {
-                out("i32.load16_s\n");
-            } else {
-                out("i32.load\n");
-            }
+            emit_load(esz);
             gen_expr(n->c1);
             emit_indent();
             out("i32.sub\n");
@@ -381,20 +355,10 @@ void gen_expr_assign(struct Node *n) {
             emit_indent();
             out("i32.add\n");
             emit_indent();
-            if (esz == 1) {
-                out("i32.load8_u\n");
-            } else if (esz == 2) {
-                out("i32.load16_s\n");
-            } else {
-                out("i32.load\n");
-            }
+            emit_load(esz);
             gen_expr(n->c1);
             emit_indent();
-            if (n->ival == TOK_PIPE_EQ) { out("i32.or\n"); }
-            else if (n->ival == TOK_AMP_EQ) { out("i32.and\n"); }
-            else if (n->ival == TOK_CARET_EQ) { out("i32.xor\n"); }
-            else if (n->ival == TOK_LSHIFT_EQ) { out("i32.shl\n"); }
-            else { out("i32.shr_s\n"); }
+            emit_bitwise_assign_op(n->ival);
         }
         emit_indent();
         out("local.set $__atmp\n");
@@ -411,13 +375,7 @@ void gen_expr_assign(struct Node *n) {
         emit_indent();
         out("local.get $__atmp\n");
         emit_indent();
-        if (esz == 1) {
-            out("i32.store8\n");
-        } else if (esz == 2) {
-            out("i32.store16\n");
-        } else {
-            out("i32.store\n");
-        }
+        emit_store(esz);
         emit_indent();
         out("local.get $__atmp\n");
     }
@@ -426,7 +384,8 @@ void gen_expr_assign(struct Node *n) {
 void gen_expr_unary(struct Node *n) {
     int esz;
 
-    if (n->ival == TOK_MINUS) {
+    switch (n->ival) {
+    case TOK_MINUS:
         gen_expr(n->c0);
         if (last_expr_is_float) {
             emit_indent();
@@ -442,7 +401,8 @@ void gen_expr_unary(struct Node *n) {
             emit_indent();
             out("i32.sub\n");
         }
-    } else if (n->ival == TOK_BANG) {
+        break;
+    case TOK_BANG:
         gen_expr(n->c0);
         if (last_expr_is_float) {
             emit_indent();
@@ -454,14 +414,16 @@ void gen_expr_unary(struct Node *n) {
             emit_indent();
             out("i32.eqz\n");
         }
-    } else if (n->ival == TOK_TILDE) {
+        break;
+    case TOK_TILDE:
         emit_indent();
         out("i32.const -1\n");
         gen_expr(n->c0);
         emit_indent();
         out("i32.xor\n");
         last_expr_is_float = 0;
-    } else if (n->ival == TOK_STAR) {
+        break;
+    case TOK_STAR:
         esz = expr_elem_size(n->c0);
         gen_expr(n->c0);
         if (esz == 8) {
@@ -471,16 +433,12 @@ void gen_expr_unary(struct Node *n) {
         } else {
             last_expr_is_float = 0;
             emit_indent();
-            if (esz == 1) {
-                out("i32.load8_u\n");
-            } else if (esz == 2) {
-                out("i32.load16_s\n");
-            } else {
-                out("i32.load\n");
-            }
+            emit_load(esz);
         }
-    } else if (n->ival == TOK_AMP) {
+        break;
+    case TOK_AMP:
         error(n->nline, n->ncol, "cannot take address of this expression");
+        break;
     }
 }
 
@@ -512,79 +470,41 @@ void gen_expr_binary(struct Node *n) {
     }
     if (op_float) {
         emit_indent();
-        if (n->ival == TOK_PLUS) {
-            out("f64.add\n");
-            last_expr_is_float = 2;
-        } else if (n->ival == TOK_MINUS) {
-            out("f64.sub\n");
-            last_expr_is_float = 2;
-        } else if (n->ival == TOK_STAR) {
-            out("f64.mul\n");
-            last_expr_is_float = 2;
-        } else if (n->ival == TOK_SLASH) {
-            out("f64.div\n");
-            last_expr_is_float = 2;
-        } else if (n->ival == TOK_EQ_EQ) {
-            out("f64.eq\n");
-            last_expr_is_float = 0;
-        } else if (n->ival == TOK_BANG_EQ) {
-            out("f64.ne\n");
-            last_expr_is_float = 0;
-        } else if (n->ival == TOK_LT) {
-            out("f64.lt\n");
-            last_expr_is_float = 0;
-        } else if (n->ival == TOK_GT) {
-            out("f64.gt\n");
-            last_expr_is_float = 0;
-        } else if (n->ival == TOK_LT_EQ) {
-            out("f64.le\n");
-            last_expr_is_float = 0;
-        } else if (n->ival == TOK_GT_EQ) {
-            out("f64.ge\n");
-            last_expr_is_float = 0;
-        } else {
-            error(n->nline, n->ncol, "unsupported float binary operator");
+        switch (n->ival) {
+        case TOK_PLUS:  out("f64.add\n"); last_expr_is_float = 2; break;
+        case TOK_MINUS: out("f64.sub\n"); last_expr_is_float = 2; break;
+        case TOK_STAR:  out("f64.mul\n"); last_expr_is_float = 2; break;
+        case TOK_SLASH: out("f64.div\n"); last_expr_is_float = 2; break;
+        case TOK_EQ_EQ:   out("f64.eq\n"); last_expr_is_float = 0; break;
+        case TOK_BANG_EQ: out("f64.ne\n"); last_expr_is_float = 0; break;
+        case TOK_LT:    out("f64.lt\n"); last_expr_is_float = 0; break;
+        case TOK_GT:    out("f64.gt\n"); last_expr_is_float = 0; break;
+        case TOK_LT_EQ: out("f64.le\n"); last_expr_is_float = 0; break;
+        case TOK_GT_EQ: out("f64.ge\n"); last_expr_is_float = 0; break;
+        default: error(n->nline, n->ncol, "unsupported float binary operator");
         }
     } else {
         emit_indent();
-        if (n->ival == TOK_PLUS) {
-            out("i32.add\n");
-        } else if (n->ival == TOK_MINUS) {
-            out("i32.sub\n");
-        } else if (n->ival == TOK_STAR) {
-            out("i32.mul\n");
-        } else if (n->ival == TOK_SLASH) {
-            if (expr_is_unsigned(n->c0)) { out("i32.div_u\n"); } else { out("i32.div_s\n"); }
-        } else if (n->ival == TOK_PERCENT) {
-            if (expr_is_unsigned(n->c0)) { out("i32.rem_u\n"); } else { out("i32.rem_s\n"); }
-        } else if (n->ival == TOK_EQ_EQ) {
-            out("i32.eq\n");
-        } else if (n->ival == TOK_BANG_EQ) {
-            out("i32.ne\n");
-        } else if (n->ival == TOK_LT) {
-            if (expr_is_unsigned(n->c0)) { out("i32.lt_u\n"); } else { out("i32.lt_s\n"); }
-        } else if (n->ival == TOK_GT) {
-            if (expr_is_unsigned(n->c0)) { out("i32.gt_u\n"); } else { out("i32.gt_s\n"); }
-        } else if (n->ival == TOK_LT_EQ) {
-            if (expr_is_unsigned(n->c0)) { out("i32.le_u\n"); } else { out("i32.le_s\n"); }
-        } else if (n->ival == TOK_GT_EQ) {
-            if (expr_is_unsigned(n->c0)) { out("i32.ge_u\n"); } else { out("i32.ge_s\n"); }
-        } else if (n->ival == TOK_AMP_AMP) {
-            out("i32.and\n");
-        } else if (n->ival == TOK_PIPE_PIPE) {
-            out("i32.or\n");
-        } else if (n->ival == TOK_AMP) {
-            out("i32.and\n");
-        } else if (n->ival == TOK_PIPE) {
-            out("i32.or\n");
-        } else if (n->ival == TOK_LSHIFT) {
-            out("i32.shl\n");
-        } else if (n->ival == TOK_RSHIFT) {
-            if (expr_is_unsigned(n->c0)) { out("i32.shr_u\n"); } else { out("i32.shr_s\n"); }
-        } else if (n->ival == TOK_CARET) {
-            out("i32.xor\n");
-        } else {
-            error(n->nline, n->ncol, "unsupported binary operator");
+        switch (n->ival) {
+        case TOK_PLUS:    out("i32.add\n"); break;
+        case TOK_MINUS:   out("i32.sub\n"); break;
+        case TOK_STAR:    out("i32.mul\n"); break;
+        case TOK_SLASH:   out(expr_is_unsigned(n->c0) ? "i32.div_u\n" : "i32.div_s\n"); break;
+        case TOK_PERCENT: out(expr_is_unsigned(n->c0) ? "i32.rem_u\n" : "i32.rem_s\n"); break;
+        case TOK_EQ_EQ:   out("i32.eq\n"); break;
+        case TOK_BANG_EQ: out("i32.ne\n"); break;
+        case TOK_LT:      out(expr_is_unsigned(n->c0) ? "i32.lt_u\n" : "i32.lt_s\n"); break;
+        case TOK_GT:      out(expr_is_unsigned(n->c0) ? "i32.gt_u\n" : "i32.gt_s\n"); break;
+        case TOK_LT_EQ:   out(expr_is_unsigned(n->c0) ? "i32.le_u\n" : "i32.le_s\n"); break;
+        case TOK_GT_EQ:   out(expr_is_unsigned(n->c0) ? "i32.ge_u\n" : "i32.ge_s\n"); break;
+        case TOK_AMP_AMP:
+        case TOK_AMP:     out("i32.and\n"); break;
+        case TOK_PIPE_PIPE:
+        case TOK_PIPE:    out("i32.or\n"); break;
+        case TOK_LSHIFT:  out("i32.shl\n"); break;
+        case TOK_RSHIFT:  out(expr_is_unsigned(n->c0) ? "i32.shr_u\n" : "i32.shr_s\n"); break;
+        case TOK_CARET:   out("i32.xor\n"); break;
+        default: error(n->nline, n->ncol, "unsupported binary operator");
         }
         last_expr_is_float = 0;
     }
@@ -945,20 +865,12 @@ void gen_expr_sizeof(struct Node *n) {
         sz = 4; /* pointer type */
     } else if (n->c0 != (struct Node *)0) {
         /* sizeof(expr): infer size from variable */
-        if (n->c0->kind == ND_IDENT) {
-            sz = var_elem_size(n->c0->sval);
-        } else {
-            sz = 4;
-        }
+        sz = n->c0->kind == ND_IDENT ? var_elem_size(n->c0->sval) : 4;
     } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
         sz = 1;
     } else if (n->sval != (char *)0) {
         sd = find_struct(n->sval);
-        if (sd != (struct StructDef *)0) {
-            sz = sd->size;
-        } else {
-            sz = 4;
-        }
+        sz = sd != (struct StructDef *)0 ? sd->size : 4;
     } else if (n->ival2 > 0) {
         sz = n->ival2;
     } else {
@@ -983,13 +895,7 @@ void gen_expr_subscript(struct Node *n) {
     emit_indent();
     out("i32.add\n");
     emit_indent();
-    if (esz == 1) {
-        out("i32.load8_u\n");
-    } else if (esz == 2) {
-        out("i32.load16_s\n");
-    } else {
-        out("i32.load\n");
-    }
+    emit_load(esz);
 }
 
 void gen_expr_post_inc_dec(struct Node *n) {
@@ -1008,7 +914,7 @@ void gen_expr_post_inc_dec(struct Node *n) {
             emit_indent(); out("global.get $"); out(pname); out("\n");
             emit_indent(); out("i32.const 1\n");
             emit_indent();
-            if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
+            out(n->kind == ND_POST_INC ? "i32.add\n" : "i32.sub\n");
             emit_indent(); out("global.set $"); out(pname); out("\n");
             emit_indent(); out("local.get $__atmp\n");
         } else {
@@ -1016,7 +922,7 @@ void gen_expr_post_inc_dec(struct Node *n) {
             emit_indent(); out("local.get $"); out(pname); out("\n");
             emit_indent(); out("i32.const 1\n");
             emit_indent();
-            if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
+            out(n->kind == ND_POST_INC ? "i32.add\n" : "i32.sub\n");
             emit_indent(); out("local.set $"); out(pname); out("\n");
         }
     } else if (tgt2->kind == ND_UNARY && tgt2->ival == TOK_STAR) {
@@ -1025,17 +931,17 @@ void gen_expr_post_inc_dec(struct Node *n) {
         pesz = expr_elem_size(tgt2->c0);
         gen_expr(tgt2->c0);
         emit_indent();
-        if (pesz == 1) { out("i32.load8_u\n"); } else if (pesz == 2) { out("i32.load16_s\n"); } else { out("i32.load\n"); }
+        emit_load(pesz);
         emit_indent(); out("local.set $__atmp\n");
         gen_expr(tgt2->c0);
         gen_expr(tgt2->c0);
         emit_indent();
-        if (pesz == 1) { out("i32.load8_u\n"); } else if (pesz == 2) { out("i32.load16_s\n"); } else { out("i32.load\n"); }
+        emit_load(pesz);
         emit_indent(); out("i32.const 1\n");
         emit_indent();
-        if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
+        out(n->kind == ND_POST_INC ? "i32.add\n" : "i32.sub\n");
         emit_indent();
-        if (pesz == 1) { out("i32.store8\n"); } else if (pesz == 2) { out("i32.store16\n"); } else { out("i32.store\n"); }
+        emit_store(pesz);
         emit_indent(); out("local.get $__atmp\n");
     } else if (tgt2->kind == ND_SUBSCRIPT) {
         /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
@@ -1045,7 +951,7 @@ void gen_expr_post_inc_dec(struct Node *n) {
         if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
         emit_indent(); out("i32.add\n");
         emit_indent();
-        if (pesz == 1) { out("i32.load8_u\n"); } else if (pesz == 2) { out("i32.load16_s\n"); } else { out("i32.load\n"); }
+        emit_load(pesz);
         emit_indent(); out("local.set $__atmp\n");
         gen_expr(tgt2->c0); gen_expr(tgt2->c1);
         if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
@@ -1054,12 +960,12 @@ void gen_expr_post_inc_dec(struct Node *n) {
         if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
         emit_indent(); out("i32.add\n");
         emit_indent();
-        if (pesz == 1) { out("i32.load8_u\n"); } else if (pesz == 2) { out("i32.load16_s\n"); } else { out("i32.load\n"); }
+        emit_load(pesz);
         emit_indent(); out("i32.const 1\n");
         emit_indent();
-        if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
+        out(n->kind == ND_POST_INC ? "i32.add\n" : "i32.sub\n");
         emit_indent();
-        if (pesz == 1) { out("i32.store8\n"); } else if (pesz == 2) { out("i32.store16\n"); } else { out("i32.store\n"); }
+        emit_store(pesz);
         emit_indent(); out("local.get $__atmp\n");
     } else if (tgt2->kind == ND_MEMBER) {
         poff = resolve_field_offset(tgt2->sval);
@@ -1075,7 +981,7 @@ void gen_expr_post_inc_dec(struct Node *n) {
         emit_indent(); out("i32.load\n");
         emit_indent(); out("i32.const 1\n");
         emit_indent();
-        if (n->kind == ND_POST_INC) { out("i32.add\n"); } else { out("i32.sub\n"); }
+        out(n->kind == ND_POST_INC ? "i32.add\n" : "i32.sub\n");
         emit_indent(); out("i32.store\n");
         emit_indent(); out("local.get $__atmp\n");
     } else {
