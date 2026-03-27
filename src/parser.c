@@ -28,7 +28,7 @@ int is_type_token(void) {
     if (at(TOK_INT)) return 1;
     if (at(TOK_CHAR_KW)) return 1;
     if (at(TOK_VOID)) return 1;
-    if (at(TOK_STRUCT)) return 1;
+    if (at(TOK_STRUCT) || at(TOK_UNION)) return 1;
     if (at(TOK_ENUM)) return 1;
     if (at(TOK_UNSIGNED)) return 1;
     if (at(TOK_SIGNED)) return 1;
@@ -164,7 +164,7 @@ struct Node *parse_atom(void) {
         if (at(TOK_LPAREN)) {
             advance_tok(); /* consume '(' */
             while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok(); /* skip qualifiers */
-            if (at(TOK_STRUCT)) {
+            if (at(TOK_STRUCT) || at(TOK_UNION)) {
                 advance_tok();
                 if (at(TOK_IDENT)) {
                     n->sval = strdupn(cur->text, 127);
@@ -303,7 +303,7 @@ struct Node *parse_atom(void) {
             } else if (at(TOK_DOUBLE)) {
                 cast_to_float = 2;
                 advance_tok();
-            } else if (at(TOK_STRUCT)) {
+            } else if (at(TOK_STRUCT) || at(TOK_UNION)) {
                 advance_tok();
                 if (at(TOK_IDENT)) advance_tok();
             } else {
@@ -563,7 +563,7 @@ struct Node *parse_var_decl(void) {
         advance_tok();
         while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
     }
-    if (at(TOK_STRUCT)) {
+    if (at(TOK_STRUCT) || at(TOK_UNION)) {
         advance_tok();
         advance_tok();
     } else if (at(TOK_ENUM)) {
@@ -679,7 +679,7 @@ struct Node *parse_var_decl(void) {
                     fp_nparams++;
                 }
             } else {
-                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
                 else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {
                     advance_tok();
                     if (at(TOK_INT)) advance_tok();
@@ -1114,7 +1114,7 @@ int parse_type(void) {
         advance_tok();
         return 2;
     }
-    if (at(TOK_STRUCT)) {
+    if (at(TOK_STRUCT) || at(TOK_UNION)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
         return 0;
@@ -1202,7 +1202,7 @@ struct Node *parse_func(void) {
                     while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
                     if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np++; } }
                     else {
-                        if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                        if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
                         else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
                         if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
                         while (at(TOK_STAR)) advance_tok();
@@ -1257,7 +1257,7 @@ struct Node *parse_func(void) {
                         while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
                         if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np2++; } }
                         else {
-                            if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                            if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
                             else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
                             if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
                             while (at(TOK_STAR)) advance_tok();
@@ -1309,21 +1309,25 @@ struct Node *parse_func(void) {
 void parse_struct_def(void) {
     struct StructDef *sd;
     int offset;
+    int is_union;
+    int field_size;
 
+    is_union = (cur->kind == TOK_UNION) ? 1 : 0;
     advance_tok();
-    if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected struct name");
+    if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected struct/union name");
     if (nstructs >= MAX_STRUCTS) error(cur->line, cur->col, "too many structs");
     structs_reg[nstructs] = (struct StructDef *)malloc(sizeof(struct StructDef));
     sd = structs_reg[nstructs];
     nstructs++;
     sd->name = strdupn(cur->text, 127);
     sd->nfields = 0;
+    sd->is_union = is_union;
     sd->fields = (struct StructField **)malloc(MAX_FIELDS * sizeof(void *));
     advance_tok();
-    expect(TOK_LBRACE, "expected '{' in struct definition");
+    expect(TOK_LBRACE, "expected '{' in struct/union definition");
     offset = 0;
     while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
-        if (at(TOK_STRUCT)) {
+        if (at(TOK_STRUCT) || at(TOK_UNION)) {
             advance_tok();
             if (at(TOK_IDENT)) advance_tok();
         } else {
@@ -1333,15 +1337,21 @@ void parse_struct_def(void) {
         if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected field name");
         sd->fields[sd->nfields] = (struct StructField *)malloc(sizeof(struct StructField));
         sd->fields[sd->nfields]->name = strdupn(cur->text, 127);
-        sd->fields[sd->nfields]->fld_offset = offset;
+        if (is_union) {
+            sd->fields[sd->nfields]->fld_offset = 0;
+            field_size = 4;
+            if (offset < field_size) offset = field_size;
+        } else {
+            sd->fields[sd->nfields]->fld_offset = offset;
+            offset += 4;
+        }
         sd->nfields++;
-        offset += 4;
         advance_tok();
         expect(TOK_SEMI, "expected ';' after field");
     }
     expect(TOK_RBRACE, "expected '}'");
     sd->size = offset;
-    expect(TOK_SEMI, "expected ';' after struct definition");
+    expect(TOK_SEMI, "expected ';' after struct/union definition");
 }
 
 void parse_global_var(void) {
@@ -1362,7 +1372,7 @@ void parse_global_var(void) {
     tai_gv = -1;
     had_mod_gv = 0;
     while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok();
-    if (at(TOK_STRUCT) || at(TOK_ENUM)) {
+    if (at(TOK_STRUCT) || at(TOK_UNION) || at(TOK_ENUM)) {
         advance_tok();
         if (at(TOK_IDENT)) advance_tok();
     } else if (at(TOK_FLOAT)) {
@@ -1439,7 +1449,7 @@ void parse_global_var(void) {
                 advance_tok();
                 if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); gfp_nparams++; }
             } else {
-                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
                 else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {
                     advance_tok(); if (at(TOK_INT)) advance_tok();
                 }
@@ -1633,13 +1643,13 @@ void parse_typedef(void) {
     while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok();
     rk = 0;
     is_ptr = 0;
-    if (at(TOK_STRUCT)) {
+    if (at(TOK_STRUCT) || at(TOK_UNION)) {
         advance_tok();
         if (at(TOK_IDENT)) {
             advance_tok();
         }
         if (at(TOK_LBRACE)) {
-            error(cur->line, cur->col, "typedef with inline struct body not supported; define struct separately");
+            error(cur->line, cur->col, "typedef with inline struct/union body not supported; define separately");
         }
         rk = 0;
     } else if (at(TOK_ENUM)) {
@@ -1683,7 +1693,7 @@ void parse_typedef(void) {
             while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
             if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); td_nparams++; } }
             else {
-                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
+                if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }
                 else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }
                 if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();
                 while (at(TOK_STAR)) advance_tok();
@@ -1763,8 +1773,8 @@ struct Node *parse_program(void) {
             }
         }
 
-        /* struct definition */
-        if (at(TOK_STRUCT)) {
+        /* struct/union definition */
+        if (at(TOK_STRUCT) || at(TOK_UNION)) {
             sp = lex_pos;
             sl = lex_line;
             sc = lex_col;
@@ -1792,7 +1802,7 @@ struct Node *parse_program(void) {
         st = cur;
         /* skip storage class and type qualifiers for lookahead */
         while (at(TOK_STATIC) || at(TOK_EXTERN) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();
-        if (at(TOK_STRUCT) || at(TOK_ENUM)) {
+        if (at(TOK_STRUCT) || at(TOK_UNION) || at(TOK_ENUM)) {
             advance_tok();
             if (at(TOK_IDENT)) advance_tok();
         } else {

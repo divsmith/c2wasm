@@ -10,6 +10,7 @@ struct StructDef {
     struct StructField **fields;
     int nfields;
     int size;
+    int is_union;
 };
 
 struct GlobalVar {

@@ -204,6 +204,8 @@ void init_kw_table(void) {
     kw_add("volatile", TOK_VOLATILE);
     kw_add("static", TOK_STATIC);
     kw_add("extern", TOK_EXTERN);
+    kw_add("union", TOK_UNION);
+    kw_add("goto", TOK_GOTO);
 }
 
 int kw_lookup(char *s) {

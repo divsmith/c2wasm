@@ -853,6 +853,31 @@
       '\n' +
       '    printf("\\nAll preprocessor tests passed!\\n");\n' +
       '    return 0;\n' +
+      '}\n',
+
+    union_types:
+      '// Union types\n' +
+      'union Number {\n' +
+      '    int i;\n' +
+      '    char c;\n' +
+      '};\n' +
+      '\n' +
+      'int main() {\n' +
+      '    union Number *np;\n' +
+      '\n' +
+      '    np = (union Number *)malloc(sizeof(union Number));\n' +
+      '    np->i = 100;\n' +
+      '    printf("np->i = %d\\n", np->i);\n' +
+      '    np->c = 65;\n' +
+      '    printf("np->c = %c\\n", np->c);\n' +
+      '\n' +
+      '    /* Union members overlap in memory */\n' +
+      '    np->i = 0x41;\n' +
+      '    printf("np->c as char = %c\\n", np->c);\n' +
+      '\n' +
+      '    printf("sizeof(union Number) = %d\\n", sizeof(union Number));\n' +
+      '    free(np);\n' +
+      '    return 0;\n' +
       '}\n'
   };
 

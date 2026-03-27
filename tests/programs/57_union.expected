@@ -1,0 +1,4 @@
+dp->i = 100
+dp->c = A
+dp->c as char = A
+sizeof(union Data) = 4

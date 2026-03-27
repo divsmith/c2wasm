@@ -85,7 +85,9 @@ enum {
     TOK_AUTO = 78,
     TOK_VOLATILE = 79,
     TOK_STATIC = 80,
-    TOK_EXTERN = 81
+    TOK_EXTERN = 81,
+    TOK_UNION = 82,
+    TOK_GOTO = 83
 };
 
 /* Node kinds */
@@ -120,7 +122,9 @@ enum {
     ND_DEFAULT = 27,
     ND_FLOAT_LIT = 28,
     ND_CAST = 29,
-    ND_CALL_INDIRECT = 30
+    ND_CALL_INDIRECT = 30,
+    ND_GOTO = 31,
+    ND_LABEL = 32
 };
 
 /* Limits */
@@ -147,4 +151,4 @@ enum {
 #define PP_SKIPPING 1
 #define PP_DONE 2
 
-#define ND_COUNT 31
+#define ND_COUNT 33
