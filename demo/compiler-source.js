@@ -6512,7 +6512,7 @@ COMPILER_SOURCE["assembler.c"] =
   "#define ASM_MAX_TYPES    128\n" +
   "#define ASM_MAX_FUNCS    512\n" +
   "#define ASM_MAX_GLOBALS  256\n" +
-  "#define ASM_MAX_DATA     512\n" +
+  "#define ASM_MAX_DATA     2048\n" +
   "#define ASM_MAX_LOCALS   512\n" +
   "#define ASM_MAX_LABELS   64\n" +
   "#define ASM_MAX_TYPE_NAMES 64\n" +

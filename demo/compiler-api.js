@@ -174,7 +174,7 @@ var CompilerAPI = (function () {
 
         fd_fdstat_set_flags: function () { return 0; },
 
-        path_open: function (dirfd, dirflags, path_ptr, path_len, oflags, fs_rights_base_lo, fs_rights_base_hi, fs_rights_inheriting_lo, fs_rights_inheriting_hi, fdflags, fd_ptr) {
+        path_open: function (dirfd, dirflags, path_ptr, path_len, oflags, fs_rights_base, fs_rights_inheriting, fdflags, fd_ptr) {
           if (!virtualFS) return 44; // ENOENT
 
           var bytes = new Uint8Array(state.memory.buffer);
@@ -293,12 +293,13 @@ var CompilerAPI = (function () {
 
   /**
    * Compile C source to WASM binary bytes.
-   * Uses raw byte capture so binary output is not mangled by TextDecoder.
+   * Always uses the reference compiler (which has binary_mode=1) to ensure
+   * correct binary output. The custom compiler outputs WAT, not binary.
    * Returns a Promise<Uint8Array>.
    */
   function compileBinary(cSource) {
     return init().then(function () {
-      var ctx = runCompiler(activeModule(), cSource, true, null);
+      var ctx = runCompiler(referenceModule, cSource, true, null);
 
       var bytes = ctx.stdoutBytes;
       if (bytes.length === 0) {
@@ -319,10 +320,12 @@ var CompilerAPI = (function () {
    */
   function buildCompiler(sourceFiles) {
     return init().then(function () {
-      // Patch binary_mode = 1 in the entry file
+      // Build custom compiler in WAT mode (binary_mode=0).
+      // The reference compiler (binary_mode=1) compiles it to WASM binary.
+      // The custom compiler will output WAT when used — compileBinary()
+      // always delegates to the reference compiler for binary execution.
       var entry = sourceFiles['c2wasm.c'];
       if (!entry) throw new Error('c2wasm.c not found in source files');
-      entry = entry.replace(/int\s+binary_mode\s*=\s*0\s*;/, 'int binary_mode = 1;');
 
       // Build virtual FS from all source files (excluding c2wasm.c which is stdin)
       var vfs = {};

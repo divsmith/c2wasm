@@ -20,7 +20,7 @@
 #define ASM_MAX_TYPES    128
 #define ASM_MAX_FUNCS    512
 #define ASM_MAX_GLOBALS  256
-#define ASM_MAX_DATA     512
+#define ASM_MAX_DATA     2048
 #define ASM_MAX_LOCALS   512
 #define ASM_MAX_LABELS   64
 #define ASM_MAX_TYPE_NAMES 64
