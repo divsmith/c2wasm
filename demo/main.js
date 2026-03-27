@@ -964,6 +964,49 @@
       '    int m[2][3] = {{1, 2, 3}, {4, 5, 6}};\n' +
       '    printf("m[1][2] = %d\\n", m[1][2]);\n' +
       '    return 0;\n' +
+      '}\n',
+
+    libc_extended:
+      '// Extended libc: realloc, sprintf, qsort, bsearch\n' +
+      '\n' +
+      'int cmp(int *a, int *b) {\n' +
+      '    return *a - *b;\n' +
+      '}\n' +
+      '\n' +
+      'int main() {\n' +
+      '    int *arr;\n' +
+      '    int i;\n' +
+      '    char buf[128];\n' +
+      '\n' +
+      '    /* realloc: grow an allocation */\n' +
+      '    arr = malloc(3 * sizeof(int));\n' +
+      '    arr[0] = 50; arr[1] = 10; arr[2] = 30;\n' +
+      '    arr = realloc(arr, 5 * sizeof(int));\n' +
+      '    arr[3] = 40; arr[4] = 20;\n' +
+      '    printf("before sort:");\n' +
+      '    for (i = 0; i < 5; i++) printf(" %d", arr[i]);\n' +
+      '    printf("\\n");\n' +
+      '\n' +
+      '    /* qsort with function pointer comparator */\n' +
+      '    qsort(arr, 5, sizeof(int), cmp);\n' +
+      '    printf("after sort: ");\n' +
+      '    for (i = 0; i < 5; i++) printf(" %d", arr[i]);\n' +
+      '    printf("\\n");\n' +
+      '\n' +
+      '    /* sprintf into buffer */\n' +
+      '    sprintf(buf, "sum=%d", arr[0]+arr[1]+arr[2]+arr[3]+arr[4]);\n' +
+      '    printf("sprintf: %s\\n", buf);\n' +
+      '\n' +
+      '    /* bsearch for a value */\n' +
+      '    int key[1];\n' +
+      '    int *found;\n' +
+      '    key[0] = 30;\n' +
+      '    found = bsearch(key, arr, 5, sizeof(int), cmp);\n' +
+      '    if (found)\n' +
+      '        printf("found %d\\n", *found);\n' +
+      '\n' +
+      '    free(arr);\n' +
+      '    return 0;\n' +
       '}\n'
   };
 

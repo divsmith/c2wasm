@@ -1,0 +1,6 @@
+realloc: 100 200 300 400 500
+realloc null: 77 88
+sprintf: val=42 str=hi hex=ff pct=% (len 26)
+sorted: 1 2 3 5 7 9
+found 5
+not found

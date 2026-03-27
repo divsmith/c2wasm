@@ -1,6 +1,10 @@
 /* codegen_wat.c — WAT text format code generator */
 
 int indent_level;
+int uses_realloc;
+int uses_sprintf;
+int uses_qsort;
+int uses_bsearch;
 
 void emit_indent(void) {
     int i;
@@ -895,6 +899,143 @@ void gen_expr_call(struct Node *n) {
         gen_expr(n->list[2]);
         emit_indent();
         out("call $strtol\n");
+    } else if (strcmp(n->sval, "realloc") == 0) {
+        uses_realloc = 1;
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        emit_indent();
+        out("call $realloc\n");
+    } else if (strcmp(n->sval, "qsort") == 0) {
+        uses_qsort = 1;
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        gen_expr(n->list[3]);
+        emit_indent();
+        out("call $qsort\n");
+        emit_indent();
+        out("i32.const 0\n"); /* qsort returns void; push dummy */
+    } else if (strcmp(n->sval, "bsearch") == 0) {
+        uses_bsearch = 1;
+        gen_expr(n->list[0]);
+        gen_expr(n->list[1]);
+        gen_expr(n->list[2]);
+        gen_expr(n->list[3]);
+        gen_expr(n->list[4]);
+        emit_indent();
+        out("call $bsearch\n");
+    } else if (strcmp(n->sval, "sprintf") == 0) {
+        uses_sprintf = 1;
+        /* compile-time lowered: sprintf(buf, fmt, ...) → series of __sprint_* calls */
+        if (n->ival2 < 2 || n->list[1]->kind != ND_STR_LIT) {
+            error(n->nline, n->ncol, "sprintf requires string literal format");
+        }
+        /* push buffer pointer, save in __atmp as running position */
+        gen_expr(n->list[0]);
+        emit_indent();
+        out("local.set $__atmp\n");
+        sid = n->list[1]->ival;
+        fmt = str_table[sid]->data;
+        flen = str_table[sid]->len;
+        ai = 2;
+        for (fi = 0; fi < flen; fi++) {
+            if (fmt[fi] == '%' && fi + 1 < flen) {
+                fi++;
+                if (fmt[fi] == 'd') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "sprintf: missing arg for %d");
+                    emit_indent();
+                    out("local.get $__atmp\n");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    out("call $__sprint_int\n");
+                    emit_indent();
+                    out("local.set $__atmp\n");
+                } else if (fmt[fi] == 's') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "sprintf: missing arg for %s");
+                    emit_indent();
+                    out("local.get $__atmp\n");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    out("call $__sprint_str\n");
+                    emit_indent();
+                    out("local.set $__atmp\n");
+                } else if (fmt[fi] == 'c') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "sprintf: missing arg for %c");
+                    emit_indent();
+                    out("local.get $__atmp\n");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    out("i32.store8\n");
+                    emit_indent();
+                    out("local.get $__atmp\n");
+                    emit_indent();
+                    out("i32.const 1\n");
+                    emit_indent();
+                    out("i32.add\n");
+                    emit_indent();
+                    out("local.set $__atmp\n");
+                } else if (fmt[fi] == 'x') {
+                    if (ai >= n->ival2) error(n->nline, n->ncol, "sprintf: missing arg for %x");
+                    emit_indent();
+                    out("local.get $__atmp\n");
+                    gen_expr(n->list[ai]);
+                    ai++;
+                    emit_indent();
+                    out("call $__sprint_hex\n");
+                    emit_indent();
+                    out("local.set $__atmp\n");
+                } else if (fmt[fi] == '%') {
+                    emit_indent();
+                    out("local.get $__atmp\n");
+                    emit_indent();
+                    out("i32.const 37\n");
+                    emit_indent();
+                    out("i32.store8\n");
+                    emit_indent();
+                    out("local.get $__atmp\n");
+                    emit_indent();
+                    out("i32.const 1\n");
+                    emit_indent();
+                    out("i32.add\n");
+                    emit_indent();
+                    out("local.set $__atmp\n");
+                } else {
+                    error(n->nline, n->ncol, "unsupported sprintf format");
+                }
+            } else {
+                emit_indent();
+                out("local.get $__atmp\n");
+                emit_indent();
+                out("i32.const "); out_d(fmt[fi] & 255); out("\n");
+                emit_indent();
+                out("i32.store8\n");
+                emit_indent();
+                out("local.get $__atmp\n");
+                emit_indent();
+                out("i32.const 1\n");
+                emit_indent();
+                out("i32.add\n");
+                emit_indent();
+                out("local.set $__atmp\n");
+            }
+        }
+        /* null-terminate */
+        emit_indent();
+        out("local.get $__atmp\n");
+        emit_indent();
+        out("i32.const 0\n");
+        emit_indent();
+        out("i32.store8\n");
+        /* return number of chars written */
+        emit_indent();
+        out("local.get $__atmp\n");
+        gen_expr(n->list[0]);
+        emit_indent();
+        out("i32.sub\n");
+        last_expr_is_float = 0;
     } else if (strcmp(n->sval, "__open_file") == 0) {
         gen_expr(n->list[0]);
         gen_expr(n->list[1]);
@@ -1924,6 +2065,11 @@ void gen_module(struct Node *prog) {
     int i;
     int gi;
 
+    uses_realloc = 0;
+    uses_sprintf = 0;
+    uses_qsort = 0;
+    uses_bsearch = 0;
+
     emit_indent();
     out("(module\n");
     indent_level++;
@@ -1948,6 +2094,10 @@ void gen_module(struct Node *prog) {
     emit_indent();
     out("\n");
 
+    /* type for qsort/bsearch comparator (always available) */
+    emit_indent();
+    out("(type $__fntype_2_i32 (func (param i32) (param i32) (result i32)))\n");
+
     /* function pointer type declarations and table */
     if (fn_table_count > 0) {
         int fti;
@@ -1963,9 +2113,9 @@ void gen_module(struct Node *prog) {
                 need_types[np] = need_types[np] | (1 << vd);
             }
         }
-        /* emit type declarations */
+        /* emit type declarations (skip $__fntype_2_i32 — already emitted above) */
         for (fti = 0; fti <= 16; fti++) {
-            if (need_types[fti] & 1) {
+            if ((need_types[fti] & 1) && fti != 2) {
                 int pi;
                 emit_indent();
                 out("(type $__fntype_"); out_d(fti); out("_i32 (func");
@@ -3247,6 +3397,320 @@ void gen_module(struct Node *prog) {
     /* user functions */
     for (i = 0; i < prog->ival2; i++) {
         gen_func(prog->list[i]);
+    }
+
+    /* optional runtime: realloc (only emitted if used) */
+    if (uses_realloc) {
+        emit_indent();
+        out("(func $realloc (param $ptr i32) (param $new_size i32) (result i32)\n");
+        emit_indent();
+        out("  (local $new_ptr i32) (local $old_size i32)\n");
+        emit_indent();
+        out("  (if (result i32) (i32.eqz (local.get $ptr))\n");
+        emit_indent();
+        out("    (then (call $malloc (local.get $new_size)))\n");
+        emit_indent();
+        out("    (else\n");
+        emit_indent();
+        out("      (if (result i32) (i32.eqz (local.get $new_size))\n");
+        emit_indent();
+        out("        (then (call $free (local.get $ptr)) (i32.const 0))\n");
+        emit_indent();
+        out("        (else\n");
+        emit_indent();
+        out("          (local.set $old_size (i32.sub (i32.load (i32.sub (local.get $ptr) (i32.const 8))) (i32.const 8)))\n");
+        emit_indent();
+        out("          (local.set $new_ptr (call $malloc (local.get $new_size)))\n");
+        emit_indent();
+        out("          (if (i32.gt_u (local.get $old_size) (local.get $new_size))\n");
+        emit_indent();
+        out("            (then (drop (call $memcpy (local.get $new_ptr) (local.get $ptr) (local.get $new_size))))\n");
+        emit_indent();
+        out("            (else (drop (call $memcpy (local.get $new_ptr) (local.get $ptr) (local.get $old_size))))\n");
+        emit_indent();
+        out("          )\n");
+        emit_indent();
+        out("          (call $free (local.get $ptr))\n");
+        emit_indent();
+        out("          (local.get $new_ptr)\n");
+        emit_indent();
+        out("        )\n");
+        emit_indent();
+        out("      )\n");
+        emit_indent();
+        out("    )\n");
+        emit_indent();
+        out("  )\n");
+        emit_indent();
+        out(")\n");
+    }
+
+    /* optional runtime: sprintf helpers (only emitted if used) */
+    if (uses_sprintf) {
+        emit_indent();
+        out("(func $__sprint_int (param $buf i32) (param $val i32) (result i32)\n");
+        emit_indent();
+        out("  (local $tmp i32) (local $len i32) (local $start i32) (local $i i32) (local $j i32) (local $neg i32)\n");
+        emit_indent();
+        out("  (local.set $start (local.get $buf))\n");
+        emit_indent();
+        out("  (if (i32.lt_s (local.get $val) (i32.const 0))\n");
+        emit_indent();
+        out("    (then\n");
+        emit_indent();
+        out("      (local.set $neg (i32.const 1))\n");
+        emit_indent();
+        out("      (local.set $val (i32.sub (i32.const 0) (local.get $val)))\n");
+        emit_indent();
+        out("    )\n");
+        emit_indent();
+        out("  )\n");
+        emit_indent();
+        out("  (if (i32.eqz (local.get $val))\n");
+        emit_indent();
+        out("    (then\n");
+        emit_indent();
+        out("      (i32.store8 (local.get $buf) (i32.const 48))\n");
+        emit_indent();
+        out("      (return (i32.add (local.get $buf) (i32.const 1)))\n");
+        emit_indent();
+        out("    )\n");
+        emit_indent();
+        out("  )\n");
+        emit_indent();
+        out("  (local.set $tmp (local.get $val))\n");
+        emit_indent();
+        out("  (local.set $len (i32.const 0))\n");
+        emit_indent();
+        out("  (if (local.get $neg)\n");
+        emit_indent();
+        out("    (then\n");
+        emit_indent();
+        out("      (i32.store8 (local.get $buf) (i32.const 45))\n");
+        emit_indent();
+        out("      (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\n");
+        emit_indent();
+        out("    )\n");
+        emit_indent();
+        out("  )\n");
+        emit_indent();
+        out("  (block $done (loop $digits\n");
+        emit_indent();
+        out("    (br_if $done (i32.eqz (local.get $tmp)))\n");
+        emit_indent();
+        out("    (i32.store8 (i32.add (local.get $buf) (local.get $len))\n");
+        emit_indent();
+        out("      (i32.add (i32.const 48) (i32.rem_u (local.get $tmp) (i32.const 10))))\n");
+        emit_indent();
+        out("    (local.set $tmp (i32.div_u (local.get $tmp) (i32.const 10)))\n");
+        emit_indent();
+        out("    (local.set $len (i32.add (local.get $len) (i32.const 1)))\n");
+        emit_indent();
+        out("    (br $digits)\n");
+        emit_indent();
+        out("  ))\n");
+        emit_indent();
+        out("  (local.set $i (i32.const 0))\n");
+        emit_indent();
+        out("  (local.set $j (i32.sub (local.get $len) (i32.const 1)))\n");
+        emit_indent();
+        out("  (block $rdone (loop $rev\n");
+        emit_indent();
+        out("    (br_if $rdone (i32.ge_u (local.get $i) (local.get $j)))\n");
+        emit_indent();
+        out("    (local.set $tmp (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\n");
+        emit_indent();
+        out("    (i32.store8 (i32.add (local.get $buf) (local.get $i))\n");
+        emit_indent();
+        out("      (i32.load8_u (i32.add (local.get $buf) (local.get $j))))\n");
+        emit_indent();
+        out("    (i32.store8 (i32.add (local.get $buf) (local.get $j)) (local.get $tmp))\n");
+        emit_indent();
+        out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+        emit_indent();
+        out("    (local.set $j (i32.sub (local.get $j) (i32.const 1)))\n");
+        emit_indent();
+        out("    (br $rev)\n");
+        emit_indent();
+        out("  ))\n");
+        emit_indent();
+        out("  (i32.add (local.get $buf) (local.get $len))\n");
+        emit_indent();
+        out(")\n");
+
+        emit_indent();
+        out("(func $__sprint_str (param $buf i32) (param $s i32) (result i32)\n");
+        emit_indent();
+        out("  (local $c i32)\n");
+        emit_indent();
+        out("  (block $done (loop $next\n");
+        emit_indent();
+        out("    (local.set $c (i32.load8_u (local.get $s)))\n");
+        emit_indent();
+        out("    (br_if $done (i32.eqz (local.get $c)))\n");
+        emit_indent();
+        out("    (i32.store8 (local.get $buf) (local.get $c))\n");
+        emit_indent();
+        out("    (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\n");
+        emit_indent();
+        out("    (local.set $s (i32.add (local.get $s) (i32.const 1)))\n");
+        emit_indent();
+        out("    (br $next)\n");
+        emit_indent();
+        out("  ))\n");
+        emit_indent();
+        out("  (local.get $buf)\n");
+        emit_indent();
+        out(")\n");
+
+        emit_indent();
+        out("(func $__sprint_hex (param $buf i32) (param $val i32) (result i32)\n");
+        emit_indent();
+        out("  (local $i i32) (local $shift i32) (local $nib i32) (local $started i32)\n");
+        emit_indent();
+        out("  (if (i32.eqz (local.get $val))\n");
+        emit_indent();
+        out("    (then\n");
+        emit_indent();
+        out("      (i32.store8 (local.get $buf) (i32.const 48))\n");
+        emit_indent();
+        out("      (return (i32.add (local.get $buf) (i32.const 1)))\n");
+        emit_indent();
+        out("    )\n");
+        emit_indent();
+        out("  )\n");
+        emit_indent();
+        out("  (local.set $shift (i32.const 28))\n");
+        emit_indent();
+        out("  (block $done (loop $nibbles\n");
+        emit_indent();
+        out("    (br_if $done (i32.lt_s (local.get $shift) (i32.const 0)))\n");
+        emit_indent();
+        out("    (local.set $nib (i32.and (i32.shr_u (local.get $val) (local.get $shift)) (i32.const 15)))\n");
+        emit_indent();
+        out("    (if (i32.or (local.get $started) (i32.ne (local.get $nib) (i32.const 0)))\n");
+        emit_indent();
+        out("      (then\n");
+        emit_indent();
+        out("        (local.set $started (i32.const 1))\n");
+        emit_indent();
+        out("        (if (i32.lt_u (local.get $nib) (i32.const 10))\n");
+        emit_indent();
+        out("          (then (i32.store8 (local.get $buf) (i32.add (i32.const 48) (local.get $nib))))\n");
+        emit_indent();
+        out("          (else (i32.store8 (local.get $buf) (i32.add (i32.const 87) (local.get $nib))))\n");
+        emit_indent();
+        out("        )\n");
+        emit_indent();
+        out("        (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\n");
+        emit_indent();
+        out("      )\n");
+        emit_indent();
+        out("    )\n");
+        emit_indent();
+        out("    (local.set $shift (i32.sub (local.get $shift) (i32.const 4)))\n");
+        emit_indent();
+        out("    (br $nibbles)\n");
+        emit_indent();
+        out("  ))\n");
+        emit_indent();
+        out("  (local.get $buf)\n");
+        emit_indent();
+        out(")\n");
+    }
+
+    /* optional runtime: qsort (only emitted if used) */
+    if (uses_qsort) {
+        emit_indent();
+        out("(func $qsort (param $base i32) (param $nmemb i32) (param $size i32) (param $compar i32)\n");
+        emit_indent();
+        out("  (local $i i32) (local $j i32) (local $pi i32) (local $pj i32) (local $tmp i32)\n");
+        emit_indent();
+        out("  (local.set $i (i32.const 1))\n");
+        emit_indent();
+        out("  (block $outer_done (loop $outer\n");
+        emit_indent();
+        out("    (br_if $outer_done (i32.ge_u (local.get $i) (local.get $nmemb)))\n");
+        emit_indent();
+        out("    (local.set $j (local.get $i))\n");
+        emit_indent();
+        out("    (block $inner_done (loop $inner\n");
+        emit_indent();
+        out("      (br_if $inner_done (i32.le_s (local.get $j) (i32.const 0)))\n");
+        emit_indent();
+        out("      (local.set $pj (i32.add (local.get $base) (i32.mul (local.get $j) (local.get $size))))\n");
+        emit_indent();
+        out("      (local.set $pi (i32.sub (local.get $pj) (local.get $size)))\n");
+        emit_indent();
+        out("      (br_if $inner_done (i32.le_s\n");
+        emit_indent();
+        out("        (call_indirect (type $__fntype_2_i32) (local.get $pi) (local.get $pj) (local.get $compar))\n");
+        emit_indent();
+        out("        (i32.const 0)))\n");
+        emit_indent();
+        out("      (local.set $tmp (i32.load (local.get $pi)))\n");
+        emit_indent();
+        out("      (i32.store (local.get $pi) (i32.load (local.get $pj)))\n");
+        emit_indent();
+        out("      (i32.store (local.get $pj) (local.get $tmp))\n");
+        emit_indent();
+        out("      (local.set $j (i32.sub (local.get $j) (i32.const 1)))\n");
+        emit_indent();
+        out("      (br $inner)\n");
+        emit_indent();
+        out("    ))\n");
+        emit_indent();
+        out("    (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
+        emit_indent();
+        out("    (br $outer)\n");
+        emit_indent();
+        out("  ))\n");
+        emit_indent();
+        out(")\n");
+    }
+
+    /* optional runtime: bsearch (only emitted if used) */
+    if (uses_bsearch) {
+        emit_indent();
+        out("(func $bsearch (param $key i32) (param $base i32) (param $nmemb i32) (param $size i32) (param $compar i32) (result i32)\n");
+        emit_indent();
+        out("  (local $lo i32) (local $hi i32) (local $mid i32) (local $p i32) (local $cmp i32)\n");
+        emit_indent();
+        out("  (local.set $lo (i32.const 0))\n");
+        emit_indent();
+        out("  (local.set $hi (local.get $nmemb))\n");
+        emit_indent();
+        out("  (block $done (loop $search\n");
+        emit_indent();
+        out("    (br_if $done (i32.ge_u (local.get $lo) (local.get $hi)))\n");
+        emit_indent();
+        out("    (local.set $mid (i32.shr_u (i32.add (local.get $lo) (local.get $hi)) (i32.const 1)))\n");
+        emit_indent();
+        out("    (local.set $p (i32.add (local.get $base) (i32.mul (local.get $mid) (local.get $size))))\n");
+        emit_indent();
+        out("    (local.set $cmp (call_indirect (type $__fntype_2_i32) (local.get $key) (local.get $p) (local.get $compar)))\n");
+        emit_indent();
+        out("    (if (i32.eqz (local.get $cmp))\n");
+        emit_indent();
+        out("      (then (return (local.get $p)))\n");
+        emit_indent();
+        out("    )\n");
+        emit_indent();
+        out("    (if (i32.lt_s (local.get $cmp) (i32.const 0))\n");
+        emit_indent();
+        out("      (then (local.set $hi (local.get $mid)))\n");
+        emit_indent();
+        out("      (else (local.set $lo (i32.add (local.get $mid) (i32.const 1))))\n");
+        emit_indent();
+        out("    )\n");
+        emit_indent();
+        out("    (br $search)\n");
+        emit_indent();
+        out("  ))\n");
+        emit_indent();
+        out("  (i32.const 0)\n");
+        emit_indent();
+        out(")\n");
     }
 
     emit_indent();
