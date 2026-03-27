@@ -31,31 +31,45 @@
   </header>
 
   <div class="toolbar">
-    <label class="toolbar-label" for="file-select">File:</label>
-    <select id="file-select">
-      <optgroup label="Examples">
-        <option value="hello">Hello World</option>
-        <option value="fibonacci">Fibonacci</option>
-        <option value="linked_list">Linked List</option>
-        <option value="sort">Bubble Sort</option>
-        <option value="collatz">Collatz Sequence</option>
-        <option value="weekday">Day of Week</option>
-        <option value="bit_flags">Bit Flags</option>
-        <option value="greet">Greet</option>
-        <option value="floating_point">Float &amp; Double</option>
-        <option value="integer_types">Integer Types</option>
-        <option value="memory_pools">Memory &amp; free()</option>
-        <option value="string_ops">String Ops</option>
-        <option value="func_ptrs">Function Pointers</option>
-        <option value="string_arrays">String Arrays</option>
-        <option value="typedef_fnptr">Typedef Fn Ptr</option>
-      </optgroup>
-      <optgroup label="My Files" id="user-files-group"></optgroup>
-    </select>
-    <button id="new-file-btn" title="New file">＋ New</button>
-    <button id="delete-file-btn" title="Delete this file">✕ Delete</button>
-    <button id="run-btn" title="Ctrl+Enter">▶ Compile &amp; Run</button>
+    <div class="mode-toggle" id="mode-toggle">
+      <button class="mode-btn active" id="mode-program" title="Write and run C programs">Program</button>
+      <button class="mode-btn" id="mode-compiler" title="Edit the compiler source code">Compiler</button>
+    </div>
+    <span class="toolbar-sep"></span>
+    <div id="program-controls">
+      <label class="toolbar-label" for="file-select">File:</label>
+      <select id="file-select">
+        <optgroup label="Examples">
+          <option value="hello">Hello World</option>
+          <option value="fibonacci">Fibonacci</option>
+          <option value="linked_list">Linked List</option>
+          <option value="sort">Bubble Sort</option>
+          <option value="collatz">Collatz Sequence</option>
+          <option value="weekday">Day of Week</option>
+          <option value="bit_flags">Bit Flags</option>
+          <option value="greet">Greet</option>
+          <option value="floating_point">Float &amp; Double</option>
+          <option value="integer_types">Integer Types</option>
+          <option value="memory_pools">Memory &amp; free()</option>
+          <option value="string_ops">String Ops</option>
+          <option value="func_ptrs">Function Pointers</option>
+          <option value="string_arrays">String Arrays</option>
+          <option value="typedef_fnptr">Typedef Fn Ptr</option>
+        </optgroup>
+        <optgroup label="My Files" id="user-files-group"></optgroup>
+      </select>
+      <button id="new-file-btn" title="New file">＋ New</button>
+      <button id="delete-file-btn" title="Delete this file">✕ Delete</button>
+      <button id="run-btn" title="Ctrl+Enter">▶ Compile &amp; Run</button>
+    </div>
+    <div id="compiler-controls" class="hidden">
+      <label class="toolbar-label" for="compiler-file-select">Source:</label>
+      <select id="compiler-file-select"></select>
+      <button id="build-compiler-btn" title="Ctrl+Enter">🔨 Build Compiler</button>
+      <button id="reset-source-btn" title="Reset all changes">↺ Reset</button>
+    </div>
     <span id="save-indicator" class="save-indicator"></span>
+    <span id="compiler-mode-indicator" class="compiler-mode-indicator">Using: Reference</span>
     <span id="status"></span>
   </div>
 
@@ -74,6 +88,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+  <script src="compiler-source.js"></script>
   <script src="compiler-api.js"></script>
   <script src="main.js"></script>
 </body>

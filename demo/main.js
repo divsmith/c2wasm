@@ -677,8 +677,71 @@
 
   var STORAGE_KEYS = {
     FILES: 'c2wasm:files',
-    ACTIVE: 'c2wasm:active'
+    ACTIVE: 'c2wasm:active',
+    COMPILER_EDITS: 'c2wasm:compiler-edits',
+    ACTIVE_COMPILER_FILE: 'c2wasm:compiler-active-file'
   };
+
+  // ── Compiler source working copy ──
+
+  var compilerWorkingCopy = {};
+  var currentEditorMode = 'program'; // 'program' or 'compiler'
+
+  function initCompilerWorkingCopy() {
+    // Load saved edits from localStorage, or start fresh from bundled source
+    var saved = null;
+    try {
+      var raw = localStorage.getItem(STORAGE_KEYS.COMPILER_EDITS);
+      if (raw) saved = JSON.parse(raw);
+    } catch (e) {}
+
+    var keys = Object.keys(COMPILER_SOURCE);
+    for (var i = 0; i < keys.length; i++) {
+      compilerWorkingCopy[keys[i]] = (saved && saved[keys[i]] !== undefined)
+        ? saved[keys[i]]
+        : COMPILER_SOURCE[keys[i]];
+    }
+  }
+
+  function saveCompilerEdits() {
+    // Only save files that differ from the bundled source
+    var diff = {};
+    var keys = Object.keys(compilerWorkingCopy);
+    var hasChanges = false;
+    for (var i = 0; i < keys.length; i++) {
+      if (compilerWorkingCopy[keys[i]] !== COMPILER_SOURCE[keys[i]]) {
+        diff[keys[i]] = compilerWorkingCopy[keys[i]];
+        hasChanges = true;
+      }
+    }
+    try {
+      if (hasChanges) {
+        localStorage.setItem(STORAGE_KEYS.COMPILER_EDITS, JSON.stringify(diff));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.COMPILER_EDITS);
+      }
+    } catch (e) {}
+  }
+
+  function hasCompilerChanges() {
+    var keys = Object.keys(COMPILER_SOURCE);
+    for (var i = 0; i < keys.length; i++) {
+      if (compilerWorkingCopy[keys[i]] !== COMPILER_SOURCE[keys[i]]) return true;
+    }
+    return false;
+  }
+
+  function getActiveCompilerFile() {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.ACTIVE_COMPILER_FILE) || 'c2wasm.c';
+    } catch (e) { return 'c2wasm.c'; }
+  }
+
+  function setActiveCompilerFile(name) {
+    try { localStorage.setItem(STORAGE_KEYS.ACTIVE_COMPILER_FILE, name); } catch (e) {}
+  }
+
+  initCompilerWorkingCopy();
 
   function loadUserFiles() {
     try {
@@ -740,6 +803,16 @@
   var terminalInputRow = document.getElementById('terminal-input-row');
   var terminalInput = document.getElementById('terminal-input');
   var resizeHandle = document.getElementById('resize-handle');
+
+  // Compiler mode DOM
+  var modeProgramBtn = document.getElementById('mode-program');
+  var modeCompilerBtn = document.getElementById('mode-compiler');
+  var programControls = document.getElementById('program-controls');
+  var compilerControls = document.getElementById('compiler-controls');
+  var compilerFileSelect = document.getElementById('compiler-file-select');
+  var buildCompilerBtn = document.getElementById('build-compiler-btn');
+  var resetSourceBtn = document.getElementById('reset-source-btn');
+  var compilerModeIndicator = document.getElementById('compiler-mode-indicator');
 
   var editor = null;
   var isRunning = false;
@@ -808,6 +881,15 @@
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
     autoSaveTimer = setTimeout(function () {
       autoSaveTimer = null;
+      if (currentEditorMode === 'compiler') {
+        // Auto-save compiler source edits
+        if (!editor) return;
+        var fname = getActiveCompilerFile();
+        compilerWorkingCopy[fname] = editor.getValue();
+        saveCompilerEdits();
+        showSaveIndicator();
+        return;
+      }
       var active = getActiveFile();
       if (active.type !== 'user' || !editor) return;
       var files = loadUserFiles();
@@ -944,6 +1026,175 @@
     });
   })();
 
+  // ── Mode switching (Program ↔ Compiler) ──
+
+  function populateCompilerFileSelect() {
+    compilerFileSelect.innerHTML = '';
+    for (var i = 0; i < COMPILER_SOURCE_ORDER.length; i++) {
+      var opt = document.createElement('option');
+      opt.value = COMPILER_SOURCE_ORDER[i];
+      opt.textContent = COMPILER_SOURCE_ORDER[i];
+      compilerFileSelect.appendChild(opt);
+    }
+    compilerFileSelect.value = getActiveCompilerFile();
+  }
+
+  function saveCurrentEditorContent() {
+    if (!editor) return;
+    if (currentEditorMode === 'program') {
+      flushPendingSave();
+    } else {
+      var fname = getActiveCompilerFile();
+      compilerWorkingCopy[fname] = editor.getValue();
+      saveCompilerEdits();
+    }
+  }
+
+  function switchMode(mode) {
+    if (mode === currentEditorMode) return;
+    saveCurrentEditorContent();
+    currentEditorMode = mode;
+
+    modeProgramBtn.classList.toggle('active', mode === 'program');
+    modeCompilerBtn.classList.toggle('active', mode === 'compiler');
+
+    if (mode === 'program') {
+      programControls.style.display = '';
+      compilerControls.classList.add('hidden');
+      // Restore program file
+      var active = getActiveFile();
+      var code = getFileContent(active.type, active.id);
+      if (code === null) {
+        setActiveFile('example', 'hello');
+        code = EXAMPLES.hello;
+        fileSelect.value = 'hello';
+      }
+      if (editor) {
+        editor.setValue(code);
+        monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+      }
+      syncSelectToActive();
+    } else {
+      programControls.style.display = 'none';
+      compilerControls.classList.remove('hidden');
+      var fname = getActiveCompilerFile();
+      if (editor) {
+        editor.setValue(compilerWorkingCopy[fname] || '');
+        monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+      }
+    }
+  }
+
+  function updateCompilerModeIndicator() {
+    var mode = CompilerAPI.getMode();
+    var hasCustom = CompilerAPI.hasCustomCompiler();
+    if (hasCustom && mode === 'custom') {
+      compilerModeIndicator.textContent = 'Using: Custom ✓';
+      compilerModeIndicator.className = 'compiler-mode-indicator custom';
+    } else {
+      compilerModeIndicator.textContent = 'Using: Reference';
+      compilerModeIndicator.className = 'compiler-mode-indicator';
+    }
+  }
+
+  modeProgramBtn.addEventListener('click', function () { switchMode('program'); });
+  modeCompilerBtn.addEventListener('click', function () { switchMode('compiler'); });
+
+  compilerFileSelect.addEventListener('change', function () {
+    if (currentEditorMode !== 'compiler' || !editor) return;
+    // Save current file before switching
+    var prev = getActiveCompilerFile();
+    compilerWorkingCopy[prev] = editor.getValue();
+    saveCompilerEdits();
+    // Load new file
+    var fname = compilerFileSelect.value;
+    setActiveCompilerFile(fname);
+    editor.setValue(compilerWorkingCopy[fname] || '');
+    monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+  });
+
+  // ── Build Compiler ──
+
+  var isBuilding = false;
+
+  function setBuildButtonState(state) {
+    buildCompilerBtn.className = '';
+    switch (state) {
+      case 'building':
+        buildCompilerBtn.textContent = '⏳ Building…';
+        buildCompilerBtn.disabled = true;
+        break;
+      case 'success':
+        buildCompilerBtn.textContent = '✓ Built';
+        buildCompilerBtn.disabled = false;
+        buildCompilerBtn.className = 'success';
+        setTimeout(function () { setBuildButtonState('idle'); }, 2000);
+        break;
+      case 'error':
+        buildCompilerBtn.textContent = '✗ Failed';
+        buildCompilerBtn.disabled = false;
+        buildCompilerBtn.className = 'error';
+        setTimeout(function () { setBuildButtonState('idle'); }, 2000);
+        break;
+      default:
+        buildCompilerBtn.textContent = '🔨 Build Compiler';
+        buildCompilerBtn.disabled = false;
+    }
+  }
+
+  function buildCompiler() {
+    if (isBuilding) return;
+    isBuilding = true;
+    saveCurrentEditorContent();
+
+    clearOutput();
+    setBuildButtonState('building');
+    setStatus('Building custom compiler…');
+
+    var t0 = Date.now();
+
+    CompilerAPI.buildCompiler(compilerWorkingCopy)
+      .then(function (result) {
+        var elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        var sizeKB = (result.size / 1024).toFixed(0);
+        writeConsole('Custom compiler built in ' + elapsed + 's (' + sizeKB + ' KB)\n', 'output-success');
+        setBuildButtonState('success');
+        setStatus('Custom compiler active');
+        updateCompilerModeIndicator();
+      })
+      .catch(function (err) {
+        var msg = err.message || String(err);
+        var errors = parseErrors(msg);
+        if (errors.length > 0) setErrorMarkers(errors);
+        writeConsole('Build failed:\n' + msg, 'output-error');
+        setBuildButtonState('error');
+        setStatus('Build failed');
+      })
+      .then(function () { isBuilding = false; }, function () { isBuilding = false; });
+  }
+
+  buildCompilerBtn.addEventListener('click', buildCompiler);
+
+  resetSourceBtn.addEventListener('click', function () {
+    if (!hasCompilerChanges()) return;
+    if (!confirm('Reset all compiler source changes? This cannot be undone.')) return;
+    var keys = Object.keys(COMPILER_SOURCE);
+    for (var i = 0; i < keys.length; i++) {
+      compilerWorkingCopy[keys[i]] = COMPILER_SOURCE[keys[i]];
+    }
+    try { localStorage.removeItem(STORAGE_KEYS.COMPILER_EDITS); } catch (e) {}
+    if (currentEditorMode === 'compiler' && editor) {
+      editor.setValue(compilerWorkingCopy[getActiveCompilerFile()] || '');
+      monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+    }
+    // Revert to reference compiler
+    CompilerAPI.useReference();
+    updateCompilerModeIndicator();
+    writeConsole('Compiler source reset to original. Using reference compiler.\n', 'output-info');
+  });
+
+  populateCompilerFileSelect();
+
   // ── Monaco editor ──
 
   function initMonaco() {
@@ -992,10 +1243,17 @@
         id: 'compile-run',
         label: 'Compile & Run',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
-        run: function () { compileAndRun(); }
+        run: function () {
+          if (currentEditorMode === 'compiler') {
+            buildCompiler();
+          } else {
+            compileAndRun();
+          }
+        }
       });
 
       setStatus('Ready — Ctrl+Enter to compile');
+      updateCompilerModeIndicator();
     });
   }
 

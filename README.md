@@ -31,7 +31,8 @@ Everything runs client-side. The compiler itself was compiled to a 229 KB WASM b
 
 - **Write C in the browser** — Monaco editor with C syntax highlighting, error markers, and Ctrl+Enter to compile
 - **Instant output** — see your program's console output in the same tab
-- **WAT inspector** — view the generated WebAssembly Text Format to see exactly what the compiler emitted
+- **Live compiler editing** — switch to Compiler mode to browse and modify the compiler's own source code, build a custom compiler from your changes using the reference compiler, and use it to compile programs
+- **Self-hosting in the browser** — the reference compiler compiles your modified compiler, then your compiler compiles user programs — the full self-hosting pipeline, live
 - **Your own files** — create new C files, edit them freely, and they persist in your browser's local storage across sessions
 - **Built-in examples** — Hello World, Fibonacci, Linked List traversal, and Bubble Sort to get started
 - **Self-hosting** — the compiler is written in the same C subset it compiles; see `tools/bootstrap.sh` for the 3-stage verification
@@ -104,8 +105,10 @@ The compiler has two output modes:
 
 - **Compiler → WASM**: compiled with [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) to a standalone 229 KB `.wasm` file (no JavaScript runtime bundled)
 - **Stdin/stdout redirection**: a minimal WASI shim (`compiler-api.js`) feeds C source as stdin bytes and captures output from stdout
+- **Virtual filesystem**: the WASI shim implements `path_open`/`fd_read`/`fd_close` backed by an in-memory file map, enabling `#include` resolution in the browser for compiling multi-file projects
+- **Live compiler editing**: switch to Compiler mode to modify the compiler source; the reference `compiler.wasm` compiles your changes into a custom compiler, which then compiles user programs
 - **Direct binary output**: the browser compiler emits WASM binary directly — no `wabt.js` assembler needed
-- **Execution**: `WebAssembly.instantiate` with a WASI shim (`wasm-worker.js`); `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; `path_open`/`fd_close` are stubbed as ENOENT (no filesystem in browser); programs using `getchar` read from the stdin input box in the demo UI
+- **Execution**: `WebAssembly.instantiate` with a WASI shim (`wasm-worker.js`); `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; programs using `getchar` read from the stdin input box in the demo UI
 
 ### Key Design Decisions
 
@@ -252,12 +255,14 @@ c2wasm/
 ├── demo/
 │   ├── index.html            ← browser UI
 │   ├── main.js               ← editor, pipeline, localStorage file management
-│   ├── compiler-api.js       ← WASI shim — loads and runs compiler.wasm
+│   ├── compiler-api.js       ← WASI shim — loads and runs compiler.wasm (reference + custom modes)
+│   ├── compiler-source.js    ← bundled compiler source files for in-browser editing
 │   ├── compiler.wasm         ← compiled compiler (wasi-sdk, 229 KB)
 │   ├── wasm-worker.js        ← Web Worker for running compiled programs
 │   └── style.css             ← VS Code-inspired dark theme
 ├── tools/
-│   └── bootstrap.sh          ← 3-stage self-hosting verification
+│   ├── bootstrap.sh          ← 3-stage self-hosting verification
+│   └── bundle-source.js      ← bundles src/ files into demo/compiler-source.js
 ├── Makefile                  ← build, test, wasm, serve targets
 └── .github/
     └── workflows/

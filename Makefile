@@ -76,6 +76,9 @@ wasm-emcc: $(SRC)
 
 wasm: wasm-wasi
 
+bundle-source:
+	node tools/bundle-source.js
+
 serve:
 	cd $(DEMO) && python3 server.py
 

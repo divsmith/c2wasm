@@ -4,41 +4,54 @@
  * Wraps the WASI-compiled c2wasm compiler (compiler.wasm).
  *
  * The compiler is built with wasi-sdk and runs via a minimal WASI shim.
- * It reads C source from stdin and writes WAT to stdout — the shim
- * wires those to in-memory buffers so no filesystem is needed.
+ * It reads C source from stdin and writes WAT/binary to stdout — the shim
+ * wires those to in-memory buffers.
+ *
+ * Supports two compiler modes:
+ *   - "reference": the shipped compiler.wasm (always available)
+ *   - "custom": a compiler built from user-modified source (optional)
  */
 var CompilerAPI = (function () {
-  var compiledModule = null;
+  var referenceModule = null;
+  var customModule = null;
+  var currentMode = 'reference';
   var loading = null;
 
   function init() {
-    if (compiledModule) return Promise.resolve();
+    if (referenceModule) return Promise.resolve();
     if (loading) return loading;
 
     loading = fetch('compiler.wasm')
       .then(function (response) {
-        if (!response.ok) throw new Error('compiler.wasm not found (HTTP ' + response.status + ').\nBuild it with: cd compiler && make wasm');
+        if (!response.ok) throw new Error('compiler.wasm not found (HTTP ' + response.status + ').\nBuild it with: make wasm');
         return response.arrayBuffer();
       })
       .then(function (bytes) {
         return WebAssembly.compile(bytes);
       })
       .then(function (mod) {
-        compiledModule = mod;
+        referenceModule = mod;
       });
 
     loading.catch(function () { loading = null; });
     return loading;
   }
 
+  /** Return the currently active WebAssembly.Module. */
+  function activeModule() {
+    if (currentMode === 'custom' && customModule) return customModule;
+    return referenceModule;
+  }
+
   /**
    * Create a WASI import object that reads from `inputBytes` and captures
    * stdout/stderr into string arrays.
+   *
+   * When `virtualFS` is provided (a {filename: string} map), path_open/
+   * fd_read/fd_close will serve files from it — enabling #include support
+   * for in-browser compilation.
    */
-  function createWasiImports(inputBytes, rawMode) {
-    // State is stored on an object (not bare closure variables) to avoid
-    // a V8 optimization issue where WASM-to-JS calls can miscompile
-    // direct closure variable access.
+  function createWasiImports(inputBytes, rawMode, virtualFS) {
     var state = {
       memory: null,
       inputPos: 0,
@@ -48,6 +61,11 @@ var CompilerAPI = (function () {
       exitCode: 0,
       rawMode: rawMode || false
     };
+
+    // Virtual filesystem state: fd → { content: Uint8Array, position: int }
+    var openFiles = {};
+    var nextFd = 4;
+
     var EXIT_TAG = { __wasi_exit: true };
 
     var imports = {
@@ -93,6 +111,24 @@ var CompilerAPI = (function () {
           var bytes = new Uint8Array(buf);
           var totalRead = 0;
 
+          // Virtual file read
+          if (openFiles[fd]) {
+            var vf = openFiles[fd];
+            for (var i = 0; i < iovs_len; i++) {
+              var iovPtr = view.getUint32(iovs + i * 8, true);
+              var iovLen = view.getUint32(iovs + i * 8 + 4, true);
+              var written = 0;
+              while (written < iovLen && vf.position < vf.content.length) {
+                bytes[iovPtr + written] = vf.content[vf.position++];
+                written++;
+                totalRead++;
+              }
+            }
+            view.setUint32(nread_ptr, totalRead, true);
+            return 0;
+          }
+
+          // stdin read
           for (var i = 0; i < iovs_len; i++) {
             var iovPtr = view.getUint32(iovs + i * 8, true);
             var iovLen = view.getUint32(iovs + i * 8 + 4, true);
@@ -109,15 +145,66 @@ var CompilerAPI = (function () {
           return 0;
         },
 
-        fd_close: function () { return 0; },
+        fd_close: function (fd) {
+          if (openFiles[fd]) delete openFiles[fd];
+          return 0;
+        },
+
         fd_seek: function () { return 8; },
-        fd_prestat_get: function () { return 8; },
-        fd_prestat_dir_name: function () { return 8; },
+
+        fd_prestat_get: function (fd, prestat_ptr) {
+          // Advertise fd 3 as a preopened directory when we have a virtual FS
+          if (fd === 3 && virtualFS) {
+            var view = new DataView(state.memory.buffer);
+            view.setUint8(prestat_ptr, 0); // __WASI_PREOPENTYPE_DIR
+            view.setUint32(prestat_ptr + 4, 1, true); // path length (".")
+            return 0;
+          }
+          return 8; // EBADF
+        },
+
+        fd_prestat_dir_name: function (fd, path_ptr, path_len) {
+          if (fd === 3 && virtualFS) {
+            var bytes = new Uint8Array(state.memory.buffer);
+            bytes[path_ptr] = 0x2E; // '.'
+            return 0;
+          }
+          return 8; // EBADF
+        },
+
         fd_fdstat_set_flags: function () { return 0; },
-        path_open: function () { return 44; /* ENOENT — no filesystem in browser */ },
+
+        path_open: function (dirfd, dirflags, path_ptr, path_len, oflags, fs_rights_base_lo, fs_rights_base_hi, fs_rights_inheriting_lo, fs_rights_inheriting_hi, fdflags, fd_ptr) {
+          if (!virtualFS) return 44; // ENOENT
+
+          var bytes = new Uint8Array(state.memory.buffer);
+          var pathBytes = bytes.slice(path_ptr, path_ptr + path_len);
+          var filename = new TextDecoder().decode(pathBytes);
+
+          // Strip leading "./" if present
+          if (filename.indexOf('./') === 0) filename = filename.substring(2);
+
+          if (virtualFS[filename] === undefined) return 44; // ENOENT
+
+          var fd = nextFd++;
+          var encoded = new TextEncoder().encode(virtualFS[filename]);
+          openFiles[fd] = { content: encoded, position: 0 };
+
+          var view = new DataView(state.memory.buffer);
+          view.setUint32(fd_ptr, fd, true);
+          return 0;
+        },
+
         fd_fdstat_get: function (fd, fdstat_ptr) {
           var view = new DataView(state.memory.buffer);
-          view.setUint8(fdstat_ptr, fd <= 2 ? 2 : 4);
+          if (openFiles[fd]) {
+            view.setUint8(fdstat_ptr, 4); // REGULAR_FILE
+            view.setUint16(fdstat_ptr + 2, 0, true);
+            view.setBigUint64(fdstat_ptr + 8, BigInt('0x1FFFFFFF'), true);
+            view.setBigUint64(fdstat_ptr + 16, BigInt('0x1FFFFFFF'), true);
+            return 0;
+          }
+          view.setUint8(fdstat_ptr, fd <= 2 ? 2 : (fd === 3 && virtualFS ? 3 : 4));
           view.setUint16(fdstat_ptr + 2, 0, true);
           view.setBigUint64(fdstat_ptr + 8, BigInt('0x1FFFFFFF'), true);
           view.setBigUint64(fdstat_ptr + 16, BigInt('0x1FFFFFFF'), true);
@@ -173,21 +260,28 @@ var CompilerAPI = (function () {
     };
   }
 
+  /** Run a compiler module with given source and options. */
+  function runCompiler(mod, cSource, rawMode, virtualFS) {
+    var inputBytes = new TextEncoder().encode(cSource);
+    var ctx = createWasiImports(inputBytes, rawMode, virtualFS);
+    var instance = new WebAssembly.Instance(mod, ctx.imports);
+    ctx.setMemory(instance.exports.memory);
+
+    try {
+      instance.exports._start();
+    } catch (e) {
+      if (!ctx.isExit(e)) throw e;
+      if (ctx.exitCode !== 0) {
+        throw new Error(ctx.stderr || 'Compiler exited with code ' + ctx.exitCode);
+      }
+    }
+
+    return ctx;
+  }
+
   function compile(cSource) {
     return init().then(function () {
-      var inputBytes = new TextEncoder().encode(cSource);
-      var ctx = createWasiImports(inputBytes);
-      var instance = new WebAssembly.Instance(compiledModule, ctx.imports);
-      ctx.setMemory(instance.exports.memory);
-
-      try {
-        instance.exports._start();
-      } catch (e) {
-        if (!ctx.isExit(e)) throw e;
-        if (ctx.exitCode !== 0) {
-          throw new Error(ctx.stderr || 'Compiler exited with code ' + ctx.exitCode);
-        }
-      }
+      var ctx = runCompiler(activeModule(), cSource, false, null);
 
       if (ctx.stderr && !ctx.stdout) {
         throw new Error(ctx.stderr);
@@ -204,19 +298,7 @@ var CompilerAPI = (function () {
    */
   function compileBinary(cSource) {
     return init().then(function () {
-      var inputBytes = new TextEncoder().encode(cSource);
-      var ctx = createWasiImports(inputBytes, true);
-      var instance = new WebAssembly.Instance(compiledModule, ctx.imports);
-      ctx.setMemory(instance.exports.memory);
-
-      try {
-        instance.exports._start();
-      } catch (e) {
-        if (!ctx.isExit(e)) throw e;
-        if (ctx.exitCode !== 0) {
-          throw new Error(ctx.stderr || 'Compiler exited with code ' + ctx.exitCode);
-        }
-      }
+      var ctx = runCompiler(activeModule(), cSource, true, null);
 
       var bytes = ctx.stdoutBytes;
       if (bytes.length === 0) {
@@ -227,5 +309,62 @@ var CompilerAPI = (function () {
     });
   }
 
-  return { compile: compile, compileBinary: compileBinary, init: init };
+  /**
+   * Build a custom compiler from modified source files.
+   * Uses the reference compiler to compile the source, producing a new
+   * WASM binary that becomes the "custom" compiler.
+   *
+   * @param {Object} sourceFiles - Map of filename → source string
+   * @returns {Promise<{size: number}>} - Result with compiled binary size
+   */
+  function buildCompiler(sourceFiles) {
+    return init().then(function () {
+      // Patch binary_mode = 1 in the entry file
+      var entry = sourceFiles['c2wasm.c'];
+      if (!entry) throw new Error('c2wasm.c not found in source files');
+      entry = entry.replace(/int\s+binary_mode\s*=\s*0\s*;/, 'int binary_mode = 1;');
+
+      // Build virtual FS from all source files (excluding c2wasm.c which is stdin)
+      var vfs = {};
+      var keys = Object.keys(sourceFiles);
+      for (var i = 0; i < keys.length; i++) {
+        if (keys[i] !== 'c2wasm.c') {
+          vfs[keys[i]] = sourceFiles[keys[i]];
+        }
+      }
+
+      var ctx = runCompiler(referenceModule, entry, true, vfs);
+
+      var bytes = ctx.stdoutBytes;
+      if (bytes.length === 0) {
+        throw new Error(ctx.stderr || 'Compiler build produced no output');
+      }
+
+      return WebAssembly.compile(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength))
+        .then(function (mod) {
+          customModule = mod;
+          currentMode = 'custom';
+          return { size: bytes.length };
+        });
+    });
+  }
+
+  function useReference() { currentMode = 'reference'; }
+  function useCustom() {
+    if (!customModule) throw new Error('No custom compiler available');
+    currentMode = 'custom';
+  }
+  function getMode() { return currentMode; }
+  function hasCustomCompiler() { return customModule !== null; }
+
+  return {
+    compile: compile,
+    compileBinary: compileBinary,
+    buildCompiler: buildCompiler,
+    useReference: useReference,
+    useCustom: useCustom,
+    getMode: getMode,
+    hasCustomCompiler: hasCustomCompiler,
+    init: init
+  };
 })();
