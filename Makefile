@@ -2,6 +2,7 @@ CC       ?= gcc
 CFLAGS    = -Wall -Wextra -std=c11 -pedantic -O2
 SRC       = src/c2wasm.c
 FILE_IO   = src/file_io.c
+CLI_MAIN  = src/cli_main.c
 BIN       = build/c2wasm
 DEMO      = demo
 
@@ -14,17 +15,19 @@ ifeq ($(WASI_SDK),)
   endif
 endif
 
-.PHONY: all clean test test-binary bootstrap wasm wasm-wasi wasm-wat wasm-emcc serve
+.PHONY: all clean test test-binary test-pipeline bootstrap wasm wasm-wasi wasm-assembler serve
 
 all: $(BIN)
 
-$(BIN): $(SRC) $(FILE_IO)
+$(BIN): $(SRC) $(FILE_IO) $(CLI_MAIN)
 	mkdir -p $(dir $(BIN))
-	$(CC) $(CFLAGS) -o $@ $(SRC) $(FILE_IO)
+	$(CC) $(CFLAGS) -Dmain=_c2wasm_main -c $(SRC) -o build/_core.o
+	$(CC) $(CFLAGS) -o $@ build/_core.o $(FILE_IO) $(CLI_MAIN)
+	@rm -f build/_core.o
 
-$(BIN)-bin: $(SRC) $(FILE_IO)
+$(BIN)-asm: src/assembler_main.c
 	mkdir -p $(dir $(BIN))
-	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | $(CC) $(CFLAGS) -Isrc -o $@ -x c - $(FILE_IO)
+	$(CC) $(CFLAGS) -Isrc -o $@ $<
 
 test: $(BIN)
 	bash tests/run_tests.sh
@@ -37,42 +40,29 @@ test: $(BIN)
 		echo "Skipping bootstrap (wat2wasm/wasmtime not found)"; \
 	fi
 
-test-binary: $(BIN)-bin
+test-binary: $(BIN)
 	bash tests/run_tests.sh --binary
+
+test-pipeline: $(BIN) $(BIN)-asm
+	bash tests/run_tests.sh --pipeline
 
 bootstrap: $(BIN)
 	bash tools/bootstrap.sh
 
 # ── WASM build targets ──
 
-wasm-wasi: $(SRC)
+wasm-wasi: $(SRC) $(CLI_MAIN)
 	@if [ -z "$(WASI_SDK)" ]; then \
 		echo "Error: wasi-sdk not found. Install it and set WASI_SDK=/path/to/wasi-sdk, or place it at /opt/wasi-sdk or ~/.local/wasi-sdk"; \
 		exit 1; \
 	fi
 	mkdir -p $(DEMO)
-	sed 's/int binary_mode = 0;/int binary_mode = 1;/' < $(SRC) | \
-		$(WASI_SDK)/bin/clang -x c - $(FILE_IO) -Isrc -O2 -o $(DEMO)/compiler.wasm \
+	$(WASI_SDK)/bin/clang -Dmain=_c2wasm_main -c $(SRC) -Isrc -O2 \
+		--sysroot=$(WASI_SDK)/share/wasi-sysroot -o build/_wasm_core.o
+	$(WASI_SDK)/bin/clang -o $(DEMO)/compiler.wasm \
+		build/_wasm_core.o $(FILE_IO) $(CLI_MAIN) -Isrc -O2 \
 		--sysroot=$(WASI_SDK)/share/wasi-sysroot
-
-wasm-wat: $(SRC)
-	@if [ -z "$(WASI_SDK)" ]; then \
-		echo "Error: wasi-sdk not found. Install it and set WASI_SDK=/path/to/wasi-sdk, or place it at /opt/wasi-sdk or ~/.local/wasi-sdk"; \
-		exit 1; \
-	fi
-	mkdir -p $(DEMO)
-	$(WASI_SDK)/bin/clang $(SRC) $(FILE_IO) -O2 -o $(DEMO)/compiler.wasm \
-		--sysroot=$(WASI_SDK)/share/wasi-sysroot
-
-wasm-emcc: $(SRC)
-	mkdir -p $(DEMO)
-	emcc $(SRC) $(FILE_IO) -O2 -o $(DEMO)/compiler.js \
-		-s MODULARIZE=1 \
-		-s EXPORT_NAME=C2WasmModule \
-		-s EXPORTED_RUNTIME_METHODS='["callMain","FS"]' \
-		-s ALLOW_MEMORY_GROWTH=1 \
-		-s EXIT_RUNTIME=0 \
-		-s SINGLE_FILE=1
+	@rm -f build/_wasm_core.o
 
 wasm: wasm-wasi wasm-assembler
 
@@ -92,4 +82,4 @@ serve:
 	cd $(DEMO) && python3 server.py
 
 clean:
-	rm -f $(BIN) $(BIN)-bin
+	rm -f $(BIN) $(BIN)-asm

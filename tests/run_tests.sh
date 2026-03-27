@@ -3,20 +3,19 @@
 # Each .c file can have:
 #   // EXPECT_EXIT: N   — check exit code (default: 0)
 #   A matching .expected file — check stdout
-# Usage: run_tests.sh [--binary]
+# Usage: run_tests.sh [--binary] [--pipeline]
 set -u
 
-BINARY_MODE=0
+MODE="wat"
 if [ "${1:-}" = "--binary" ]; then
-    BINARY_MODE=1
+    MODE="binary"
+elif [ "${1:-}" = "--pipeline" ]; then
+    MODE="pipeline"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ "$BINARY_MODE" -eq 1 ]; then
-    COMPILER="$SCRIPT_DIR/../build/c2wasm-bin"
-else
-    COMPILER="$SCRIPT_DIR/../build/c2wasm"
-fi
+COMPILER="$SCRIPT_DIR/../build/c2wasm"
+ASSEMBLER="$SCRIPT_DIR/../build/c2wasm-asm"
 PROG_DIR="$SCRIPT_DIR/programs"
 TMP_DIR="${TMPDIR:-/tmp}/c2wasm-tests"
 mkdir -p "$TMP_DIR"
@@ -33,8 +32,8 @@ for src in "$PROG_DIR"/*.c; do
     expected_exit=$(head -1 "$src" | grep -o 'EXPECT_EXIT: [0-9]*' | grep -o '[0-9]*')
     if [ -z "$expected_exit" ]; then expected_exit=0; fi
 
-    # Skip tests marked with SKIP_BINARY in binary mode
-    if [ "$BINARY_MODE" -eq 1 ]; then
+    # Skip tests marked with SKIP_BINARY in binary/pipeline mode
+    if [ "$MODE" = "binary" ] || [ "$MODE" = "pipeline" ]; then
         skip_binary=$(head -5 "$src" | grep -c 'SKIP_BINARY')
         if [ "$skip_binary" -gt 0 ]; then
             echo "SKIP: $name (SKIP_BINARY)"
@@ -43,12 +42,29 @@ for src in "$PROG_DIR"/*.c; do
         fi
     fi
 
-    if [ "$BINARY_MODE" -eq 1 ]; then
-        # Compile C → WASM binary directly (from programs dir for #include)
-        (cd "$PROG_DIR" && "$COMPILER" < "./${name}.c") > "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.compile_err"
+    if [ "$MODE" = "binary" ]; then
+        # Compile C → WASM binary directly via -b flag (from programs dir for #include)
+        (cd "$PROG_DIR" && "$COMPILER" -b < "./${name}.c") > "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.compile_err"
         if [ $? -ne 0 ]; then
             echo "FAIL: $name (compile error)"
             cat "$TMP_DIR/${name}.compile_err" | head -5
+            FAIL=$((FAIL + 1))
+            continue
+        fi
+    elif [ "$MODE" = "pipeline" ]; then
+        # Compile C → WAT → WASM via pipeline (from programs dir for #include)
+        (cd "$PROG_DIR" && "$COMPILER" < "./${name}.c") 2>"$TMP_DIR/${name}.compile_err" | \
+            "$ASSEMBLER" > "$TMP_DIR/${name}.wasm" 2>"$TMP_DIR/${name}.asm_err"
+        pipe_result=("${PIPESTATUS[@]}")
+        if [ "${pipe_result[0]}" -ne 0 ]; then
+            echo "FAIL: $name (compile error)"
+            cat "$TMP_DIR/${name}.compile_err" | head -5
+            FAIL=$((FAIL + 1))
+            continue
+        fi
+        if [ "${pipe_result[1]}" -ne 0 ]; then
+            echo "FAIL: $name (assembler error)"
+            cat "$TMP_DIR/${name}.asm_err" | head -5
             FAIL=$((FAIL + 1))
             continue
         fi

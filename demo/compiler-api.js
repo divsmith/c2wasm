@@ -54,7 +54,7 @@ var CompilerAPI = (function () {
    * fd_read/fd_close will serve files from it — enabling #include support
    * for in-browser compilation.
    */
-  function createWasiImports(inputBytes, rawMode, virtualFS) {
+  function createWasiImports(inputBytes, rawMode, virtualFS, args) {
     var state = {
       memory: null,
       inputPos: 0,
@@ -62,7 +62,8 @@ var CompilerAPI = (function () {
       stdoutByteChunks: [],
       stderrChunks: [],
       exitCode: 0,
-      rawMode: rawMode || false
+      rawMode: rawMode || false,
+      args: args || ['c2wasm']
     };
 
     // Virtual filesystem state: fd → { content: Uint8Array, position: int }
@@ -222,11 +223,27 @@ var CompilerAPI = (function () {
         environ_get: function () { return 0; },
         args_sizes_get: function (argc_ptr, argv_buf_size_ptr) {
           var view = new DataView(state.memory.buffer);
-          view.setUint32(argc_ptr, 0, true);
-          view.setUint32(argv_buf_size_ptr, 0, true);
+          view.setUint32(argc_ptr, state.args.length, true);
+          var totalSize = 0;
+          for (var i = 0; i < state.args.length; i++) {
+            totalSize += new TextEncoder().encode(state.args[i]).length + 1;
+          }
+          view.setUint32(argv_buf_size_ptr, totalSize, true);
           return 0;
         },
-        args_get: function () { return 0; },
+        args_get: function (argv_ptr, argv_buf_ptr) {
+          var view = new DataView(state.memory.buffer);
+          var mem = new Uint8Array(state.memory.buffer);
+          var bufOffset = argv_buf_ptr;
+          for (var i = 0; i < state.args.length; i++) {
+            view.setUint32(argv_ptr + i * 4, bufOffset, true);
+            var encoded = new TextEncoder().encode(state.args[i]);
+            mem.set(encoded, bufOffset);
+            mem[bufOffset + encoded.length] = 0;
+            bufOffset += encoded.length + 1;
+          }
+          return 0;
+        },
         clock_time_get: function (id, precision, time_ptr) {
           var view = new DataView(state.memory.buffer);
           view.setBigUint64(time_ptr, BigInt(Date.now()) * BigInt(1000000), true);
@@ -264,9 +281,9 @@ var CompilerAPI = (function () {
   }
 
   /** Run a compiler module with given source and options. */
-  function runCompiler(mod, cSource, rawMode, virtualFS) {
+  function runCompiler(mod, cSource, rawMode, virtualFS, args) {
     var inputBytes = new TextEncoder().encode(cSource);
-    var ctx = createWasiImports(inputBytes, rawMode, virtualFS);
+    var ctx = createWasiImports(inputBytes, rawMode, virtualFS, args);
     var instance = new WebAssembly.Instance(mod, ctx.imports);
     ctx.setMemory(instance.exports.memory);
 
@@ -297,7 +314,7 @@ var CompilerAPI = (function () {
   /**
    * Compile C source to WASM binary bytes.
    *
-   * In reference mode: reference compiler (binary_mode=1) compiles directly.
+   * In reference mode: reference compiler with -b flag compiles directly.
    * In custom mode: custom compiler (WAT mode) produces WAT text, then
    * assembler.wasm converts WAT → WASM binary.
    *
@@ -306,7 +323,7 @@ var CompilerAPI = (function () {
   function compileBinary(cSource) {
     return init().then(function () {
       if (currentMode === 'custom' && customModule) {
-        // Custom compiler produces WAT text
+        // Custom compiler produces WAT text (no -b flag)
         var watCtx = runCompiler(customModule, cSource, false, null);
         var wat = watCtx.stdout;
         if (!wat) {
@@ -321,8 +338,8 @@ var CompilerAPI = (function () {
         return bytes;
       }
 
-      // Reference compiler produces binary directly
-      var ctx = runCompiler(referenceModule, cSource, true, null);
+      // Reference compiler produces binary directly via -b flag
+      var ctx = runCompiler(referenceModule, cSource, true, null, ['c2wasm', '-b']);
       var bytes = ctx.stdoutBytes;
       if (bytes.length === 0) {
         throw new Error(ctx.stderr || 'Compiler produced no output');
@@ -341,10 +358,9 @@ var CompilerAPI = (function () {
    */
   function buildCompiler(sourceFiles) {
     return init().then(function () {
-      // Build custom compiler in WAT mode (binary_mode=0).
-      // The reference compiler (binary_mode=1) compiles it to WASM binary.
+      // Build custom compiler using reference compiler with -b flag.
       // The custom compiler will output WAT when used — compileBinary()
-      // always delegates to the reference compiler for binary execution.
+      // pipes custom WAT output through assembler.wasm for binary execution.
       var entry = sourceFiles['c2wasm.c'];
       if (!entry) throw new Error('c2wasm.c not found in source files');
 
@@ -357,7 +373,7 @@ var CompilerAPI = (function () {
         }
       }
 
-      var ctx = runCompiler(referenceModule, entry, true, vfs);
+      var ctx = runCompiler(referenceModule, entry, true, vfs, ['c2wasm', '-b']);
 
       var bytes = ctx.stdoutBytes;
       if (bytes.length === 0) {

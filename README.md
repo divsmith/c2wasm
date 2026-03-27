@@ -97,9 +97,14 @@ Source text
      └─── Binary mode ──→ [WAT Assembler] ──→ stdout (WASM binary)
 ```
 
-The compiler has two output modes:
-- **WAT mode** (`build/c2wasm`): Emits WebAssembly Text Format — human-readable, useful for debugging
-- **Binary mode** (`build/c2wasm-bin`): Generates WAT internally, then assembles it to WASM binary — one unified codegen path
+The compiler has two output modes, selected at runtime:
+- **WAT mode** (default): `c2wasm < input.c` emits WebAssembly Text Format — human-readable, useful for debugging
+- **Binary mode** (`-b` flag): `c2wasm -b < input.c` generates WAT internally, then assembles it to WASM binary — one unified codegen path
+
+A standalone assembler (`c2wasm-asm`) is also available for the WAT → WASM step:
+```
+c2wasm < input.c | c2wasm-asm > output.wasm
+```
 
 ### Browser Integration
 
@@ -145,9 +150,9 @@ There are **three binaries** in this project:
 
 | Binary | What it is | How to build |
 |--------|-----------|-------------|
-| `build/c2wasm` | Native compiler — WAT output (for debugging) | `make` |
-| `build/c2wasm-bin` | Native compiler — binary output (for tests) | `make build/c2wasm-bin` |
-| `demo/compiler.wasm` | Browser compiler — binary output (for the demo) | `WASI_SDK=... make wasm` |
+| `build/c2wasm` | Native compiler — WAT output by default, binary with `-b` | `make` |
+| `build/c2wasm-asm` | Standalone WAT → WASM assembler | `make build/c2wasm-asm` |
+| `demo/compiler.wasm` | Browser compiler — same as native, compiled to WASM | `WASI_SDK=... make wasm` |
 
 `demo/compiler.wasm` is gitignored — a fresh clone won't have it. You only need to rebuild it if you're working on the demo or changed the compiler and want to update the deployed binary.
 
@@ -195,9 +200,10 @@ make clean     # force a clean rebuild next time
 Requires `wat2wasm` and `wasmtime` on `PATH`:
 
 ```bash
-make test         # WAT path: all 50 tests + bootstrap self-hosting check
-make test-binary  # binary path: all 50 tests (only needs wasmtime, not wat2wasm)
-make bootstrap    # run the 3-stage bootstrap check alone
+make test          # WAT path: all 50 tests + bootstrap self-hosting check
+make test-binary   # binary path: all 50 tests via -b flag (only needs wasmtime, not wat2wasm)
+make test-pipeline # pipeline path: c2wasm | c2wasm-asm (tests the toolchain pipeline)
+make bootstrap     # run the 3-stage bootstrap check alone
 ```
 
 ### Rebuild the browser compiler
@@ -248,9 +254,11 @@ c2wasm/
 │   ├── codegen_wat.c         ← WAT text emitter (~3073 lines)
 │   ├── assembler.h / .c      ← WAT → WASM binary assembler (~1863 lines)
 │   ├── file_io.c             ← native file I/O for #include (~45 lines)
-│   └── main.c                ← entry point, mode dispatch (~39 lines)
+│   ├── cli_main.c            ← native/WASI CLI wrapper with -b flag (~33 lines)
+│   ├── assembler_main.c      ← standalone WAT → WASM assembler entry (~41 lines)
+│   └── main.c                ← compiler entry point, mode dispatch (~39 lines)
 ├── tests/
-│   ├── run_tests.sh          ← test runner (supports --binary flag)
+│   ├── run_tests.sh          ← test runner (supports --binary and --pipeline flags)
 │   └── programs/             ← 50 test programs + expected output
 ├── demo/
 │   ├── index.html            ← browser UI
