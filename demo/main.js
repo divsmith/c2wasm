@@ -939,6 +939,31 @@
       '    printf("PASTE(x,y) = %d\\n", PASTE(x, y));\n' +
       '\n' +
       '    return 0;\n' +
+      '}\n',
+
+    multidim_arrays:
+      '// Multi-dimensional (2D) arrays\n' +
+      'int main() {\n' +
+      '    int grid[3][4];\n' +
+      '    int i;\n' +
+      '    int j;\n' +
+      '\n' +
+      '    /* Fill grid: grid[i][j] = i*10 + j */\n' +
+      '    for (i = 0; i < 3; i = i + 1)\n' +
+      '        for (j = 0; j < 4; j = j + 1)\n' +
+      '            grid[i][j] = i * 10 + j;\n' +
+      '\n' +
+      '    /* Print grid */\n' +
+      '    for (i = 0; i < 3; i = i + 1) {\n' +
+      '        for (j = 0; j < 4; j = j + 1)\n' +
+      '            printf("%3d ", grid[i][j]);\n' +
+      '        printf("\\n");\n' +
+      '    }\n' +
+      '\n' +
+      '    /* 2D array with brace initializer */\n' +
+      '    int m[2][3] = {{1, 2, 3}, {4, 5, 6}};\n' +
+      '    printf("m[1][2] = %d\\n", m[1][2]);\n' +
+      '    return 0;\n' +
       '}\n'
   };
 

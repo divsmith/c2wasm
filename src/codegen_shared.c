@@ -48,7 +48,16 @@ void add_local(char *name, int elem_size, int is_unsigned, int is_float) {
     local_vars[nlocals]->lv_elem_size = elem_size;
     local_vars[nlocals]->lv_is_unsigned = is_unsigned;
     local_vars[nlocals]->lv_is_float = is_float;
+    local_vars[nlocals]->lv_arr_dim2 = 0;
     nlocals++;
+}
+
+void add_local_dim2(char *name, int dim2) {
+    int li;
+    li = find_local(name);
+    if (li >= 0) {
+        local_vars[li]->lv_arr_dim2 = dim2;
+    }
 }
 
 void collect_locals(struct Node *n) {
@@ -69,7 +78,10 @@ void collect_locals(struct Node *n) {
         } else if (n->ival3 & 0x200) {
             /* extern local: skip entirely */
         } else {
-            add_local(n->sval, n->ival2, n->ival3 & 0xF, n->ival3 >> 4);
+            add_local(n->sval, n->ival2, n->ival3 & 0xF, (n->ival3 >> 4) & 0xF);
+            if ((n->ival3 >> 16) & 0xFFFF) {
+                add_local_dim2(n->sval, (n->ival3 >> 16) & 0xFFFF);
+            }
         }
         break;
     case ND_BLOCK:
@@ -157,6 +169,16 @@ int var_is_unsigned(char *name) {
     if (gi >= 0) {
         return globals_tbl[gi]->gv_is_unsigned;
     }
+    return 0;
+}
+
+int var_arr_dim2(char *name) {
+    int li;
+    li = find_local(name);
+    if (li >= 0) {
+        return local_vars[li]->lv_arr_dim2;
+    }
+    /* TODO: also check globals for 2D global arrays */
     return 0;
 }
 

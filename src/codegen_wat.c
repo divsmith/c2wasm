@@ -1003,6 +1003,29 @@ void gen_expr_sizeof(struct Node *n) {
 
 void gen_expr_subscript(struct Node *n) {
     int esz;
+    int dim2;
+    int row_stride;
+
+    /* Check if base is a 2D array (first subscript should compute address, not load) */
+    if (n->c0->kind == ND_IDENT) {
+        dim2 = var_arr_dim2(n->c0->sval);
+        if (dim2 > 0) {
+            esz = expr_elem_size(n->c0);
+            row_stride = dim2 * esz;
+            gen_expr(n->c0);
+            gen_expr(n->c1);
+            if (row_stride > 1) {
+                emit_indent();
+                out("i32.const "); out_d(row_stride); out("\n");
+                emit_indent();
+                out("i32.mul\n");
+            }
+            emit_indent();
+            out("i32.add\n");
+            /* DON'T load — return address for next subscript */
+            return;
+        }
+    }
 
     esz = expr_elem_size(n->c0);
     gen_expr(n->c0);

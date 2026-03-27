@@ -523,6 +523,7 @@ struct Node *parse_var_decl(void) {
     int is_ptr;
     int ptr_depth_vd;
     int arr_size;
+    int arr_dim2;
     int ei;
     int tai_vd;
     int had_mod_vd;
@@ -538,6 +539,7 @@ struct Node *parse_var_decl(void) {
     is_ptr = 0;
     ptr_depth_vd = 0;
     arr_size = 0;
+    arr_dim2 = 0;
     tai_vd = -1;
     had_mod_vd = 0;
     is_static_var = 0;
@@ -709,15 +711,24 @@ struct Node *parse_var_decl(void) {
     n->ival2 = vd_elem_size;
     n->ival3 = vd_is_unsigned | (vd_is_float << 4);
     advance_tok();
-    /* check for array size: int name[N] */
+    /* check for array size: int name[N] or int name[N][M] */
     if (at(TOK_LBRACKET)) {
         advance_tok(); /* consume '[' */
         size_node = parse_expr();
         arr_size = size_node->ival;
         n->ival = arr_size;
         expect(TOK_RBRACKET, "expected ']'");
+        /* check for second dimension */
+        if (at(TOK_LBRACKET)) {
+            advance_tok();
+            size_node = parse_expr();
+            arr_dim2 = size_node->ival;
+            n->ival = arr_size * arr_dim2; /* total elements for allocation */
+            n->ival3 = n->ival3 | (arr_dim2 << 16);
+            expect(TOK_RBRACKET, "expected ']'");
+        }
     }
-    /* brace initializer: int name[N] = {e0, e1, ...} */
+    /* brace initializer: int name[N] = {e0, e1, ...} or int name[N][M] = {{...},...} */
     if (arr_size > 0 && at(TOK_EQ)) {
         advance_tok(); /* consume '=' */
         expect(TOK_LBRACE, "expected '{'");
@@ -725,9 +736,26 @@ struct Node *parse_var_decl(void) {
         init_elems->items = (struct Node **)0;
         init_elems->count = 0;
         init_elems->cap = 0;
-        while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
-            nlist_push(init_elems, parse_expr_bp(2));
-            if (at(TOK_COMMA)) advance_tok();
+        if (arr_dim2 > 0) {
+            /* 2D array: parse nested braces {{e0,e1,...},{e2,e3,...}} */
+            while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+                if (at(TOK_LBRACE)) {
+                    advance_tok(); /* consume inner '{' */
+                    while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+                        nlist_push(init_elems, parse_expr_bp(2));
+                        if (at(TOK_COMMA)) advance_tok();
+                    }
+                    expect(TOK_RBRACE, "expected '}'");
+                } else {
+                    nlist_push(init_elems, parse_expr_bp(2));
+                }
+                if (at(TOK_COMMA)) advance_tok();
+            }
+        } else {
+            while (!at(TOK_RBRACE) && !at(TOK_EOF)) {
+                nlist_push(init_elems, parse_expr_bp(2));
+                if (at(TOK_COMMA)) advance_tok();
+            }
         }
         expect(TOK_RBRACE, "expected '}'");
         expect(TOK_SEMI, "expected ';'");
@@ -738,13 +766,31 @@ struct Node *parse_var_decl(void) {
         blk_stmts->cap = 0;
         nlist_push(blk_stmts, n);
         for (ei = 0; ei < init_elems->count; ei++) {
-            idx_lit = node_new(ND_INT_LIT, line, col);
-            idx_lit->ival = ei;
             id_node = node_new(ND_IDENT, line, col);
             id_node->sval = n->sval;
-            sub_node = node_new(ND_SUBSCRIPT, line, col);
-            sub_node->c0 = id_node;
-            sub_node->c1 = idx_lit;
+            if (arr_dim2 > 0) {
+                /* 2D: a[row][col] = val */
+                struct Node *row_lit;
+                struct Node *col_lit;
+                struct Node *inner_sub;
+                row_lit = node_new(ND_INT_LIT, line, col);
+                row_lit->ival = ei / arr_dim2;
+                col_lit = node_new(ND_INT_LIT, line, col);
+                col_lit->ival = ei % arr_dim2;
+                inner_sub = node_new(ND_SUBSCRIPT, line, col);
+                inner_sub->c0 = id_node;
+                inner_sub->c1 = row_lit;
+                sub_node = node_new(ND_SUBSCRIPT, line, col);
+                sub_node->c0 = inner_sub;
+                sub_node->c1 = col_lit;
+            } else {
+                /* 1D: a[idx] = val */
+                idx_lit = node_new(ND_INT_LIT, line, col);
+                idx_lit->ival = ei;
+                sub_node = node_new(ND_SUBSCRIPT, line, col);
+                sub_node->c0 = id_node;
+                sub_node->c1 = idx_lit;
+            }
             asgn_node = node_new(ND_ASSIGN, line, col);
             asgn_node->ival = TOK_EQ;
             asgn_node->c0 = sub_node;
