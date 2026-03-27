@@ -1,0 +1,4 @@
+forward goto: x = 0
+backward goto sum = 15
+was big
+done, x = 10

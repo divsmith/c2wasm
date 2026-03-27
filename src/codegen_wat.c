@@ -26,6 +26,8 @@ void emit_store(int esz) {
 /* Forward declarations for dispatch table refactoring */
 void gen_expr(struct Node *n);
 void gen_stmt(struct Node *n);
+void gen_stmt_goto(struct Node *n);
+void gen_stmt_label(struct Node *n);
 
 typedef void (*GenExprFn)(struct Node *);
 typedef void (*GenStmtFn)(struct Node *);
@@ -1595,6 +1597,183 @@ void init_gen_stmt_tbl(void) {
     gen_stmt_tbl[ND_CONTINUE] = gen_stmt_continue;
     gen_stmt_tbl[ND_BLOCK] = gen_stmt_block;
     gen_stmt_tbl[ND_SWITCH] = gen_stmt_switch;
+    gen_stmt_tbl[ND_GOTO] = gen_stmt_goto;
+    gen_stmt_tbl[ND_LABEL] = gen_stmt_label;
+}
+
+/* --- Goto state machine support --- */
+
+#define MAX_GOTO_LABELS 64
+
+char **goto_label_names;
+int goto_label_count;
+int goto_active; /* 1 when inside a goto state machine */
+
+void init_goto_labels(void) {
+    goto_label_names = (char **)malloc(MAX_GOTO_LABELS * sizeof(void *));
+    goto_label_count = 0;
+    goto_active = 0;
+}
+
+int goto_label_state(char *name) {
+    int i;
+    for (i = 0; i < goto_label_count; i++) {
+        if (strcmp(goto_label_names[i], name) == 0) return i + 1;
+    }
+    return -1;
+}
+
+int ast_has_goto(struct Node *n) {
+    int i;
+    if (n == (struct Node *)0) return 0;
+    if (n->kind == ND_GOTO || n->kind == ND_LABEL) return 1;
+    if (ast_has_goto(n->c0)) return 1;
+    if (ast_has_goto(n->c1)) return 1;
+    if (ast_has_goto(n->c2)) return 1;
+    if (ast_has_goto(n->c3)) return 1;
+    if (n->list != (struct Node **)0) {
+        for (i = 0; i < n->ival2; i++) {
+            if (ast_has_goto(n->list[i])) return 1;
+        }
+    }
+    return 0;
+}
+
+void collect_goto_labels(struct Node *n) {
+    int i;
+    if (n == (struct Node *)0) return;
+    if (n->kind == ND_LABEL) {
+        if (goto_label_count < MAX_GOTO_LABELS) {
+            goto_label_names[goto_label_count] = n->sval;
+            goto_label_count++;
+        }
+    }
+    collect_goto_labels(n->c0);
+    collect_goto_labels(n->c1);
+    collect_goto_labels(n->c2);
+    collect_goto_labels(n->c3);
+    if (n->list != (struct Node **)0) {
+        for (i = 0; i < n->ival2; i++) {
+            collect_goto_labels(n->list[i]);
+        }
+    }
+}
+
+void gen_stmt_goto(struct Node *n) {
+    int state;
+    state = goto_label_state(n->sval);
+    if (state < 0) error(n->nline, n->ncol, "undefined label in goto");
+    emit_indent();
+    out("i32.const "); out_d(state); out("\n");
+    emit_indent();
+    out("local.set $__goto_state\n");
+    emit_indent();
+    out("br $__goto_loop\n");
+}
+
+void gen_stmt_label(struct Node *n) {
+    /* labels are handled by the state machine partitioning, not here */
+}
+
+void gen_goto_body(struct Node *body) {
+    int i;
+    int nstmts;
+    int cur_state;
+    int nstates;
+
+    nstmts = body->ival2;
+    nstates = goto_label_count + 1;
+
+    /* emit __goto_state local */
+    emit_indent();
+    out("(local $__goto_state i32)\n");
+
+    /* state machine wrapper */
+    emit_indent();
+    out("(block $__goto_exit\n");
+    indent_level++;
+    emit_indent();
+    out("(loop $__goto_loop\n");
+    indent_level++;
+
+    /* emit state dispatch: one if block per state */
+    cur_state = 0;
+    /* state 0 */
+    emit_indent();
+    out("(local.get $__goto_state)\n");
+    emit_indent();
+    out("(i32.eqz)\n");
+    emit_indent();
+    out("(if (then\n");
+    indent_level++;
+    for (i = 0; i < nstmts; i++) {
+        if (body->list[i]->kind == ND_LABEL) break;
+        gen_stmt(body->list[i]);
+    }
+    /* fall through to next state or exit */
+    if (goto_label_count > 0) {
+        emit_indent();
+        out("i32.const 1\n");
+        emit_indent();
+        out("local.set $__goto_state\n");
+        emit_indent();
+        out("br $__goto_loop\n");
+    } else {
+        emit_indent();
+        out("br $__goto_exit\n");
+    }
+    indent_level--;
+    emit_indent();
+    out("))\n");
+
+    /* states 1..N for each label */
+    cur_state = 1;
+    while (i < nstmts) {
+        /* skip the ND_LABEL node itself */
+        if (body->list[i]->kind == ND_LABEL) {
+            emit_indent();
+            out("(local.get $__goto_state)\n");
+            emit_indent();
+            out("(i32.const "); out_d(cur_state); out(")\n");
+            emit_indent();
+            out("(i32.eq)\n");
+            emit_indent();
+            out("(if (then\n");
+            indent_level++;
+            i++;
+            /* emit statements until next label or end */
+            while (i < nstmts && body->list[i]->kind != ND_LABEL) {
+                gen_stmt(body->list[i]);
+                i++;
+            }
+            /* fall through to next state or exit */
+            if (i < nstmts && body->list[i]->kind == ND_LABEL) {
+                emit_indent();
+                out("i32.const "); out_d(cur_state + 1); out("\n");
+                emit_indent();
+                out("local.set $__goto_state\n");
+                emit_indent();
+                out("br $__goto_loop\n");
+            } else {
+                emit_indent();
+                out("br $__goto_exit\n");
+            }
+            indent_level--;
+            emit_indent();
+            out("))\n");
+            cur_state++;
+        } else {
+            i++;
+        }
+    }
+
+    /* end loop and exit block */
+    indent_level--;
+    emit_indent();
+    out(")\n"); /* end loop */
+    indent_level--;
+    emit_indent();
+    out(")\n"); /* end block */
 }
 
 /* --- Function codegen --- */
@@ -1661,8 +1840,17 @@ void gen_func(struct Node *n) {
     emit_indent();
     out("(local $__ftmp f64)\n");
     body = n->c0;
-    for (i = 0; i < body->ival2; i++) {
-        gen_stmt(body->list[i]);
+    /* Check if function uses goto/labels */
+    if (ast_has_goto(body)) {
+        goto_label_count = 0;
+        collect_goto_labels(body);
+        goto_active = 1;
+        gen_goto_body(body);
+        goto_active = 0;
+    } else {
+        for (i = 0; i < body->ival2; i++) {
+            gen_stmt(body->list[i]);
+        }
     }
     if (n->ival != 1) {
         if (ret_float) {

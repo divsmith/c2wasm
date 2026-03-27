@@ -20,6 +20,7 @@ int main(void) {
     init_static_map();
     init_gen_expr_tbl();
     init_gen_stmt_tbl();
+    init_goto_labels();
 
     read_source();
     lex_init();

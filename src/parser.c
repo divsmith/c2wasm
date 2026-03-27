@@ -1002,6 +1002,37 @@ struct Node *parse_stmt(void) {
     }
     if (at(TOK_LBRACE)) return parse_block();
     if (is_type_token()) return parse_var_decl();
+    /* goto statement */
+    if (at(TOK_GOTO)) {
+        line = cur->line;
+        col = cur->col;
+        advance_tok();
+        if (!at(TOK_IDENT)) error(cur->line, cur->col, "expected label name after goto");
+        n = node_new(ND_GOTO, line, col);
+        n->sval = strdupn(cur->text, 127);
+        advance_tok();
+        expect(TOK_SEMI, "expected ';' after goto");
+        return n;
+    }
+    /* label: stmt */
+    if (at(TOK_IDENT)) {
+        int lsp;
+        int lsl;
+        int lsc;
+        struct Token *lst;
+        int is_label;
+        lsp = lex_pos; lsl = lex_line; lsc = lex_col; lst = cur;
+        advance_tok();
+        is_label = at(TOK_COLON);
+        lex_pos = lsp; lex_line = lsl; lex_col = lsc; cur = lst;
+        if (is_label) {
+            n = node_new(ND_LABEL, cur->line, cur->col);
+            n->sval = strdupn(cur->text, 127);
+            advance_tok(); /* consume label ident */
+            advance_tok(); /* consume ':' */
+            return n;
+        }
+    }
 
     line = cur->line;
     col = cur->col;

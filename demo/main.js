@@ -878,6 +878,37 @@
       '    printf("sizeof(union Number) = %d\\n", sizeof(union Number));\n' +
       '    free(np);\n' +
       '    return 0;\n' +
+      '}\n',
+
+    goto_labels:
+      '// goto and labels\n' +
+      'int main() {\n' +
+      '    int i;\n' +
+      '    int sum;\n' +
+      '\n' +
+      '    /* Forward goto */\n' +
+      '    goto start;\n' +
+      '    printf("this is skipped\\n");\n' +
+      'start:\n' +
+      '    printf("jumped to start\\n");\n' +
+      '\n' +
+      '    /* Backward goto as loop */\n' +
+      '    sum = 0;\n' +
+      '    i = 1;\n' +
+      'add_next:\n' +
+      '    if (i <= 10) {\n' +
+      '        sum = sum + i;\n' +
+      '        i = i + 1;\n' +
+      '        goto add_next;\n' +
+      '    }\n' +
+      '    printf("sum 1..10 = %d\\n", sum);\n' +
+      '\n' +
+      '    /* Multiple labels */\n' +
+      '    goto end;\n' +
+      '    printf("this is also skipped\\n");\n' +
+      'end:\n' +
+      '    printf("done\\n");\n' +
+      '    return 0;\n' +
       '}\n'
   };
 

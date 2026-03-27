@@ -19,6 +19,7 @@ void add_local(char *name, int elem_size, int is_unsigned, int is_float);
 void collect_locals(struct Node *n);
 void init_loop_labels(void);
 void init_static_map(void);
+void init_goto_labels(void);
 char *find_static_global(char *name);
 int var_elem_size(char *name);
 int var_is_unsigned(char *name);
