@@ -38,10 +38,16 @@ int lex_pos;
 int lex_line;
 int lex_col;
 
+/* Preprocessor conditional stack */
+int *pp_stack;
+int pp_sp;
+
 void lex_init(void) {
     lex_pos = 0;
     lex_line = 1;
     lex_col = 1;
+    pp_stack = (int *)malloc(MAX_PP_DEPTH * sizeof(int));
+    pp_sp = 0;
 }
 
 char lp(void) {
@@ -218,6 +224,11 @@ int nmacros;
 void init_macros(void) {
     macros = (struct Macro **)malloc(MAX_MACROS * sizeof(void *));
     nmacros = 0;
+    /* predefined macro: __STDC__ */
+    macros[0] = (struct Macro *)malloc(sizeof(struct Macro));
+    macros[0]->name = strdupn("__STDC__", 8);
+    macros[0]->value = 1;
+    nmacros = 1;
 }
 
 int find_macro(char *name) {
@@ -262,6 +273,263 @@ int add_string(char *data, int len) {
     str_table[id]->offset = data_ptr;
     data_ptr += len + 1;
     return id;
+}
+
+/* ================================================================
+ * Preprocessor #if expression evaluator
+ * ================================================================ */
+
+int pp_expr(void);
+
+void pp_skip_hws(void) {
+    while (lp() == ' ' || lp() == '\t') la();
+}
+
+int pp_primary(void) {
+    int val;
+    char nm[128];
+    int ni;
+    int mi;
+    int has_paren;
+
+    pp_skip_hws();
+
+    if (lp() == '(') {
+        la();
+        val = pp_expr();
+        pp_skip_hws();
+        if (lp() == ')') la();
+        return val;
+    }
+
+    if (is_digit(lp())) {
+        val = 0;
+        if (lp() == '0' && (lp2() == 'x' || lp2() == 'X')) {
+            la(); la();
+            while (is_xdigit(lp())) {
+                val = val * 16 + hex_val(la());
+            }
+        } else {
+            while (is_digit(lp())) {
+                val = val * 10 + (la() - '0');
+            }
+        }
+        if (lp() == 'L' || lp() == 'l') la();
+        return val;
+    }
+
+    if (lp() == '\'') {
+        la();
+        if (lp() == '\\') {
+            la();
+            val = la();
+            if (val == 'n') val = 10;
+            else if (val == 't') val = 9;
+            else if (val == '0') val = 0;
+        } else {
+            val = la();
+        }
+        if (lp() == '\'') la();
+        return val;
+    }
+
+    if (is_alpha(lp()) || lp() == '_') {
+        ni = 0;
+        while (is_alnum(lp()) || lp() == '_') {
+            if (ni < 127) {
+                nm[ni] = la();
+                ni++;
+            } else {
+                la();
+            }
+        }
+        nm[ni] = '\0';
+
+        if (strcmp(nm, "defined") == 0) {
+            pp_skip_hws();
+            has_paren = 0;
+            if (lp() == '(') {
+                la();
+                has_paren = 1;
+                pp_skip_hws();
+            }
+            ni = 0;
+            while (is_alnum(lp()) || lp() == '_') {
+                if (ni < 127) {
+                    nm[ni] = la();
+                    ni++;
+                } else {
+                    la();
+                }
+            }
+            nm[ni] = '\0';
+            if (has_paren) {
+                pp_skip_hws();
+                if (lp() == ')') la();
+            }
+            if (find_macro(nm) >= 0) return 1;
+            return 0;
+        }
+
+        if (strcmp(nm, "__LINE__") == 0) return lex_line;
+
+        mi = find_macro(nm);
+        if (mi >= 0) return macros[mi]->value;
+        return 0;
+    }
+
+    return 0;
+}
+
+int pp_unary(void) {
+    pp_skip_hws();
+    if (lp() == '!') {
+        la();
+        return !pp_unary();
+    }
+    if (lp() == '-') {
+        la();
+        return -pp_unary();
+    }
+    if (lp() == '+') {
+        la();
+        return pp_unary();
+    }
+    return pp_primary();
+}
+
+int pp_mul(void) {
+    int l;
+    int r;
+    char op;
+    l = pp_unary();
+    for (;;) {
+        pp_skip_hws();
+        op = lp();
+        if (op == '*') {
+            la();
+            r = pp_unary();
+            l = l * r;
+        } else if (op == '/' && lp2() != '*') {
+            la();
+            r = pp_unary();
+            if (r != 0) l = l / r;
+        } else if (op == '%') {
+            la();
+            r = pp_unary();
+            if (r != 0) l = l % r;
+        } else {
+            break;
+        }
+    }
+    return l;
+}
+
+int pp_add(void) {
+    int l;
+    int r;
+    char op;
+    l = pp_mul();
+    for (;;) {
+        pp_skip_hws();
+        op = lp();
+        if (op == '+') {
+            la();
+            r = pp_mul();
+            l = l + r;
+        } else if (op == '-') {
+            la();
+            r = pp_mul();
+            l = l - r;
+        } else {
+            break;
+        }
+    }
+    return l;
+}
+
+int pp_rel(void) {
+    int l;
+    int r;
+    l = pp_add();
+    for (;;) {
+        pp_skip_hws();
+        if (lp() == '<' && lp2() == '=') {
+            la(); la();
+            r = pp_add();
+            l = (l <= r);
+        } else if (lp() == '>' && lp2() == '=') {
+            la(); la();
+            r = pp_add();
+            l = (l >= r);
+        } else if (lp() == '<') {
+            la();
+            r = pp_add();
+            l = (l < r);
+        } else if (lp() == '>') {
+            la();
+            r = pp_add();
+            l = (l > r);
+        } else {
+            break;
+        }
+    }
+    return l;
+}
+
+int pp_eq(void) {
+    int l;
+    int r;
+    l = pp_rel();
+    for (;;) {
+        pp_skip_hws();
+        if (lp() == '=' && lp2() == '=') {
+            la(); la();
+            r = pp_rel();
+            l = (l == r);
+        } else if (lp() == '!' && lp2() == '=') {
+            la(); la();
+            r = pp_rel();
+            l = (l != r);
+        } else {
+            break;
+        }
+    }
+    return l;
+}
+
+int pp_and(void) {
+    int l;
+    int r;
+    l = pp_eq();
+    for (;;) {
+        pp_skip_hws();
+        if (lp() == '&' && lp2() == '&') {
+            la(); la();
+            r = pp_eq();
+            l = l && r;
+        } else {
+            break;
+        }
+    }
+    return l;
+}
+
+int pp_expr(void) {
+    int l;
+    int r;
+    l = pp_and();
+    for (;;) {
+        pp_skip_hws();
+        if (lp() == '|' && lp2() == '|') {
+            la(); la();
+            r = pp_and();
+            l = l || r;
+        } else {
+            break;
+        }
+    }
+    return l;
 }
 
 /* ================================================================
@@ -310,6 +578,93 @@ struct Token *next_token(void) {
         s = lex_pos;
         while (is_alpha(lp())) la();
         dlen = lex_pos - s;
+
+        /* --- conditional directives (always processed, even when skipping) --- */
+        if (dlen == 5 && memcmp(src + s, "ifdef", 5) == 0) {
+            if (pp_sp >= MAX_PP_DEPTH) error(lex_line, lex_col, "#ifdef nested too deep");
+            while (lp() == ' ' || lp() == '\t') la();
+            name = (char *)malloc(128);
+            ni = 0;
+            while (is_alnum(lp()) || lp() == '_') {
+                if (ni < 127) { name[ni] = la(); ni++; } else { la(); }
+            }
+            name[ni] = '\0';
+            if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {
+                pp_stack[pp_sp] = PP_DONE;
+            } else {
+                pp_stack[pp_sp] = (find_macro(name) >= 0) ? PP_ACTIVE : PP_SKIPPING;
+            }
+            pp_sp++;
+            while (lex_pos < src_len && lp() != '\n') la();
+            return next_token();
+        }
+        if (dlen == 6 && memcmp(src + s, "ifndef", 6) == 0) {
+            if (pp_sp >= MAX_PP_DEPTH) error(lex_line, lex_col, "#ifndef nested too deep");
+            while (lp() == ' ' || lp() == '\t') la();
+            name = (char *)malloc(128);
+            ni = 0;
+            while (is_alnum(lp()) || lp() == '_') {
+                if (ni < 127) { name[ni] = la(); ni++; } else { la(); }
+            }
+            name[ni] = '\0';
+            if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {
+                pp_stack[pp_sp] = PP_DONE;
+            } else {
+                pp_stack[pp_sp] = (find_macro(name) >= 0) ? PP_SKIPPING : PP_ACTIVE;
+            }
+            pp_sp++;
+            while (lex_pos < src_len && lp() != '\n') la();
+            return next_token();
+        }
+        if (dlen == 2 && memcmp(src + s, "if", 2) == 0) {
+            if (pp_sp >= MAX_PP_DEPTH) error(lex_line, lex_col, "#if nested too deep");
+            if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {
+                pp_stack[pp_sp] = PP_DONE;
+            } else {
+                val = pp_expr();
+                pp_stack[pp_sp] = (val != 0) ? PP_ACTIVE : PP_SKIPPING;
+            }
+            pp_sp++;
+            while (lex_pos < src_len && lp() != '\n') la();
+            return next_token();
+        }
+        if (dlen == 4 && memcmp(src + s, "elif", 4) == 0) {
+            if (pp_sp <= 0) error(lex_line, lex_col, "#elif without matching #if");
+            if (pp_stack[pp_sp - 1] == PP_SKIPPING) {
+                val = pp_expr();
+                pp_stack[pp_sp - 1] = (val != 0) ? PP_ACTIVE : PP_SKIPPING;
+            } else if (pp_stack[pp_sp - 1] == PP_ACTIVE) {
+                pp_stack[pp_sp - 1] = PP_DONE;
+            }
+            /* PP_DONE stays PP_DONE */
+            while (lex_pos < src_len && lp() != '\n') la();
+            return next_token();
+        }
+        if (dlen == 4 && memcmp(src + s, "else", 4) == 0) {
+            if (pp_sp <= 0) error(lex_line, lex_col, "#else without matching #if");
+            if (pp_stack[pp_sp - 1] == PP_SKIPPING) {
+                pp_stack[pp_sp - 1] = PP_ACTIVE;
+            } else if (pp_stack[pp_sp - 1] == PP_ACTIVE) {
+                pp_stack[pp_sp - 1] = PP_DONE;
+            }
+            /* PP_DONE stays PP_DONE */
+            while (lex_pos < src_len && lp() != '\n') la();
+            return next_token();
+        }
+        if (dlen == 5 && memcmp(src + s, "endif", 5) == 0) {
+            if (pp_sp <= 0) error(lex_line, lex_col, "#endif without matching #if");
+            pp_sp--;
+            while (lex_pos < src_len && lp() != '\n') la();
+            return next_token();
+        }
+
+        /* --- if skipping, ignore all other directives --- */
+        if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {
+            while (lex_pos < src_len && lp() != '\n') la();
+            return next_token();
+        }
+
+        /* --- active-only directives --- */
         if (dlen == 6 && memcmp(src + s, "define", 6) == 0) {
             while (lp() == ' ' || lp() == '\t') la();
             name = (char *)malloc(128);
@@ -400,8 +755,40 @@ struct Token *next_token(void) {
                 while (lex_pos < src_len && lp() != '\n') la();
                 return next_token();
             }
+        } else if (dlen == 5 && memcmp(src + s, "undef", 5) == 0) {
+            while (lp() == ' ' || lp() == '\t') la();
+            name = (char *)malloc(128);
+            ni = 0;
+            while (is_alnum(lp()) || lp() == '_') {
+                if (ni < 127) { name[ni] = la(); ni++; } else { la(); }
+            }
+            name[ni] = '\0';
+            mi = find_macro(name);
+            if (mi >= 0) {
+                for (i = mi; i < nmacros - 1; i++) {
+                    macros[i] = macros[i + 1];
+                }
+                nmacros--;
+            }
+        } else if (dlen == 5 && memcmp(src + s, "error", 5) == 0) {
+            while (lp() == ' ' || lp() == '\t') la();
+            s = lex_pos;
+            while (lex_pos < src_len && lp() != '\n') la();
+            len = lex_pos - s;
+            __s = (char *)malloc(len + 16);
+            memcpy(__s, "#error ", 7);
+            memcpy(__s + 7, src + s, len);
+            __s[7 + len] = '\0';
+            error(lex_line, lex_col, __s);
         }
+        /* #pragma and unknown directives: silently skip */
         /* skip to end of line */
+        while (lex_pos < src_len && lp() != '\n') la();
+        return next_token();
+    }
+
+    /* preprocessor: skip non-directive tokens when in a false branch */
+    if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {
         while (lex_pos < src_len && lp() != '\n') la();
         return next_token();
     }
@@ -428,6 +815,13 @@ struct Token *next_token(void) {
             if (mi >= 0) {
                 t->kind = TOK_INT_LIT;
                 t->int_val = macros[mi]->value;
+            } else if (strcmp(t->text, "__LINE__") == 0) {
+                t->kind = TOK_INT_LIT;
+                t->int_val = t->line;
+            } else if (strcmp(t->text, "__FILE__") == 0) {
+                t->kind = TOK_STR_LIT;
+                t->text = strdupn("stdin", 5);
+                t->int_val = 5;
             }
         }
         return t;

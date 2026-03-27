@@ -58,7 +58,7 @@ c2wasm supports a carefully chosen subset of C89/C90:
 | Memory | `malloc`, `free` (free-list allocator with coalescing), `calloc` |
 | Built-ins | `exit`, `putchar`, `getchar`, `printf` (`%d %s %c %x %f`), `puts` |
 | libc | `strlen`, `strcmp`, `strcpy`, `strcat`, `strchr`, `strstr`, `memcpy`, `memset`, `memmove`, `atoi`, `abs`, `rand`/`srand`, `isdigit`, `isalpha`, `toupper`, `tolower`, and more |
-| Preprocessor | `#define NAME integer-literal`, `enum`, `typedef` (structs and function pointer types) |
+| Preprocessor | `#define`, `#include`, `#ifdef`/`#ifndef`/`#if`/`#elif`/`#else`/`#endif`, `#undef`, `#error`, `#pragma`, `defined()`, `__LINE__`, `__FILE__`, `__STDC__` |
 | Initializers | Local/global array initializers, global `char *arr[] = {"..."}` string arrays |
 | Storage class | `static` (function-scope with persistent state), `extern`, `register`/`auto`/`volatile` (accepted, ignored) |
 

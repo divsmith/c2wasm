@@ -141,5 +141,10 @@ enum {
 #define MAX_INCLUDES 64
 #define MAX_INCLUDE_SRC 262144
 #define MAX_STATIC_LOCALS 64
+#define MAX_PP_DEPTH 64
+
+#define PP_ACTIVE 0
+#define PP_SKIPPING 1
+#define PP_DONE 2
 
 #define ND_COUNT 31

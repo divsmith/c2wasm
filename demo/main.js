@@ -790,6 +790,69 @@
       '    printf("  Final total: %d\\n", accumulator(0));\n' +
       '\n' +
       '    return 0;\n' +
+      '}\n',
+
+    preprocessor:
+      '// Preprocessor: #ifdef, #ifndef, #if, #elif, #undef, __LINE__\n' +
+      '#include "libc.h"\n' +
+      '\n' +
+      '#define PLATFORM 2\n' +
+      '#define DEBUG 1\n' +
+      '#define VERSION 3\n' +
+      '\n' +
+      'int main() {\n' +
+      '    printf("=== Preprocessor Conditionals ===\\n\\n");\n' +
+      '\n' +
+      '    /* #ifdef / #ifndef */\n' +
+      '#ifdef DEBUG\n' +
+      '    printf("[DEBUG] Debug mode is ON\\n");\n' +
+      '#endif\n' +
+      '\n' +
+      '#ifndef RELEASE\n' +
+      '    printf("[INFO] Release mode is OFF\\n");\n' +
+      '#endif\n' +
+      '\n' +
+      '    /* #if with expressions and defined() */\n' +
+      '#if PLATFORM == 1\n' +
+      '    printf("Platform: Linux\\n");\n' +
+      '#elif PLATFORM == 2\n' +
+      '    printf("Platform: WebAssembly\\n");\n' +
+      '#elif PLATFORM == 3\n' +
+      '    printf("Platform: macOS\\n");\n' +
+      '#else\n' +
+      '    printf("Platform: Unknown\\n");\n' +
+      '#endif\n' +
+      '\n' +
+      '    /* Nested conditionals */\n' +
+      '#if VERSION >= 2\n' +
+      '    printf("Version %d features:\\n", VERSION);\n' +
+      '    #if defined(DEBUG)\n' +
+      '        printf("  - verbose logging\\n");\n' +
+      '    #endif\n' +
+      '    #if VERSION >= 3\n' +
+      '        printf("  - new optimizer\\n");\n' +
+      '    #endif\n' +
+      '#endif\n' +
+      '\n' +
+      '    /* #undef */\n' +
+      '#undef DEBUG\n' +
+      '#ifdef DEBUG\n' +
+      '    printf("BUG: should not print\\n");\n' +
+      '#else\n' +
+      '    printf("DEBUG is now undefined\\n");\n' +
+      '#endif\n' +
+      '\n' +
+      '    /* __LINE__ and __STDC__ */\n' +
+      '    printf("Current line: %d\\n", __LINE__);\n' +
+      '#if __STDC__ == 1\n' +
+      '    printf("Standard C compliant\\n");\n' +
+      '#endif\n' +
+      '\n' +
+      '    /* #pragma is silently ignored */\n' +
+      '#pragma once\n' +
+      '\n' +
+      '    printf("\\nAll preprocessor tests passed!\\n");\n' +
+      '    return 0;\n' +
       '}\n'
   };
 
