@@ -74,6 +74,7 @@ Supported C subset at a glance: `int`, `char`, `void`, pointers, 1D arrays, stru
 - **Update `README.md`** for relevant changes in features, usage, or behavior so docs stay in sync with code.
 - Token kinds, AST node kinds, and other constants are `#define` integer literals in `constants.h`.
 - `free()` uses a free-list allocator with coalescing.
+- **Test in browser** by building and running the serve command and using agent-browser to validate the demo still works.
 
 ---
 
