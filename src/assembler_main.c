@@ -22,7 +22,7 @@ char *strdupn(char *s, int maxlen) {
 #include "assembler.h"
 #include "assembler.c"
 
-int main() {
+int main(void) {
     struct ByteVec *input;
     int ch;
 

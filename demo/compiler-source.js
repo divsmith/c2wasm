@@ -157,7 +157,18 @@ COMPILER_SOURCE["constants.h"] =
   "    TOK_LONG = 70,\n" +
   "    TOK_FLOAT_LIT = 71,\n" +
   "    TOK_FLOAT = 72,\n" +
-  "    TOK_DOUBLE = 73\n" +
+  "    TOK_DOUBLE = 73,\n" +
+  "    TOK_STAR_EQ = 74,\n" +
+  "    TOK_SLASH_EQ = 75,\n" +
+  "    TOK_PERCENT_EQ = 76,\n" +
+  "    TOK_REGISTER = 77,\n" +
+  "    TOK_AUTO = 78,\n" +
+  "    TOK_VOLATILE = 79,\n" +
+  "    TOK_STATIC = 80,\n" +
+  "    TOK_EXTERN = 81,\n" +
+  "    TOK_UNION = 82,\n" +
+  "    TOK_GOTO = 83,\n" +
+  "    TOK_ELLIPSIS = 84\n" +
   "};\n" +
   "\n" +
   "/* Node kinds */\n" +
@@ -192,7 +203,10 @@ COMPILER_SOURCE["constants.h"] =
   "    ND_DEFAULT = 27,\n" +
   "    ND_FLOAT_LIT = 28,\n" +
   "    ND_CAST = 29,\n" +
-  "    ND_CALL_INDIRECT = 30\n" +
+  "    ND_CALL_INDIRECT = 30,\n" +
+  "    ND_GOTO = 31,\n" +
+  "    ND_LABEL = 32,\n" +
+  "    ND_VA_ARG = 33\n" +
   "};\n" +
   "\n" +
   "/* Limits */\n" +
@@ -212,8 +226,14 @@ COMPILER_SOURCE["constants.h"] =
   "#define MAX_INCLUDE_DEPTH 32\n" +
   "#define MAX_INCLUDES 64\n" +
   "#define MAX_INCLUDE_SRC 262144\n" +
+  "#define MAX_STATIC_LOCALS 64\n" +
+  "#define MAX_PP_DEPTH 64\n" +
   "\n" +
-  "#define ND_COUNT 31\n" +
+  "#define PP_ACTIVE 0\n" +
+  "#define PP_SKIPPING 1\n" +
+  "#define PP_DONE 2\n" +
+  "\n" +
+  "#define ND_COUNT 34\n" +
   "";
 
 COMPILER_SOURCE["util.c"] =
@@ -232,6 +252,35 @@ COMPILER_SOURCE["util.c"] =
   "    strncpy(dst, s, maxlen);\n" +
   "    dst[maxlen] = '\\0';\n" +
   "    return dst;\n" +
+  "}\n" +
+  "\n" +
+  "/* Build mangled name: __static_{func}_{var} */\n" +
+  "char *mangle_static(char *func, char *var) {\n" +
+  "    char *r;\n" +
+  "    int fl;\n" +
+  "    int vl;\n" +
+  "    int i;\n" +
+  "    int j;\n" +
+  "    fl = 0;\n" +
+  "    while (func[fl]) fl++;\n" +
+  "    vl = 0;\n" +
+  "    while (var[vl]) vl++;\n" +
+  "    r = (char *)malloc(9 + fl + 1 + vl + 1);\n" +
+  "    j = 0;\n" +
+  "    r[j] = '_'; j++;\n" +
+  "    r[j] = '_'; j++;\n" +
+  "    r[j] = 's'; j++;\n" +
+  "    r[j] = 't'; j++;\n" +
+  "    r[j] = 'a'; j++;\n" +
+  "    r[j] = 't'; j++;\n" +
+  "    r[j] = 'i'; j++;\n" +
+  "    r[j] = 'c'; j++;\n" +
+  "    r[j] = '_'; j++;\n" +
+  "    for (i = 0; i < fl; i++) { r[j] = func[i]; j++; }\n" +
+  "    r[j] = '_'; j++;\n" +
+  "    for (i = 0; i < vl; i++) { r[j] = var[i]; j++; }\n" +
+  "    r[j] = 0;\n" +
+  "    return r;\n" +
   "}\n" +
   "\n" +
   "";
@@ -278,6 +327,7 @@ COMPILER_SOURCE["lexer.h"] =
   "    int is_lex_pos;\n" +
   "    int is_lex_line;\n" +
   "    int is_lex_col;\n" +
+  "    int macro_idx; /* -1 for file includes, macro index for expansions */\n" +
   "};\n" +
   "\n" +
   "struct Token {\n" +
@@ -291,6 +341,11 @@ COMPILER_SOURCE["lexer.h"] =
   "struct Macro {\n" +
   "    char *name;\n" +
   "    int value;\n" +
+  "    int is_func_macro;\n" +
+  "    int param_count;\n" +
+  "    char **param_names;\n" +
+  "    char *body;\n" +
+  "    int expanding;\n" +
   "};\n" +
   "\n" +
   "struct StringEntry {\n" +
@@ -350,10 +405,16 @@ COMPILER_SOURCE["lexer.c"] =
   "int lex_line;\n" +
   "int lex_col;\n" +
   "\n" +
+  "/* Preprocessor conditional stack */\n" +
+  "int *pp_stack;\n" +
+  "int pp_sp;\n" +
+  "\n" +
   "void lex_init(void) {\n" +
   "    lex_pos = 0;\n" +
   "    lex_line = 1;\n" +
   "    lex_col = 1;\n" +
+  "    pp_stack = (int *)malloc(MAX_PP_DEPTH * sizeof(int));\n" +
+  "    pp_sp = 0;\n" +
   "}\n" +
   "\n" +
   "char lp(void) {\n" +
@@ -430,6 +491,17 @@ COMPILER_SOURCE["lexer.c"] =
   "    return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');\n" +
   "}\n" +
   "\n" +
+  "int hex_val(char c) {\n" +
+  "    if (c >= '0' && c <= '9') return c - '0';\n" +
+  "    if (c >= 'a' && c <= 'f') return c - 'a' + 10;\n" +
+  "    if (c >= 'A' && c <= 'F') return c - 'A' + 10;\n" +
+  "    return 0;\n" +
+  "}\n" +
+  "\n" +
+  "/* Forward declaration of macro table (needed by include_pop for macro expansion cleanup) */\n" +
+  "struct Macro **macros;\n" +
+  "int nmacros;\n" +
+  "\n" +
   "void include_push(void) {\n" +
   "    struct IncludeStack *frame;\n" +
   "    if (inc_depth >= MAX_INCLUDE_DEPTH) {\n" +
@@ -441,6 +513,7 @@ COMPILER_SOURCE["lexer.c"] =
   "    frame->is_lex_pos = lex_pos;\n" +
   "    frame->is_lex_line = lex_line;\n" +
   "    frame->is_lex_col = lex_col;\n" +
+  "    frame->macro_idx = -1;\n" +
   "    inc_stack[inc_depth] = frame;\n" +
   "    inc_depth++;\n" +
   "}\n" +
@@ -450,6 +523,10 @@ COMPILER_SOURCE["lexer.c"] =
   "    if (inc_depth <= 0) return 0;\n" +
   "    inc_depth--;\n" +
   "    frame = inc_stack[inc_depth];\n" +
+  "    /* if this frame was a macro expansion, clear expanding flag */\n" +
+  "    if (frame->macro_idx >= 0 && frame->macro_idx < nmacros) {\n" +
+  "        macros[frame->macro_idx]->expanding = 0;\n" +
+  "    }\n" +
   "    src = frame->is_src;\n" +
   "    src_len = frame->is_src_len;\n" +
   "    lex_pos = frame->is_lex_pos;\n" +
@@ -498,6 +575,13 @@ COMPILER_SOURCE["lexer.c"] =
   "    kw_add(\"long\", TOK_LONG);\n" +
   "    kw_add(\"float\", TOK_FLOAT);\n" +
   "    kw_add(\"double\", TOK_DOUBLE);\n" +
+  "    kw_add(\"register\", TOK_REGISTER);\n" +
+  "    kw_add(\"auto\", TOK_AUTO);\n" +
+  "    kw_add(\"volatile\", TOK_VOLATILE);\n" +
+  "    kw_add(\"static\", TOK_STATIC);\n" +
+  "    kw_add(\"extern\", TOK_EXTERN);\n" +
+  "    kw_add(\"union\", TOK_UNION);\n" +
+  "    kw_add(\"goto\", TOK_GOTO);\n" +
   "}\n" +
   "\n" +
   "int kw_lookup(char *s) {\n" +
@@ -512,12 +596,19 @@ COMPILER_SOURCE["lexer.c"] =
   " * Macro table for #define\n" +
   " * ================================================================ */\n" +
   "\n" +
-  "struct Macro **macros;\n" +
-  "int nmacros;\n" +
-  "\n" +
   "void init_macros(void) {\n" +
   "    macros = (struct Macro **)malloc(MAX_MACROS * sizeof(void *));\n" +
   "    nmacros = 0;\n" +
+  "    /* predefined macro: __STDC__ */\n" +
+  "    macros[0] = (struct Macro *)malloc(sizeof(struct Macro));\n" +
+  "    macros[0]->name = strdupn(\"__STDC__\", 8);\n" +
+  "    macros[0]->value = 1;\n" +
+  "    macros[0]->is_func_macro = 0;\n" +
+  "    macros[0]->param_count = 0;\n" +
+  "    macros[0]->param_names = (char **)0;\n" +
+  "    macros[0]->body = (char *)0;\n" +
+  "    macros[0]->expanding = 0;\n" +
+  "    nmacros = 1;\n" +
   "}\n" +
   "\n" +
   "int find_macro(char *name) {\n" +
@@ -565,6 +656,263 @@ COMPILER_SOURCE["lexer.c"] =
   "}\n" +
   "\n" +
   "/* ================================================================\n" +
+  " * Preprocessor #if expression evaluator\n" +
+  " * ================================================================ */\n" +
+  "\n" +
+  "int pp_expr(void);\n" +
+  "\n" +
+  "void pp_skip_hws(void) {\n" +
+  "    while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "}\n" +
+  "\n" +
+  "int pp_primary(void) {\n" +
+  "    int val;\n" +
+  "    char nm[128];\n" +
+  "    int ni;\n" +
+  "    int mi;\n" +
+  "    int has_paren;\n" +
+  "\n" +
+  "    pp_skip_hws();\n" +
+  "\n" +
+  "    if (lp() == '(') {\n" +
+  "        la();\n" +
+  "        val = pp_expr();\n" +
+  "        pp_skip_hws();\n" +
+  "        if (lp() == ')') la();\n" +
+  "        return val;\n" +
+  "    }\n" +
+  "\n" +
+  "    if (is_digit(lp())) {\n" +
+  "        val = 0;\n" +
+  "        if (lp() == '0' && (lp2() == 'x' || lp2() == 'X')) {\n" +
+  "            la(); la();\n" +
+  "            while (is_xdigit(lp())) {\n" +
+  "                val = val * 16 + hex_val(la());\n" +
+  "            }\n" +
+  "        } else {\n" +
+  "            while (is_digit(lp())) {\n" +
+  "                val = val * 10 + (la() - '0');\n" +
+  "            }\n" +
+  "        }\n" +
+  "        if (lp() == 'L' || lp() == 'l') la();\n" +
+  "        return val;\n" +
+  "    }\n" +
+  "\n" +
+  "    if (lp() == '\\'') {\n" +
+  "        la();\n" +
+  "        if (lp() == '\\\\') {\n" +
+  "            la();\n" +
+  "            val = la();\n" +
+  "            if (val == 'n') val = 10;\n" +
+  "            else if (val == 't') val = 9;\n" +
+  "            else if (val == '0') val = 0;\n" +
+  "        } else {\n" +
+  "            val = la();\n" +
+  "        }\n" +
+  "        if (lp() == '\\'') la();\n" +
+  "        return val;\n" +
+  "    }\n" +
+  "\n" +
+  "    if (is_alpha(lp()) || lp() == '_') {\n" +
+  "        ni = 0;\n" +
+  "        while (is_alnum(lp()) || lp() == '_') {\n" +
+  "            if (ni < 127) {\n" +
+  "                nm[ni] = la();\n" +
+  "                ni++;\n" +
+  "            } else {\n" +
+  "                la();\n" +
+  "            }\n" +
+  "        }\n" +
+  "        nm[ni] = '\\0';\n" +
+  "\n" +
+  "        if (strcmp(nm, \"defined\") == 0) {\n" +
+  "            pp_skip_hws();\n" +
+  "            has_paren = 0;\n" +
+  "            if (lp() == '(') {\n" +
+  "                la();\n" +
+  "                has_paren = 1;\n" +
+  "                pp_skip_hws();\n" +
+  "            }\n" +
+  "            ni = 0;\n" +
+  "            while (is_alnum(lp()) || lp() == '_') {\n" +
+  "                if (ni < 127) {\n" +
+  "                    nm[ni] = la();\n" +
+  "                    ni++;\n" +
+  "                } else {\n" +
+  "                    la();\n" +
+  "                }\n" +
+  "            }\n" +
+  "            nm[ni] = '\\0';\n" +
+  "            if (has_paren) {\n" +
+  "                pp_skip_hws();\n" +
+  "                if (lp() == ')') la();\n" +
+  "            }\n" +
+  "            if (find_macro(nm) >= 0) return 1;\n" +
+  "            return 0;\n" +
+  "        }\n" +
+  "\n" +
+  "        if (strcmp(nm, \"__LINE__\") == 0) return lex_line;\n" +
+  "\n" +
+  "        mi = find_macro(nm);\n" +
+  "        if (mi >= 0) return macros[mi]->value;\n" +
+  "        return 0;\n" +
+  "    }\n" +
+  "\n" +
+  "    return 0;\n" +
+  "}\n" +
+  "\n" +
+  "int pp_unary(void) {\n" +
+  "    pp_skip_hws();\n" +
+  "    if (lp() == '!') {\n" +
+  "        la();\n" +
+  "        return !pp_unary();\n" +
+  "    }\n" +
+  "    if (lp() == '-') {\n" +
+  "        la();\n" +
+  "        return -pp_unary();\n" +
+  "    }\n" +
+  "    if (lp() == '+') {\n" +
+  "        la();\n" +
+  "        return pp_unary();\n" +
+  "    }\n" +
+  "    return pp_primary();\n" +
+  "}\n" +
+  "\n" +
+  "int pp_mul(void) {\n" +
+  "    int l;\n" +
+  "    int r;\n" +
+  "    char op;\n" +
+  "    l = pp_unary();\n" +
+  "    for (;;) {\n" +
+  "        pp_skip_hws();\n" +
+  "        op = lp();\n" +
+  "        if (op == '*') {\n" +
+  "            la();\n" +
+  "            r = pp_unary();\n" +
+  "            l = l * r;\n" +
+  "        } else if (op == '/' && lp2() != '*') {\n" +
+  "            la();\n" +
+  "            r = pp_unary();\n" +
+  "            if (r != 0) l = l / r;\n" +
+  "        } else if (op == '%') {\n" +
+  "            la();\n" +
+  "            r = pp_unary();\n" +
+  "            if (r != 0) l = l % r;\n" +
+  "        } else {\n" +
+  "            break;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    return l;\n" +
+  "}\n" +
+  "\n" +
+  "int pp_add(void) {\n" +
+  "    int l;\n" +
+  "    int r;\n" +
+  "    char op;\n" +
+  "    l = pp_mul();\n" +
+  "    for (;;) {\n" +
+  "        pp_skip_hws();\n" +
+  "        op = lp();\n" +
+  "        if (op == '+') {\n" +
+  "            la();\n" +
+  "            r = pp_mul();\n" +
+  "            l = l + r;\n" +
+  "        } else if (op == '-') {\n" +
+  "            la();\n" +
+  "            r = pp_mul();\n" +
+  "            l = l - r;\n" +
+  "        } else {\n" +
+  "            break;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    return l;\n" +
+  "}\n" +
+  "\n" +
+  "int pp_rel(void) {\n" +
+  "    int l;\n" +
+  "    int r;\n" +
+  "    l = pp_add();\n" +
+  "    for (;;) {\n" +
+  "        pp_skip_hws();\n" +
+  "        if (lp() == '<' && lp2() == '=') {\n" +
+  "            la(); la();\n" +
+  "            r = pp_add();\n" +
+  "            l = (l <= r);\n" +
+  "        } else if (lp() == '>' && lp2() == '=') {\n" +
+  "            la(); la();\n" +
+  "            r = pp_add();\n" +
+  "            l = (l >= r);\n" +
+  "        } else if (lp() == '<') {\n" +
+  "            la();\n" +
+  "            r = pp_add();\n" +
+  "            l = (l < r);\n" +
+  "        } else if (lp() == '>') {\n" +
+  "            la();\n" +
+  "            r = pp_add();\n" +
+  "            l = (l > r);\n" +
+  "        } else {\n" +
+  "            break;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    return l;\n" +
+  "}\n" +
+  "\n" +
+  "int pp_eq(void) {\n" +
+  "    int l;\n" +
+  "    int r;\n" +
+  "    l = pp_rel();\n" +
+  "    for (;;) {\n" +
+  "        pp_skip_hws();\n" +
+  "        if (lp() == '=' && lp2() == '=') {\n" +
+  "            la(); la();\n" +
+  "            r = pp_rel();\n" +
+  "            l = (l == r);\n" +
+  "        } else if (lp() == '!' && lp2() == '=') {\n" +
+  "            la(); la();\n" +
+  "            r = pp_rel();\n" +
+  "            l = (l != r);\n" +
+  "        } else {\n" +
+  "            break;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    return l;\n" +
+  "}\n" +
+  "\n" +
+  "int pp_and(void) {\n" +
+  "    int l;\n" +
+  "    int r;\n" +
+  "    l = pp_eq();\n" +
+  "    for (;;) {\n" +
+  "        pp_skip_hws();\n" +
+  "        if (lp() == '&' && lp2() == '&') {\n" +
+  "            la(); la();\n" +
+  "            r = pp_eq();\n" +
+  "            l = l && r;\n" +
+  "        } else {\n" +
+  "            break;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    return l;\n" +
+  "}\n" +
+  "\n" +
+  "int pp_expr(void) {\n" +
+  "    int l;\n" +
+  "    int r;\n" +
+  "    l = pp_and();\n" +
+  "    for (;;) {\n" +
+  "        pp_skip_hws();\n" +
+  "        if (lp() == '|' && lp2() == '|') {\n" +
+  "            la(); la();\n" +
+  "            r = pp_and();\n" +
+  "            l = l || r;\n" +
+  "        } else {\n" +
+  "            break;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    return l;\n" +
+  "}\n" +
+  "\n" +
+  "/* ================================================================\n" +
   " * Next Token\n" +
   " * ================================================================ */\n" +
   "\n" +
@@ -584,6 +932,9 @@ COMPILER_SOURCE["lexer.c"] =
   "    int ni;\n" +
   "    int dlen;\n" +
   "    char *__s;\n" +
+  "    int sc_pos;\n" +
+  "    int sc_line;\n" +
+  "    int sc_col;\n" +
   "\n" +
   "    skip_ws();\n" +
   "    t = (struct Token *)malloc(sizeof(struct Token));\n" +
@@ -607,6 +958,93 @@ COMPILER_SOURCE["lexer.c"] =
   "        s = lex_pos;\n" +
   "        while (is_alpha(lp())) la();\n" +
   "        dlen = lex_pos - s;\n" +
+  "\n" +
+  "        /* --- conditional directives (always processed, even when skipping) --- */\n" +
+  "        if (dlen == 5 && memcmp(src + s, \"ifdef\", 5) == 0) {\n" +
+  "            if (pp_sp >= MAX_PP_DEPTH) error(lex_line, lex_col, \"#ifdef nested too deep\");\n" +
+  "            while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "            name = (char *)malloc(128);\n" +
+  "            ni = 0;\n" +
+  "            while (is_alnum(lp()) || lp() == '_') {\n" +
+  "                if (ni < 127) { name[ni] = la(); ni++; } else { la(); }\n" +
+  "            }\n" +
+  "            name[ni] = '\\0';\n" +
+  "            if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {\n" +
+  "                pp_stack[pp_sp] = PP_DONE;\n" +
+  "            } else {\n" +
+  "                pp_stack[pp_sp] = (find_macro(name) >= 0) ? PP_ACTIVE : PP_SKIPPING;\n" +
+  "            }\n" +
+  "            pp_sp++;\n" +
+  "            while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "            return next_token();\n" +
+  "        }\n" +
+  "        if (dlen == 6 && memcmp(src + s, \"ifndef\", 6) == 0) {\n" +
+  "            if (pp_sp >= MAX_PP_DEPTH) error(lex_line, lex_col, \"#ifndef nested too deep\");\n" +
+  "            while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "            name = (char *)malloc(128);\n" +
+  "            ni = 0;\n" +
+  "            while (is_alnum(lp()) || lp() == '_') {\n" +
+  "                if (ni < 127) { name[ni] = la(); ni++; } else { la(); }\n" +
+  "            }\n" +
+  "            name[ni] = '\\0';\n" +
+  "            if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {\n" +
+  "                pp_stack[pp_sp] = PP_DONE;\n" +
+  "            } else {\n" +
+  "                pp_stack[pp_sp] = (find_macro(name) >= 0) ? PP_SKIPPING : PP_ACTIVE;\n" +
+  "            }\n" +
+  "            pp_sp++;\n" +
+  "            while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "            return next_token();\n" +
+  "        }\n" +
+  "        if (dlen == 2 && memcmp(src + s, \"if\", 2) == 0) {\n" +
+  "            if (pp_sp >= MAX_PP_DEPTH) error(lex_line, lex_col, \"#if nested too deep\");\n" +
+  "            if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {\n" +
+  "                pp_stack[pp_sp] = PP_DONE;\n" +
+  "            } else {\n" +
+  "                val = pp_expr();\n" +
+  "                pp_stack[pp_sp] = (val != 0) ? PP_ACTIVE : PP_SKIPPING;\n" +
+  "            }\n" +
+  "            pp_sp++;\n" +
+  "            while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "            return next_token();\n" +
+  "        }\n" +
+  "        if (dlen == 4 && memcmp(src + s, \"elif\", 4) == 0) {\n" +
+  "            if (pp_sp <= 0) error(lex_line, lex_col, \"#elif without matching #if\");\n" +
+  "            if (pp_stack[pp_sp - 1] == PP_SKIPPING) {\n" +
+  "                val = pp_expr();\n" +
+  "                pp_stack[pp_sp - 1] = (val != 0) ? PP_ACTIVE : PP_SKIPPING;\n" +
+  "            } else if (pp_stack[pp_sp - 1] == PP_ACTIVE) {\n" +
+  "                pp_stack[pp_sp - 1] = PP_DONE;\n" +
+  "            }\n" +
+  "            /* PP_DONE stays PP_DONE */\n" +
+  "            while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "            return next_token();\n" +
+  "        }\n" +
+  "        if (dlen == 4 && memcmp(src + s, \"else\", 4) == 0) {\n" +
+  "            if (pp_sp <= 0) error(lex_line, lex_col, \"#else without matching #if\");\n" +
+  "            if (pp_stack[pp_sp - 1] == PP_SKIPPING) {\n" +
+  "                pp_stack[pp_sp - 1] = PP_ACTIVE;\n" +
+  "            } else if (pp_stack[pp_sp - 1] == PP_ACTIVE) {\n" +
+  "                pp_stack[pp_sp - 1] = PP_DONE;\n" +
+  "            }\n" +
+  "            /* PP_DONE stays PP_DONE */\n" +
+  "            while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "            return next_token();\n" +
+  "        }\n" +
+  "        if (dlen == 5 && memcmp(src + s, \"endif\", 5) == 0) {\n" +
+  "            if (pp_sp <= 0) error(lex_line, lex_col, \"#endif without matching #if\");\n" +
+  "            pp_sp--;\n" +
+  "            while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "            return next_token();\n" +
+  "        }\n" +
+  "\n" +
+  "        /* --- if skipping, ignore all other directives --- */\n" +
+  "        if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {\n" +
+  "            while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "            return next_token();\n" +
+  "        }\n" +
+  "\n" +
+  "        /* --- active-only directives --- */\n" +
   "        if (dlen == 6 && memcmp(src + s, \"define\", 6) == 0) {\n" +
   "            while (lp() == ' ' || lp() == '\\t') la();\n" +
   "            name = (char *)malloc(128);\n" +
@@ -620,35 +1058,91 @@ COMPILER_SOURCE["lexer.c"] =
   "                }\n" +
   "            }\n" +
   "            name[ni] = '\\0';\n" +
-  "            while (lp() == ' ' || lp() == '\\t') la();\n" +
-  "            neg = 0;\n" +
-  "            if (lp() == '-') {\n" +
-  "                neg = 1;\n" +
-  "                la();\n" +
-  "                while (lp() == ' ') la();\n" +
-  "            }\n" +
-  "            val = 0;\n" +
-  "            if (lp() == '0' && (lex_pos + 1 < src_len) && (src[lex_pos + 1] == 'x' || src[lex_pos + 1] == 'X')) {\n" +
-  "                la();\n" +
-  "                la();\n" +
-  "                while (is_xdigit(lp())) {\n" +
-  "                    d = la();\n" +
-  "                    if (d <= '9') {\n" +
-  "                        val = val * 16 + (d - '0');\n" +
-  "                    } else {\n" +
-  "                        val = val * 16 + ((d | 32) - 'a' + 10);\n" +
+  "            /* Check for function-like macro: '(' immediately after name (no space) */\n" +
+  "            if (lp() == '(') {\n" +
+  "                /* function-like macro */\n" +
+  "                char **pnames;\n" +
+  "                int np;\n" +
+  "                char *mbody;\n" +
+  "                int mbi;\n" +
+  "                pnames = (char **)malloc(16 * sizeof(void *));\n" +
+  "                np = 0;\n" +
+  "                la(); /* consume '(' */\n" +
+  "                while (lp() != ')' && lp() != '\\n' && lex_pos < src_len) {\n" +
+  "                    while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "                    if (lp() == ')') break;\n" +
+  "                    {\n" +
+  "                        char *pn;\n" +
+  "                        int pi;\n" +
+  "                        pn = (char *)malloc(128);\n" +
+  "                        pi = 0;\n" +
+  "                        while (is_alnum(lp()) || lp() == '_') {\n" +
+  "                            if (pi < 127) { pn[pi] = la(); pi++; } else { la(); }\n" +
+  "                        }\n" +
+  "                        pn[pi] = '\\0';\n" +
+  "                        if (np < 16) { pnames[np] = pn; np++; }\n" +
   "                    }\n" +
+  "                    while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "                    if (lp() == ',') la();\n" +
+  "                }\n" +
+  "                if (lp() == ')') la(); /* consume ')' */\n" +
+  "                /* skip whitespace after params */\n" +
+  "                while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "                /* capture body until end of line */\n" +
+  "                mbody = (char *)malloc(4096);\n" +
+  "                mbi = 0;\n" +
+  "                while (lp() != '\\n' && lex_pos < src_len) {\n" +
+  "                    if (mbi < 4095) { mbody[mbi] = la(); mbi++; } else { la(); }\n" +
+  "                }\n" +
+  "                mbody[mbi] = '\\0';\n" +
+  "                if (nmacros < MAX_MACROS) {\n" +
+  "                    macros[nmacros] = (struct Macro *)malloc(sizeof(struct Macro));\n" +
+  "                    macros[nmacros]->name = name;\n" +
+  "                    macros[nmacros]->value = 0;\n" +
+  "                    macros[nmacros]->is_func_macro = 1;\n" +
+  "                    macros[nmacros]->param_count = np;\n" +
+  "                    macros[nmacros]->param_names = pnames;\n" +
+  "                    macros[nmacros]->body = mbody;\n" +
+  "                    macros[nmacros]->expanding = 0;\n" +
+  "                    nmacros++;\n" +
   "                }\n" +
   "            } else {\n" +
-  "                while (is_digit(lp())) {\n" +
-  "                    val = val * 10 + (la() - '0');\n" +
+  "                /* object-like macro (existing behavior) */\n" +
+  "                while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "                neg = 0;\n" +
+  "                if (lp() == '-') {\n" +
+  "                    neg = 1;\n" +
+  "                    la();\n" +
+  "                    while (lp() == ' ') la();\n" +
   "                }\n" +
+  "                val = 0;\n" +
+  "                if (lp() == '0' && (lex_pos + 1 < src_len) && (src[lex_pos + 1] == 'x' || src[lex_pos + 1] == 'X')) {\n" +
+  "                    la();\n" +
+  "                    la();\n" +
+  "                    while (is_xdigit(lp())) {\n" +
+  "                        d = la();\n" +
+  "                        if (d <= '9') {\n" +
+  "                            val = val * 16 + (d - '0');\n" +
+  "                        } else {\n" +
+  "                            val = val * 16 + ((d | 32) - 'a' + 10);\n" +
+  "                        }\n" +
+  "                    }\n" +
+  "                } else {\n" +
+  "                    while (is_digit(lp())) {\n" +
+  "                        val = val * 10 + (la() - '0');\n" +
+  "                    }\n" +
+  "                }\n" +
+  "                if (neg) val = -val;\n" +
+  "                macros[nmacros] = (struct Macro *)malloc(sizeof(struct Macro));\n" +
+  "                macros[nmacros]->name = name;\n" +
+  "                macros[nmacros]->value = val;\n" +
+  "                macros[nmacros]->is_func_macro = 0;\n" +
+  "                macros[nmacros]->param_count = 0;\n" +
+  "                macros[nmacros]->param_names = (char **)0;\n" +
+  "                macros[nmacros]->body = (char *)0;\n" +
+  "                macros[nmacros]->expanding = 0;\n" +
+  "                nmacros++;\n" +
   "            }\n" +
-  "            if (neg) val = -val;\n" +
-  "            macros[nmacros] = (struct Macro *)malloc(sizeof(struct Macro));\n" +
-  "            macros[nmacros]->name = name;\n" +
-  "            macros[nmacros]->value = val;\n" +
-  "            nmacros++;\n" +
   "        } else if (dlen == 7 && memcmp(src + s, \"include\", 7) == 0) {\n" +
   "            /* #include \"filename\" */\n" +
   "            char *inc_name;\n" +
@@ -697,8 +1191,40 @@ COMPILER_SOURCE["lexer.c"] =
   "                while (lex_pos < src_len && lp() != '\\n') la();\n" +
   "                return next_token();\n" +
   "            }\n" +
+  "        } else if (dlen == 5 && memcmp(src + s, \"undef\", 5) == 0) {\n" +
+  "            while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "            name = (char *)malloc(128);\n" +
+  "            ni = 0;\n" +
+  "            while (is_alnum(lp()) || lp() == '_') {\n" +
+  "                if (ni < 127) { name[ni] = la(); ni++; } else { la(); }\n" +
+  "            }\n" +
+  "            name[ni] = '\\0';\n" +
+  "            mi = find_macro(name);\n" +
+  "            if (mi >= 0) {\n" +
+  "                for (i = mi; i < nmacros - 1; i++) {\n" +
+  "                    macros[i] = macros[i + 1];\n" +
+  "                }\n" +
+  "                nmacros--;\n" +
+  "            }\n" +
+  "        } else if (dlen == 5 && memcmp(src + s, \"error\", 5) == 0) {\n" +
+  "            while (lp() == ' ' || lp() == '\\t') la();\n" +
+  "            s = lex_pos;\n" +
+  "            while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "            len = lex_pos - s;\n" +
+  "            __s = (char *)malloc(len + 16);\n" +
+  "            memcpy(__s, \"#error \", 7);\n" +
+  "            memcpy(__s + 7, src + s, len);\n" +
+  "            __s[7 + len] = '\\0';\n" +
+  "            error(lex_line, lex_col, __s);\n" +
   "        }\n" +
+  "        /* #pragma and unknown directives: silently skip */\n" +
   "        /* skip to end of line */\n" +
+  "        while (lex_pos < src_len && lp() != '\\n') la();\n" +
+  "        return next_token();\n" +
+  "    }\n" +
+  "\n" +
+  "    /* preprocessor: skip non-directive tokens when in a false branch */\n" +
+  "    if (pp_sp > 0 && pp_stack[pp_sp - 1] != PP_ACTIVE) {\n" +
   "        while (lex_pos < src_len && lp() != '\\n') la();\n" +
   "        return next_token();\n" +
   "    }\n" +
@@ -722,9 +1248,192 @@ COMPILER_SOURCE["lexer.c"] =
   "        /* macro substitution */\n" +
   "        if (t->kind == TOK_IDENT) {\n" +
   "            mi = find_macro(t->text);\n" +
-  "            if (mi >= 0) {\n" +
+  "            if (mi >= 0 && macros[mi]->is_func_macro && !macros[mi]->expanding) {\n" +
+  "                /* function-like macro: check for '(' */\n" +
+  "                /* skip whitespace to find '(' */\n" +
+  "                {\n" +
+  "                    int look_pos;\n" +
+  "                    look_pos = lex_pos;\n" +
+  "                    while (look_pos < src_len && (src[look_pos] == ' ' || src[look_pos] == '\\t')) look_pos++;\n" +
+  "                    if (look_pos < src_len && src[look_pos] == '(') {\n" +
+  "                        /* collect arguments */\n" +
+  "                        char *args[16];\n" +
+  "                        int nargs;\n" +
+  "                        int depth;\n" +
+  "                        int arg_start;\n" +
+  "                        int arg_len;\n" +
+  "                        char *expanded;\n" +
+  "                        int exp_len;\n" +
+  "                        int bi;\n" +
+  "                        int ai;\n" +
+  "                        int pi;\n" +
+  "                        int match;\n" +
+  "                        lex_pos = look_pos + 1; /* skip past '(' */\n" +
+  "                        nargs = 0;\n" +
+  "                        depth = 1;\n" +
+  "                        arg_start = lex_pos;\n" +
+  "                        while (lex_pos < src_len && depth > 0) {\n" +
+  "                            if (src[lex_pos] == '(') {\n" +
+  "                                depth++;\n" +
+  "                                lex_pos++;\n" +
+  "                            } else if (src[lex_pos] == ')') {\n" +
+  "                                depth--;\n" +
+  "                                if (depth == 0) {\n" +
+  "                                    arg_len = lex_pos - arg_start;\n" +
+  "                                    if (nargs < 16) {\n" +
+  "                                        args[nargs] = (char *)malloc(arg_len + 1);\n" +
+  "                                        memcpy(args[nargs], src + arg_start, arg_len);\n" +
+  "                                        args[nargs][arg_len] = '\\0';\n" +
+  "                                        nargs++;\n" +
+  "                                    }\n" +
+  "                                    lex_pos++; /* skip ')' */\n" +
+  "                                } else {\n" +
+  "                                    lex_pos++;\n" +
+  "                                }\n" +
+  "                            } else if (src[lex_pos] == ',' && depth == 1) {\n" +
+  "                                arg_len = lex_pos - arg_start;\n" +
+  "                                if (nargs < 16) {\n" +
+  "                                    args[nargs] = (char *)malloc(arg_len + 1);\n" +
+  "                                    memcpy(args[nargs], src + arg_start, arg_len);\n" +
+  "                                    args[nargs][arg_len] = '\\0';\n" +
+  "                                    nargs++;\n" +
+  "                                }\n" +
+  "                                lex_pos++;\n" +
+  "                                /* skip leading whitespace of next arg */\n" +
+  "                                while (lex_pos < src_len && (src[lex_pos] == ' ' || src[lex_pos] == '\\t')) lex_pos++;\n" +
+  "                                arg_start = lex_pos;\n" +
+  "                            } else if (src[lex_pos] == '\\'' || src[lex_pos] == '\"') {\n" +
+  "                                /* skip string/char literals inside args */\n" +
+  "                                {\n" +
+  "                                    char q;\n" +
+  "                                    q = src[lex_pos];\n" +
+  "                                    lex_pos++;\n" +
+  "                                    while (lex_pos < src_len && src[lex_pos] != q) {\n" +
+  "                                        if (src[lex_pos] == '\\\\') lex_pos++;\n" +
+  "                                        lex_pos++;\n" +
+  "                                    }\n" +
+  "                                    if (lex_pos < src_len) lex_pos++;\n" +
+  "                                }\n" +
+  "                            } else {\n" +
+  "                                lex_pos++;\n" +
+  "                            }\n" +
+  "                        }\n" +
+  "                        /* handle zero-arg macro: if param_count==0, don't count empty arg */\n" +
+  "                        if (macros[mi]->param_count == 0 && nargs == 1 && args[0][0] == '\\0') {\n" +
+  "                            nargs = 0;\n" +
+  "                        }\n" +
+  "                        /* substitute params in body */\n" +
+  "                        expanded = (char *)malloc(8192);\n" +
+  "                        exp_len = 0;\n" +
+  "                        bi = 0;\n" +
+  "                        while (macros[mi]->body[bi] != '\\0') {\n" +
+  "                            /* check for # (stringify) */\n" +
+  "                            if (macros[mi]->body[bi] == '#' && macros[mi]->body[bi + 1] != '#') {\n" +
+  "                                bi++;\n" +
+  "                                while (macros[mi]->body[bi] == ' ') bi++;\n" +
+  "                                /* match param name */\n" +
+  "                                match = -1;\n" +
+  "                                for (pi = 0; pi < macros[mi]->param_count; pi++) {\n" +
+  "                                    {\n" +
+  "                                        int pnl;\n" +
+  "                                        pnl = 0;\n" +
+  "                                        while (macros[mi]->param_names[pi][pnl]) pnl++;\n" +
+  "                                        if (memcmp(macros[mi]->body + bi, macros[mi]->param_names[pi], pnl) == 0 &&\n" +
+  "                                            !is_alnum(macros[mi]->body[bi + pnl]) && macros[mi]->body[bi + pnl] != '_') {\n" +
+  "                                            match = pi;\n" +
+  "                                            bi += pnl;\n" +
+  "                                            break;\n" +
+  "                                        }\n" +
+  "                                    }\n" +
+  "                                }\n" +
+  "                                if (match >= 0 && match < nargs) {\n" +
+  "                                    expanded[exp_len] = '\"';\n" +
+  "                                    exp_len++;\n" +
+  "                                    {\n" +
+  "                                        int si;\n" +
+  "                                        for (si = 0; args[match][si]; si++) {\n" +
+  "                                            if (args[match][si] == '\"' || args[match][si] == '\\\\') {\n" +
+  "                                                expanded[exp_len] = '\\\\';\n" +
+  "                                                exp_len++;\n" +
+  "                                            }\n" +
+  "                                            expanded[exp_len] = args[match][si];\n" +
+  "                                            exp_len++;\n" +
+  "                                        }\n" +
+  "                                    }\n" +
+  "                                    expanded[exp_len] = '\"';\n" +
+  "                                    exp_len++;\n" +
+  "                                } else {\n" +
+  "                                    expanded[exp_len] = '#';\n" +
+  "                                    exp_len++;\n" +
+  "                                }\n" +
+  "                            }\n" +
+  "                            /* check for ## (token paste) */\n" +
+  "                            else if (macros[mi]->body[bi] == '#' && macros[mi]->body[bi + 1] == '#') {\n" +
+  "                                /* remove trailing whitespace from expanded */\n" +
+  "                                while (exp_len > 0 && (expanded[exp_len - 1] == ' ' || expanded[exp_len - 1] == '\\t')) exp_len--;\n" +
+  "                                bi += 2;\n" +
+  "                                /* skip leading whitespace after ## */\n" +
+  "                                while (macros[mi]->body[bi] == ' ' || macros[mi]->body[bi] == '\\t') bi++;\n" +
+  "                            }\n" +
+  "                            /* check for param name */\n" +
+  "                            else if (is_alpha(macros[mi]->body[bi]) || macros[mi]->body[bi] == '_') {\n" +
+  "                                {\n" +
+  "                                    int ws;\n" +
+  "                                    ws = bi;\n" +
+  "                                    while (is_alnum(macros[mi]->body[bi]) || macros[mi]->body[bi] == '_') bi++;\n" +
+  "                                    match = -1;\n" +
+  "                                    for (pi = 0; pi < macros[mi]->param_count; pi++) {\n" +
+  "                                        {\n" +
+  "                                            int pnl;\n" +
+  "                                            pnl = 0;\n" +
+  "                                            while (macros[mi]->param_names[pi][pnl]) pnl++;\n" +
+  "                                            if (pnl == bi - ws && memcmp(macros[mi]->body + ws, macros[mi]->param_names[pi], pnl) == 0) {\n" +
+  "                                                match = pi;\n" +
+  "                                                break;\n" +
+  "                                            }\n" +
+  "                                        }\n" +
+  "                                    }\n" +
+  "                                    if (match >= 0 && match < nargs) {\n" +
+  "                                        /* substitute argument text */\n" +
+  "                                        ai = 0;\n" +
+  "                                        while (args[match][ai]) {\n" +
+  "                                            expanded[exp_len] = args[match][ai];\n" +
+  "                                            exp_len++;\n" +
+  "                                            ai++;\n" +
+  "                                        }\n" +
+  "                                    } else {\n" +
+  "                                        /* copy identifier as-is */\n" +
+  "                                        memcpy(expanded + exp_len, macros[mi]->body + ws, bi - ws);\n" +
+  "                                        exp_len += bi - ws;\n" +
+  "                                    }\n" +
+  "                                }\n" +
+  "                            } else {\n" +
+  "                                expanded[exp_len] = macros[mi]->body[bi];\n" +
+  "                                exp_len++;\n" +
+  "                                bi++;\n" +
+  "                            }\n" +
+  "                        }\n" +
+  "                        expanded[exp_len] = '\\0';\n" +
+  "                        /* push current source onto include stack and lex from expanded text */\n" +
+  "                        macros[mi]->expanding = 1;\n" +
+  "                        include_push();\n" +
+  "                        inc_stack[inc_depth - 1]->macro_idx = mi;\n" +
+  "                        src = expanded;\n" +
+  "                        src_len = exp_len;\n" +
+  "                        lex_pos = 0;\n" +
+  "                        return next_token();\n" +
+  "                    }\n" +
+  "                }\n" +
+  "            } else if (mi >= 0 && !macros[mi]->is_func_macro) {\n" +
   "                t->kind = TOK_INT_LIT;\n" +
   "                t->int_val = macros[mi]->value;\n" +
+  "            } else if (strcmp(t->text, \"__LINE__\") == 0) {\n" +
+  "                t->kind = TOK_INT_LIT;\n" +
+  "                t->int_val = t->line;\n" +
+  "            } else if (strcmp(t->text, \"__FILE__\") == 0) {\n" +
+  "                t->kind = TOK_STR_LIT;\n" +
+  "                t->text = strdupn(\"stdin\", 5);\n" +
+  "                t->int_val = 5;\n" +
   "            }\n" +
   "        }\n" +
   "        return t;\n" +
@@ -799,19 +1508,40 @@ COMPILER_SOURCE["lexer.c"] =
   "            la();\n" +
   "            ch = lp();\n" +
   "            if (ch == 'n') {\n" +
-  "                ch = '\\n';\n" +
+  "                ch = '\\n'; la();\n" +
   "            } else if (ch == 'r') {\n" +
-  "                ch = '\\r';\n" +
+  "                ch = '\\r'; la();\n" +
   "            } else if (ch == 't') {\n" +
-  "                ch = '\\t';\n" +
-  "            } else if (ch == '0') {\n" +
-  "                ch = '\\0';\n" +
+  "                ch = '\\t'; la();\n" +
   "            } else if (ch == '\\\\') {\n" +
-  "                ch = '\\\\';\n" +
+  "                ch = '\\\\'; la();\n" +
   "            } else if (ch == '\\'') {\n" +
-  "                ch = '\\'';\n" +
+  "                ch = '\\''; la();\n" +
+  "            } else if (ch == '\"') {\n" +
+  "                ch = '\"'; la();\n" +
+  "            } else if (ch == 'a') {\n" +
+  "                ch = 7; la();\n" +
+  "            } else if (ch == 'b') {\n" +
+  "                ch = 8; la();\n" +
+  "            } else if (ch == 'f') {\n" +
+  "                ch = 12; la();\n" +
+  "            } else if (ch == 'v') {\n" +
+  "                ch = 11; la();\n" +
+  "            } else if (ch == '?') {\n" +
+  "                ch = 63; la();\n" +
+  "            } else if (ch == 'x') {\n" +
+  "                la(); /* consume 'x' */\n" +
+  "                ch = 0;\n" +
+  "                if (is_xdigit(lp())) { ch = hex_val(la()); }\n" +
+  "                if (is_xdigit(lp())) { ch = ch * 16 + hex_val(la()); }\n" +
+  "            } else if (ch >= '0' && ch <= '7') {\n" +
+  "                ch = ch - '0';\n" +
+  "                la();\n" +
+  "                if (lp() >= '0' && lp() <= '7') { ch = ch * 8 + (la() - '0'); }\n" +
+  "                if (lp() >= '0' && lp() <= '7') { ch = ch * 8 + (la() - '0'); }\n" +
+  "            } else {\n" +
+  "                la();\n" +
   "            }\n" +
-  "            la();\n" +
   "        } else {\n" +
   "            ch = la();\n" +
   "        }\n" +
@@ -828,43 +1558,75 @@ COMPILER_SOURCE["lexer.c"] =
   "    /* string literal */\n" +
   "    if (c == '\"') {\n" +
   "        la();\n" +
-  "        __s = (char *)malloc(512);\n" +
+  "        __s = (char *)malloc(2048);\n" +
   "        t->text = __s;\n" +
   "        i = 0;\n" +
-  "        while (lex_pos < src_len && lp() != '\"') {\n" +
-  "            if (lp() == '\\\\') {\n" +
-  "                la();\n" +
-  "                ch = lp();\n" +
-  "                if (ch == 'n') {\n" +
-  "                    __s[i] = '\\n';\n" +
-  "                    i++;\n" +
-  "                } else if (ch == 'r') {\n" +
-  "                    __s[i] = '\\r';\n" +
-  "                    i++;\n" +
-  "                } else if (ch == 't') {\n" +
-  "                    __s[i] = '\\t';\n" +
-  "                    i++;\n" +
-  "                } else if (ch == '0') {\n" +
-  "                    __s[i] = '\\0';\n" +
-  "                    i++;\n" +
-  "                } else if (ch == '\\\\') {\n" +
-  "                    __s[i] = '\\\\';\n" +
-  "                    i++;\n" +
-  "                } else if (ch == '\"') {\n" +
-  "                    __s[i] = '\"';\n" +
-  "                    i++;\n" +
+  "        for (;;) {\n" +
+  "            /* parse one string segment */\n" +
+  "            while (lex_pos < src_len && lp() != '\"') {\n" +
+  "                if (lp() == '\\\\') {\n" +
+  "                    la();\n" +
+  "                    ch = lp();\n" +
+  "                    if (ch == 'n') {\n" +
+  "                        __s[i] = '\\n'; i++; la();\n" +
+  "                    } else if (ch == 'r') {\n" +
+  "                        __s[i] = '\\r'; i++; la();\n" +
+  "                    } else if (ch == 't') {\n" +
+  "                        __s[i] = '\\t'; i++; la();\n" +
+  "                    } else if (ch == '\\\\') {\n" +
+  "                        __s[i] = '\\\\'; i++; la();\n" +
+  "                    } else if (ch == '\"') {\n" +
+  "                        __s[i] = '\"'; i++; la();\n" +
+  "                    } else if (ch == '\\'') {\n" +
+  "                        __s[i] = '\\''; i++; la();\n" +
+  "                    } else if (ch == 'a') {\n" +
+  "                        __s[i] = 7; i++; la();\n" +
+  "                    } else if (ch == 'b') {\n" +
+  "                        __s[i] = 8; i++; la();\n" +
+  "                    } else if (ch == 'f') {\n" +
+  "                        __s[i] = 12; i++; la();\n" +
+  "                    } else if (ch == 'v') {\n" +
+  "                        __s[i] = 11; i++; la();\n" +
+  "                    } else if (ch == '?') {\n" +
+  "                        __s[i] = 63; i++; la();\n" +
+  "                    } else if (ch == 'x') {\n" +
+  "                        la(); /* consume 'x' */\n" +
+  "                        ch = 0;\n" +
+  "                        if (is_xdigit(lp())) { ch = hex_val(la()); }\n" +
+  "                        if (is_xdigit(lp())) { ch = ch * 16 + hex_val(la()); }\n" +
+  "                        __s[i] = ch; i++;\n" +
+  "                    } else if (ch >= '0' && ch <= '7') {\n" +
+  "                        ch = ch - '0';\n" +
+  "                        la();\n" +
+  "                        if (lp() >= '0' && lp() <= '7') { ch = ch * 8 + (la() - '0'); }\n" +
+  "                        if (lp() >= '0' && lp() <= '7') { ch = ch * 8 + (la() - '0'); }\n" +
+  "                        __s[i] = ch; i++;\n" +
+  "                    } else {\n" +
+  "                        __s[i] = lp(); i++; la();\n" +
+  "                    }\n" +
   "                } else {\n" +
-  "                    __s[i] = lp();\n" +
-  "                    i++;\n" +
+  "                    __s[i] = la(); i++;\n" +
   "                }\n" +
-  "                la();\n" +
-  "            } else {\n" +
-  "                __s[i] = la();\n" +
-  "                i++;\n" +
+  "                if (i >= 2046) break;\n" +
   "            }\n" +
-  "            if (i >= 511) break;\n" +
+  "            if (lp() == '\"') la();\n" +
+  "            /* check for adjacent string literal concatenation */\n" +
+  "            sc_pos = lex_pos;\n" +
+  "            sc_line = lex_line;\n" +
+  "            sc_col = lex_col;\n" +
+  "            while (lex_pos < src_len && (lp() == ' ' || lp() == '\\t' || lp() == '\\n' || lp() == '\\r')) {\n" +
+  "                la();\n" +
+  "            }\n" +
+  "            if (lex_pos < src_len && lp() == '\"') {\n" +
+  "                la(); /* consume opening quote of next segment */\n" +
+  "            } else {\n" +
+  "                /* not a string — restore position */\n" +
+  "                lex_pos = sc_pos;\n" +
+  "                lex_line = sc_line;\n" +
+  "                lex_col = sc_col;\n" +
+  "                break;\n" +
+  "            }\n" +
   "        }\n" +
-  "        if (lp() == '\"') la();\n" +
   "        __s[i] = '\\0';\n" +
   "        t->int_val = i;\n" +
   "        t->kind = TOK_STR_LIT;\n" +
@@ -890,7 +1652,13 @@ COMPILER_SOURCE["lexer.c"] =
   "    } else if (c == ',') {\n" +
   "        t->kind = TOK_COMMA;\n" +
   "    } else if (c == '.') {\n" +
-  "        t->kind = TOK_DOT;\n" +
+  "        if (lp() == '.' && src[lex_pos + 1] == '.') {\n" +
+  "            la();\n" +
+  "            la();\n" +
+  "            t->kind = TOK_ELLIPSIS;\n" +
+  "        } else {\n" +
+  "            t->kind = TOK_DOT;\n" +
+  "        }\n" +
   "    } else if (c == '+') {\n" +
   "        if (lp() == '+') {\n" +
   "            la();\n" +
@@ -915,11 +1683,26 @@ COMPILER_SOURCE["lexer.c"] =
   "            t->kind = TOK_MINUS;\n" +
   "        }\n" +
   "    } else if (c == '*') {\n" +
-  "        t->kind = TOK_STAR;\n" +
+  "        if (lp() == '=') {\n" +
+  "            la();\n" +
+  "            t->kind = TOK_STAR_EQ;\n" +
+  "        } else {\n" +
+  "            t->kind = TOK_STAR;\n" +
+  "        }\n" +
   "    } else if (c == '/') {\n" +
-  "        t->kind = TOK_SLASH;\n" +
+  "        if (lp() == '=') {\n" +
+  "            la();\n" +
+  "            t->kind = TOK_SLASH_EQ;\n" +
+  "        } else {\n" +
+  "            t->kind = TOK_SLASH;\n" +
+  "        }\n" +
   "    } else if (c == '%') {\n" +
-  "        t->kind = TOK_PERCENT;\n" +
+  "        if (lp() == '=') {\n" +
+  "            la();\n" +
+  "            t->kind = TOK_PERCENT_EQ;\n" +
+  "        } else {\n" +
+  "            t->kind = TOK_PERCENT;\n" +
+  "        }\n" +
   "    } else if (c == '&') {\n" +
   "        if (lp() == '&') {\n" +
   "            la();\n" +
@@ -1018,6 +1801,7 @@ COMPILER_SOURCE["types.h"] =
   "    struct StructField **fields;\n" +
   "    int nfields;\n" +
   "    int size;\n" +
+  "    int is_union;\n" +
   "};\n" +
   "\n" +
   "struct GlobalVar {\n" +
@@ -1037,6 +1821,7 @@ COMPILER_SOURCE["types.h"] =
   "    int ret_is_float;\n" +
   "    int nparam;\n" +
   "    int *param_is_float;\n" +
+  "    int is_variadic;\n" +
   "};\n" +
   "\n" +
   "struct FnPtrVar {\n" +
@@ -1072,6 +1857,7 @@ COMPILER_SOURCE["types.h"] =
   "int func_is_void(char *name);\n" +
   "int func_ret_is_float(char *name);\n" +
   "int func_param_is_float(char *name, int idx);\n" +
+  "int func_is_variadic(char *name);\n" +
   "void init_fnptr_registry(void);\n" +
   "void register_fnptr_var(char *name, int nparams, int is_void);\n" +
   "struct FnPtrVar *find_fnptr_var(char *name);\n" +
@@ -1179,6 +1965,14 @@ COMPILER_SOURCE["types.c"] =
   "    return 0;\n" +
   "}\n" +
   "\n" +
+  "int func_is_variadic(char *name) {\n" +
+  "    int i;\n" +
+  "    for (i = 0; i < nfunc_sigs; i++) {\n" +
+  "        if (strcmp(func_sigs[i]->name, name) == 0) return func_sigs[i]->is_variadic;\n" +
+  "    }\n" +
+  "    return 0;\n" +
+  "}\n" +
+  "\n" +
   "/* ================================================================\n" +
   " * Function Pointer Registry\n" +
   " * ================================================================ */\n" +
@@ -1275,6 +2069,15 @@ COMPILER_SOURCE["types.c"] =
   "    ntype_aliases = 0;\n" +
   "    last_type_is_ptr = 0;\n" +
   "    last_type_is_float = 0;\n" +
+  "    /* register va_list as built-in alias for int */\n" +
+  "    type_aliases[0] = (struct TypeAlias *)malloc(sizeof(struct TypeAlias));\n" +
+  "    type_aliases[0]->alias = strdupn(\"va_list\", 7);\n" +
+  "    type_aliases[0]->resolved_kind = 0;\n" +
+  "    type_aliases[0]->is_ptr = 0;\n" +
+  "    type_aliases[0]->is_fnptr = 0;\n" +
+  "    type_aliases[0]->fnptr_nparams = 0;\n" +
+  "    type_aliases[0]->fnptr_is_void = 0;\n" +
+  "    ntype_aliases = 1;\n" +
   "}\n" +
   "\n" +
   "int find_type_alias(char *name) {\n" +
@@ -1365,6 +2168,7 @@ COMPILER_SOURCE["parser.c"] =
   " * ================================================================ */\n" +
   "\n" +
   "struct Token *cur;\n" +
+  "char *parse_current_func;\n" +
   "\n" +
   "void advance_tok(void) {\n" +
   "    cur = next_token();\n" +
@@ -1381,10 +2185,15 @@ COMPILER_SOURCE["parser.c"] =
   "\n" +
   "int is_type_token(void) {\n" +
   "    if (at(TOK_CONST)) return 1;\n" +
+  "    if (at(TOK_REGISTER)) return 1;\n" +
+  "    if (at(TOK_AUTO)) return 1;\n" +
+  "    if (at(TOK_VOLATILE)) return 1;\n" +
+  "    if (at(TOK_STATIC)) return 1;\n" +
+  "    if (at(TOK_EXTERN)) return 1;\n" +
   "    if (at(TOK_INT)) return 1;\n" +
   "    if (at(TOK_CHAR_KW)) return 1;\n" +
   "    if (at(TOK_VOID)) return 1;\n" +
-  "    if (at(TOK_STRUCT)) return 1;\n" +
+  "    if (at(TOK_STRUCT) || at(TOK_UNION)) return 1;\n" +
   "    if (at(TOK_ENUM)) return 1;\n" +
   "    if (at(TOK_UNSIGNED)) return 1;\n" +
   "    if (at(TOK_SIGNED)) return 1;\n" +
@@ -1401,6 +2210,7 @@ COMPILER_SOURCE["parser.c"] =
   "struct Node *parse_expr_bp(int min_bp);\n" +
   "struct Node *parse_stmt(void);\n" +
   "struct Node *parse_block(void);\n" +
+  "int parse_type(void);\n" +
   "\n" +
   "/* Precedence climbing helpers */\n" +
   "int prefix_bp(int op) {\n" +
@@ -1422,9 +2232,15 @@ COMPILER_SOURCE["parser.c"] =
   "\n" +
   "int infix_bp(int op) {\n" +
   "    switch (op) {\n" +
+  "    case TOK_COMMA:\n" +
+  "        last_rbp = 1;\n" +
+  "        return 0;\n" +
   "    case TOK_EQ:\n" +
   "    case TOK_PLUS_EQ:\n" +
   "    case TOK_MINUS_EQ:\n" +
+  "    case TOK_STAR_EQ:\n" +
+  "    case TOK_SLASH_EQ:\n" +
+  "    case TOK_PERCENT_EQ:\n" +
   "    case TOK_PIPE_EQ:\n" +
   "    case TOK_AMP_EQ:\n" +
   "    case TOK_CARET_EQ:\n" +
@@ -1513,8 +2329,8 @@ COMPILER_SOURCE["parser.c"] =
   "        is_ptr = 0;\n" +
   "        if (at(TOK_LPAREN)) {\n" +
   "            advance_tok(); /* consume '(' */\n" +
-  "            while (at(TOK_CONST)) advance_tok(); /* skip const */\n" +
-  "            if (at(TOK_STRUCT)) {\n" +
+  "            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok(); /* skip qualifiers */\n" +
+  "            if (at(TOK_STRUCT) || at(TOK_UNION)) {\n" +
   "                advance_tok();\n" +
   "                if (at(TOK_IDENT)) {\n" +
   "                    n->sval = strdupn(cur->text, 127);\n" +
@@ -1565,7 +2381,7 @@ COMPILER_SOURCE["parser.c"] =
   "                        n->sval = (char *)0;\n" +
   "                    }\n" +
   "                    n->ival2 = sz_esz;\n" +
-  "                    while (at(TOK_CONST)) advance_tok();\n" +
+  "                    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
   "                    while (at(TOK_STAR)) { is_ptr = 1; advance_tok(); }\n" +
   "                }\n" +
   "            } else {\n" +
@@ -1614,15 +2430,33 @@ COMPILER_SOURCE["parser.c"] =
   "                c = node_new(ND_CALL, n->nline, n->ncol);\n" +
   "                c->sval = n->sval;\n" +
   "            }\n" +
+  "            /* special case: va_arg(ap, type) */\n" +
+  "            if (strcmp(n->sval, \"va_arg\") == 0) {\n" +
+  "                struct Node *va_ap;\n" +
+  "                int va_float;\n" +
+  "                c->kind = ND_VA_ARG;\n" +
+  "                va_ap = parse_expr_bp(2);\n" +
+  "                expect(TOK_COMMA, \"expected ',' in va_arg\");\n" +
+  "                parse_type();\n" +
+  "                va_float = last_type_is_float;\n" +
+  "                while (at(TOK_STAR)) { va_float = 0; advance_tok(); }\n" +
+  "                expect(TOK_RPAREN, \"expected ')' after va_arg\");\n" +
+  "                c->c0 = va_ap;\n" +
+  "                c->ival = va_float ? 8 : 4;\n" +
+  "                c->ival3 = va_float;\n" +
+  "                c->ival2 = 0;\n" +
+  "                c->list = (struct Node **)0;\n" +
+  "                return c;\n" +
+  "            }\n" +
   "            args = (struct NList *)malloc(sizeof(struct NList));\n" +
   "            args->items = (struct Node **)0;\n" +
   "            args->count = 0;\n" +
   "            args->cap = 0;\n" +
   "            if (!at(TOK_RPAREN)) {\n" +
-  "                nlist_push(args, parse_expr());\n" +
+  "                nlist_push(args, parse_expr_bp(2));\n" +
   "                while (at(TOK_COMMA)) {\n" +
   "                    advance_tok();\n" +
-  "                    nlist_push(args, parse_expr());\n" +
+  "                    nlist_push(args, parse_expr_bp(2));\n" +
   "                }\n" +
   "            }\n" +
   "            expect(TOK_RPAREN, \"expected ')' after arguments\");\n" +
@@ -1646,14 +2480,14 @@ COMPILER_SOURCE["parser.c"] =
   "            int cast_to_int;\n" +
   "            cast_to_float = 0;\n" +
   "            cast_to_int = 0;\n" +
-  "            while (at(TOK_CONST)) advance_tok();\n" +
+  "            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
   "            if (at(TOK_FLOAT)) {\n" +
   "                cast_to_float = 1;\n" +
   "                advance_tok();\n" +
   "            } else if (at(TOK_DOUBLE)) {\n" +
   "                cast_to_float = 2;\n" +
   "                advance_tok();\n" +
-  "            } else if (at(TOK_STRUCT)) {\n" +
+  "            } else if (at(TOK_STRUCT) || at(TOK_UNION)) {\n" +
   "                advance_tok();\n" +
   "                if (at(TOK_IDENT)) advance_tok();\n" +
   "            } else {\n" +
@@ -1821,6 +2655,7 @@ COMPILER_SOURCE["parser.c"] =
   "\n" +
   "        /* assignment operators */\n" +
   "        if (op == TOK_EQ || op == TOK_PLUS_EQ || op == TOK_MINUS_EQ ||\n" +
+  "            op == TOK_STAR_EQ || op == TOK_SLASH_EQ || op == TOK_PERCENT_EQ ||\n" +
   "            op == TOK_PIPE_EQ || op == TOK_AMP_EQ || op == TOK_CARET_EQ ||\n" +
   "            op == TOK_LSHIFT_EQ || op == TOK_RSHIFT_EQ) {\n" +
   "            tgt = left;\n" +
@@ -1869,12 +2704,14 @@ COMPILER_SOURCE["parser.c"] =
   "    int vd_is_unsigned;\n" +
   "    int vd_is_float;\n" +
   "    int vd_is_void;\n" +
-  "    int is_ptr;\n" +
   "    int ptr_depth_vd;\n" +
   "    int arr_size;\n" +
+  "    int arr_dim2;\n" +
   "    int ei;\n" +
   "    int tai_vd;\n" +
   "    int had_mod_vd;\n" +
+  "    int is_static_var;\n" +
+  "    int is_extern_var;\n" +
   "\n" +
   "    line = cur->line;\n" +
   "    col = cur->col;\n" +
@@ -1882,11 +2719,13 @@ COMPILER_SOURCE["parser.c"] =
   "    vd_is_unsigned = 0;\n" +
   "    vd_is_float = 0;\n" +
   "    vd_is_void = 0;\n" +
-  "    is_ptr = 0;\n" +
   "    ptr_depth_vd = 0;\n" +
   "    arr_size = 0;\n" +
+  "    arr_dim2 = 0;\n" +
   "    tai_vd = -1;\n" +
   "    had_mod_vd = 0;\n" +
+  "    is_static_var = 0;\n" +
+  "    is_extern_var = 0;\n" +
   "    blk = (struct Node *)0;\n" +
   "    size_node = (struct Node *)0;\n" +
   "    idx_lit = (struct Node *)0;\n" +
@@ -1897,8 +2736,18 @@ COMPILER_SOURCE["parser.c"] =
   "    blk_stmts = (struct NList *)0;\n" +
   "    init_elems = (struct NList *)0;\n" +
   "    ei = 0;\n" +
-  "    while (at(TOK_CONST)) advance_tok();\n" +
-  "    if (at(TOK_STRUCT)) {\n" +
+  "    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
+  "    if (at(TOK_STATIC)) {\n" +
+  "        is_static_var = 1;\n" +
+  "        advance_tok();\n" +
+  "        while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
+  "    }\n" +
+  "    if (at(TOK_EXTERN)) {\n" +
+  "        is_extern_var = 1;\n" +
+  "        advance_tok();\n" +
+  "        while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
+  "    }\n" +
+  "    if (at(TOK_STRUCT) || at(TOK_UNION)) {\n" +
   "        advance_tok();\n" +
   "        advance_tok();\n" +
   "    } else if (at(TOK_ENUM)) {\n" +
@@ -1948,9 +2797,6 @@ COMPILER_SOURCE["parser.c"] =
   "            if (tai_vd >= 0 && type_aliases[tai_vd]->resolved_kind == 2) {\n" +
   "                vd_elem_size = 1;\n" +
   "            }\n" +
-  "            if (tai_vd >= 0 && type_aliases[tai_vd]->is_ptr) {\n" +
-  "                is_ptr = 1;\n" +
-  "            }\n" +
   "            if (tai_vd >= 0 && type_aliases[tai_vd]->is_fnptr) {\n" +
   "                /* fnptr typedef: next token is the variable name */\n" +
   "                advance_tok(); /* consume typedef name */\n" +
@@ -1973,8 +2819,8 @@ COMPILER_SOURCE["parser.c"] =
   "            }\n" +
   "        }\n" +
   "    }\n" +
-  "    while (at(TOK_STAR)) { is_ptr = 1; ptr_depth_vd++; vd_is_float = 0; advance_tok(); }\n" +
-  "    if (last_type_is_ptr) { is_ptr = 1; ptr_depth_vd++; }\n" +
+  "    while (at(TOK_STAR)) { ptr_depth_vd++; vd_is_float = 0; advance_tok(); }\n" +
+  "    if (last_type_is_ptr) { ptr_depth_vd++; }\n" +
   "    if (ptr_depth_vd >= 2) vd_elem_size = 4;\n" +
   "    /* function pointer: type (*name)(params) or type (*name[N])(params) */\n" +
   "    if (at(TOK_LPAREN)) {\n" +
@@ -2004,7 +2850,7 @@ COMPILER_SOURCE["parser.c"] =
   "        /* parse parameter type list */\n" +
   "        expect(TOK_LPAREN, \"expected '(' for function pointer parameters\");\n" +
   "        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {\n" +
-  "            while (at(TOK_CONST)) advance_tok();\n" +
+  "            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
   "            if (at(TOK_VOID)) {\n" +
   "                advance_tok();\n" +
   "                /* void with no stars = no params; void* = one param */\n" +
@@ -2014,7 +2860,7 @@ COMPILER_SOURCE["parser.c"] =
   "                    fp_nparams++;\n" +
   "                }\n" +
   "            } else {\n" +
-  "                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
+  "                if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
   "                else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {\n" +
   "                    advance_tok();\n" +
   "                    if (at(TOK_INT)) advance_tok();\n" +
@@ -2044,15 +2890,24 @@ COMPILER_SOURCE["parser.c"] =
   "    n->ival2 = vd_elem_size;\n" +
   "    n->ival3 = vd_is_unsigned | (vd_is_float << 4);\n" +
   "    advance_tok();\n" +
-  "    /* check for array size: int name[N] */\n" +
+  "    /* check for array size: int name[N] or int name[N][M] */\n" +
   "    if (at(TOK_LBRACKET)) {\n" +
   "        advance_tok(); /* consume '[' */\n" +
   "        size_node = parse_expr();\n" +
   "        arr_size = size_node->ival;\n" +
   "        n->ival = arr_size;\n" +
   "        expect(TOK_RBRACKET, \"expected ']'\");\n" +
+  "        /* check for second dimension */\n" +
+  "        if (at(TOK_LBRACKET)) {\n" +
+  "            advance_tok();\n" +
+  "            size_node = parse_expr();\n" +
+  "            arr_dim2 = size_node->ival;\n" +
+  "            n->ival = arr_size * arr_dim2; /* total elements for allocation */\n" +
+  "            n->ival3 = n->ival3 | (arr_dim2 << 16);\n" +
+  "            expect(TOK_RBRACKET, \"expected ']'\");\n" +
+  "        }\n" +
   "    }\n" +
-  "    /* brace initializer: int name[N] = {e0, e1, ...} */\n" +
+  "    /* brace initializer: int name[N] = {e0, e1, ...} or int name[N][M] = {{...},...} */\n" +
   "    if (arr_size > 0 && at(TOK_EQ)) {\n" +
   "        advance_tok(); /* consume '=' */\n" +
   "        expect(TOK_LBRACE, \"expected '{'\");\n" +
@@ -2060,9 +2915,26 @@ COMPILER_SOURCE["parser.c"] =
   "        init_elems->items = (struct Node **)0;\n" +
   "        init_elems->count = 0;\n" +
   "        init_elems->cap = 0;\n" +
-  "        while (!at(TOK_RBRACE) && !at(TOK_EOF)) {\n" +
-  "            nlist_push(init_elems, parse_expr());\n" +
-  "            if (at(TOK_COMMA)) advance_tok();\n" +
+  "        if (arr_dim2 > 0) {\n" +
+  "            /* 2D array: parse nested braces {{e0,e1,...},{e2,e3,...}} */\n" +
+  "            while (!at(TOK_RBRACE) && !at(TOK_EOF)) {\n" +
+  "                if (at(TOK_LBRACE)) {\n" +
+  "                    advance_tok(); /* consume inner '{' */\n" +
+  "                    while (!at(TOK_RBRACE) && !at(TOK_EOF)) {\n" +
+  "                        nlist_push(init_elems, parse_expr_bp(2));\n" +
+  "                        if (at(TOK_COMMA)) advance_tok();\n" +
+  "                    }\n" +
+  "                    expect(TOK_RBRACE, \"expected '}'\");\n" +
+  "                } else {\n" +
+  "                    nlist_push(init_elems, parse_expr_bp(2));\n" +
+  "                }\n" +
+  "                if (at(TOK_COMMA)) advance_tok();\n" +
+  "            }\n" +
+  "        } else {\n" +
+  "            while (!at(TOK_RBRACE) && !at(TOK_EOF)) {\n" +
+  "                nlist_push(init_elems, parse_expr_bp(2));\n" +
+  "                if (at(TOK_COMMA)) advance_tok();\n" +
+  "            }\n" +
   "        }\n" +
   "        expect(TOK_RBRACE, \"expected '}'\");\n" +
   "        expect(TOK_SEMI, \"expected ';'\");\n" +
@@ -2073,13 +2945,31 @@ COMPILER_SOURCE["parser.c"] =
   "        blk_stmts->cap = 0;\n" +
   "        nlist_push(blk_stmts, n);\n" +
   "        for (ei = 0; ei < init_elems->count; ei++) {\n" +
-  "            idx_lit = node_new(ND_INT_LIT, line, col);\n" +
-  "            idx_lit->ival = ei;\n" +
   "            id_node = node_new(ND_IDENT, line, col);\n" +
   "            id_node->sval = n->sval;\n" +
-  "            sub_node = node_new(ND_SUBSCRIPT, line, col);\n" +
-  "            sub_node->c0 = id_node;\n" +
-  "            sub_node->c1 = idx_lit;\n" +
+  "            if (arr_dim2 > 0) {\n" +
+  "                /* 2D: a[row][col] = val */\n" +
+  "                struct Node *row_lit;\n" +
+  "                struct Node *col_lit;\n" +
+  "                struct Node *inner_sub;\n" +
+  "                row_lit = node_new(ND_INT_LIT, line, col);\n" +
+  "                row_lit->ival = ei / arr_dim2;\n" +
+  "                col_lit = node_new(ND_INT_LIT, line, col);\n" +
+  "                col_lit->ival = ei % arr_dim2;\n" +
+  "                inner_sub = node_new(ND_SUBSCRIPT, line, col);\n" +
+  "                inner_sub->c0 = id_node;\n" +
+  "                inner_sub->c1 = row_lit;\n" +
+  "                sub_node = node_new(ND_SUBSCRIPT, line, col);\n" +
+  "                sub_node->c0 = inner_sub;\n" +
+  "                sub_node->c1 = col_lit;\n" +
+  "            } else {\n" +
+  "                /* 1D: a[idx] = val */\n" +
+  "                idx_lit = node_new(ND_INT_LIT, line, col);\n" +
+  "                idx_lit->ival = ei;\n" +
+  "                sub_node = node_new(ND_SUBSCRIPT, line, col);\n" +
+  "                sub_node->c0 = id_node;\n" +
+  "                sub_node->c1 = idx_lit;\n" +
+  "            }\n" +
   "            asgn_node = node_new(ND_ASSIGN, line, col);\n" +
   "            asgn_node->ival = TOK_EQ;\n" +
   "            asgn_node->c0 = sub_node;\n" +
@@ -2097,6 +2987,33 @@ COMPILER_SOURCE["parser.c"] =
   "    if (arr_size == 0 && at(TOK_EQ)) {\n" +
   "        advance_tok();\n" +
   "        n->c0 = parse_expr();\n" +
+  "    }\n" +
+  "    /* static local: register as global with mangled name */\n" +
+  "    if (is_static_var && parse_current_func != (char *)0) {\n" +
+  "        char *mname;\n" +
+  "        int sinit;\n" +
+  "        mname = mangle_static(parse_current_func, n->sval);\n" +
+  "        sinit = 0;\n" +
+  "        if (n->c0 != (struct Node *)0 && n->c0->kind == ND_INT_LIT) {\n" +
+  "            sinit = n->c0->ival;\n" +
+  "            n->c0 = (struct Node *)0;\n" +
+  "        }\n" +
+  "        if (nglobals >= MAX_GLOBALS) error(line, col, \"too many globals\");\n" +
+  "        globals_tbl[nglobals] = (struct GlobalVar *)malloc(sizeof(struct GlobalVar));\n" +
+  "        globals_tbl[nglobals]->name = mname;\n" +
+  "        globals_tbl[nglobals]->init_val = sinit;\n" +
+  "        globals_tbl[nglobals]->gv_elem_size = vd_elem_size;\n" +
+  "        globals_tbl[nglobals]->gv_is_unsigned = vd_is_unsigned;\n" +
+  "        globals_tbl[nglobals]->gv_is_float = vd_is_float;\n" +
+  "        globals_tbl[nglobals]->gv_float_init = (char *)0;\n" +
+  "        globals_tbl[nglobals]->gv_arr_len = 0;\n" +
+  "        globals_tbl[nglobals]->gv_arr_str_ids = (int *)0;\n" +
+  "        nglobals++;\n" +
+  "        n->ival3 = vd_is_unsigned | (vd_is_float << 4) | (1 << 8);\n" +
+  "    }\n" +
+  "    /* extern inside function body: mark for codegen to skip */\n" +
+  "    if (is_extern_var && parse_current_func != (char *)0) {\n" +
+  "        n->ival3 = n->ival3 | (1 << 9);\n" +
   "    }\n" +
   "    expect(TOK_SEMI, \"expected ';' after declaration\");\n" +
   "    return n;\n" +
@@ -2310,6 +3227,37 @@ COMPILER_SOURCE["parser.c"] =
   "    }\n" +
   "    if (at(TOK_LBRACE)) return parse_block();\n" +
   "    if (is_type_token()) return parse_var_decl();\n" +
+  "    /* goto statement */\n" +
+  "    if (at(TOK_GOTO)) {\n" +
+  "        line = cur->line;\n" +
+  "        col = cur->col;\n" +
+  "        advance_tok();\n" +
+  "        if (!at(TOK_IDENT)) error(cur->line, cur->col, \"expected label name after goto\");\n" +
+  "        n = node_new(ND_GOTO, line, col);\n" +
+  "        n->sval = strdupn(cur->text, 127);\n" +
+  "        advance_tok();\n" +
+  "        expect(TOK_SEMI, \"expected ';' after goto\");\n" +
+  "        return n;\n" +
+  "    }\n" +
+  "    /* label: stmt */\n" +
+  "    if (at(TOK_IDENT)) {\n" +
+  "        int lsp;\n" +
+  "        int lsl;\n" +
+  "        int lsc;\n" +
+  "        struct Token *lst;\n" +
+  "        int is_label;\n" +
+  "        lsp = lex_pos; lsl = lex_line; lsc = lex_col; lst = cur;\n" +
+  "        advance_tok();\n" +
+  "        is_label = at(TOK_COLON);\n" +
+  "        lex_pos = lsp; lex_line = lsl; lex_col = lsc; cur = lst;\n" +
+  "        if (is_label) {\n" +
+  "            n = node_new(ND_LABEL, cur->line, cur->col);\n" +
+  "            n->sval = strdupn(cur->text, 127);\n" +
+  "            advance_tok(); /* consume label ident */\n" +
+  "            advance_tok(); /* consume ':' */\n" +
+  "            return n;\n" +
+  "        }\n" +
+  "    }\n" +
   "\n" +
   "    line = cur->line;\n" +
   "    col = cur->col;\n" +
@@ -2355,7 +3303,7 @@ COMPILER_SOURCE["parser.c"] =
   "    last_type_is_fnptr = 0;\n" +
   "    last_type_fnptr_nparams = 0;\n" +
   "    last_type_fnptr_is_void = 0;\n" +
-  "    while (at(TOK_CONST)) advance_tok();\n" +
+  "    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok();\n" +
   "    if (at(TOK_IDENT)) {\n" +
   "        taidx = find_type_alias(cur->text);\n" +
   "        if (taidx >= 0) {\n" +
@@ -2422,7 +3370,7 @@ COMPILER_SOURCE["parser.c"] =
   "        advance_tok();\n" +
   "        return 2;\n" +
   "    }\n" +
-  "    if (at(TOK_STRUCT)) {\n" +
+  "    if (at(TOK_STRUCT) || at(TOK_UNION)) {\n" +
   "        advance_tok();\n" +
   "        if (at(TOK_IDENT)) advance_tok();\n" +
   "        return 0;\n" +
@@ -2447,7 +3395,6 @@ COMPILER_SOURCE["parser.c"] =
   "    int pty;\n" +
   "    int ret_float;\n" +
   "    int sig_idx;\n" +
-  "    int pi;\n" +
   "\n" +
   "    line = cur->line;\n" +
   "    col = cur->col;\n" +
@@ -2474,6 +3421,7 @@ COMPILER_SOURCE["parser.c"] =
   "        func_sigs[nfunc_sigs]->ret_is_float = ret_float;\n" +
   "        func_sigs[nfunc_sigs]->nparam = 0;\n" +
   "        func_sigs[nfunc_sigs]->param_is_float = (int *)malloc(MAX_LOCALS * sizeof(int));\n" +
+  "        func_sigs[nfunc_sigs]->is_variadic = 0;\n" +
   "        nfunc_sigs++;\n" +
   "    }\n" +
   "    advance_tok();\n" +
@@ -2507,10 +3455,11 @@ COMPILER_SOURCE["parser.c"] =
   "                expect(TOK_RPAREN, \"expected ')' in fnptr param\");\n" +
   "                expect(TOK_LPAREN, \"expected '(' for fnptr param types\");\n" +
   "                while (!at(TOK_RPAREN) && !at(TOK_EOF)) {\n" +
-  "                    while (at(TOK_CONST)) advance_tok();\n" +
+  "                    if (at(TOK_ELLIPSIS)) { advance_tok(); break; }\n" +
+  "                    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
   "                    if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np++; } }\n" +
   "                    else {\n" +
-  "                        if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
+  "                        if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
   "                        else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }\n" +
   "                        if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();\n" +
   "                        while (at(TOK_STAR)) advance_tok();\n" +
@@ -2543,6 +3492,12 @@ COMPILER_SOURCE["parser.c"] =
   "            }\n" +
   "            while (at(TOK_COMMA)) {\n" +
   "                advance_tok();\n" +
+  "                /* variadic: ... at end of parameter list */\n" +
+  "                if (at(TOK_ELLIPSIS)) {\n" +
+  "                    if (sig_idx >= 0) func_sigs[sig_idx]->is_variadic = 1;\n" +
+  "                    advance_tok();\n" +
+  "                    break;\n" +
+  "                }\n" +
   "                pty = parse_type();\n" +
   "                while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }\n" +
   "                /* function pointer parameter in subsequent position */\n" +
@@ -2562,10 +3517,11 @@ COMPILER_SOURCE["parser.c"] =
   "                    expect(TOK_RPAREN, \"expected ')' in fnptr param\");\n" +
   "                    expect(TOK_LPAREN, \"expected '(' for fnptr param types\");\n" +
   "                    while (!at(TOK_RPAREN) && !at(TOK_EOF)) {\n" +
-  "                        while (at(TOK_CONST)) advance_tok();\n" +
+  "                        if (at(TOK_ELLIPSIS)) { advance_tok(); break; }\n" +
+  "                        while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
   "                        if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); fparam_np2++; } }\n" +
   "                        else {\n" +
-  "                            if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
+  "                            if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
   "                            else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }\n" +
   "                            if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();\n" +
   "                            while (at(TOK_STAR)) advance_tok();\n" +
@@ -2607,7 +3563,9 @@ COMPILER_SOURCE["parser.c"] =
   "        advance_tok();\n" +
   "        n->c0 = (struct Node *)0;\n" +
   "    } else {\n" +
+  "        parse_current_func = n->sval;\n" +
   "        n->c0 = parse_block();\n" +
+  "        parse_current_func = (char *)0;\n" +
   "    }\n" +
   "    return n;\n" +
   "}\n" +
@@ -2615,21 +3573,25 @@ COMPILER_SOURCE["parser.c"] =
   "void parse_struct_def(void) {\n" +
   "    struct StructDef *sd;\n" +
   "    int offset;\n" +
+  "    int is_union;\n" +
+  "    int field_size;\n" +
   "\n" +
+  "    is_union = (cur->kind == TOK_UNION) ? 1 : 0;\n" +
   "    advance_tok();\n" +
-  "    if (!at(TOK_IDENT)) error(cur->line, cur->col, \"expected struct name\");\n" +
+  "    if (!at(TOK_IDENT)) error(cur->line, cur->col, \"expected struct/union name\");\n" +
   "    if (nstructs >= MAX_STRUCTS) error(cur->line, cur->col, \"too many structs\");\n" +
   "    structs_reg[nstructs] = (struct StructDef *)malloc(sizeof(struct StructDef));\n" +
   "    sd = structs_reg[nstructs];\n" +
   "    nstructs++;\n" +
   "    sd->name = strdupn(cur->text, 127);\n" +
   "    sd->nfields = 0;\n" +
+  "    sd->is_union = is_union;\n" +
   "    sd->fields = (struct StructField **)malloc(MAX_FIELDS * sizeof(void *));\n" +
   "    advance_tok();\n" +
-  "    expect(TOK_LBRACE, \"expected '{' in struct definition\");\n" +
+  "    expect(TOK_LBRACE, \"expected '{' in struct/union definition\");\n" +
   "    offset = 0;\n" +
   "    while (!at(TOK_RBRACE) && !at(TOK_EOF)) {\n" +
-  "        if (at(TOK_STRUCT)) {\n" +
+  "        if (at(TOK_STRUCT) || at(TOK_UNION)) {\n" +
   "            advance_tok();\n" +
   "            if (at(TOK_IDENT)) advance_tok();\n" +
   "        } else {\n" +
@@ -2639,15 +3601,21 @@ COMPILER_SOURCE["parser.c"] =
   "        if (!at(TOK_IDENT)) error(cur->line, cur->col, \"expected field name\");\n" +
   "        sd->fields[sd->nfields] = (struct StructField *)malloc(sizeof(struct StructField));\n" +
   "        sd->fields[sd->nfields]->name = strdupn(cur->text, 127);\n" +
-  "        sd->fields[sd->nfields]->fld_offset = offset;\n" +
+  "        if (is_union) {\n" +
+  "            sd->fields[sd->nfields]->fld_offset = 0;\n" +
+  "            field_size = 4;\n" +
+  "            if (offset < field_size) offset = field_size;\n" +
+  "        } else {\n" +
+  "            sd->fields[sd->nfields]->fld_offset = offset;\n" +
+  "            offset += 4;\n" +
+  "        }\n" +
   "        sd->nfields++;\n" +
-  "        offset += 4;\n" +
   "        advance_tok();\n" +
   "        expect(TOK_SEMI, \"expected ';' after field\");\n" +
   "    }\n" +
   "    expect(TOK_RBRACE, \"expected '}'\");\n" +
   "    sd->size = offset;\n" +
-  "    expect(TOK_SEMI, \"expected ';' after struct definition\");\n" +
+  "    expect(TOK_SEMI, \"expected ';' after struct/union definition\");\n" +
   "}\n" +
   "\n" +
   "void parse_global_var(void) {\n" +
@@ -2667,8 +3635,8 @@ COMPILER_SOURCE["parser.c"] =
   "    ptr_depth = 0;\n" +
   "    tai_gv = -1;\n" +
   "    had_mod_gv = 0;\n" +
-  "    while (at(TOK_CONST)) advance_tok();\n" +
-  "    if (at(TOK_STRUCT) || at(TOK_ENUM)) {\n" +
+  "    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok();\n" +
+  "    if (at(TOK_STRUCT) || at(TOK_UNION) || at(TOK_ENUM)) {\n" +
   "        advance_tok();\n" +
   "        if (at(TOK_IDENT)) advance_tok();\n" +
   "    } else if (at(TOK_FLOAT)) {\n" +
@@ -2740,12 +3708,12 @@ COMPILER_SOURCE["parser.c"] =
   "        expect(TOK_RPAREN, \"expected ')' after function pointer name\");\n" +
   "        expect(TOK_LPAREN, \"expected '(' for function pointer parameters\");\n" +
   "        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {\n" +
-  "            while (at(TOK_CONST)) advance_tok();\n" +
+  "            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
   "            if (at(TOK_VOID)) {\n" +
   "                advance_tok();\n" +
   "                if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); gfp_nparams++; }\n" +
   "            } else {\n" +
-  "                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
+  "                if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
   "                else if (at(TOK_UNSIGNED) || at(TOK_SIGNED) || at(TOK_SHORT) || at(TOK_LONG)) {\n" +
   "                    advance_tok(); if (at(TOK_INT)) advance_tok();\n" +
   "                }\n" +
@@ -2936,16 +3904,16 @@ COMPILER_SOURCE["parser.c"] =
   "    struct TypeAlias *ta;\n" +
   "\n" +
   "    advance_tok(); /* consume 'typedef' */\n" +
-  "    while (at(TOK_CONST)) advance_tok();\n" +
+  "    while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE) || at(TOK_STATIC) || at(TOK_EXTERN)) advance_tok();\n" +
   "    rk = 0;\n" +
   "    is_ptr = 0;\n" +
-  "    if (at(TOK_STRUCT)) {\n" +
+  "    if (at(TOK_STRUCT) || at(TOK_UNION)) {\n" +
   "        advance_tok();\n" +
   "        if (at(TOK_IDENT)) {\n" +
   "            advance_tok();\n" +
   "        }\n" +
   "        if (at(TOK_LBRACE)) {\n" +
-  "            error(cur->line, cur->col, \"typedef with inline struct body not supported; define struct separately\");\n" +
+  "            error(cur->line, cur->col, \"typedef with inline struct/union body not supported; define separately\");\n" +
   "        }\n" +
   "        rk = 0;\n" +
   "    } else if (at(TOK_ENUM)) {\n" +
@@ -2986,10 +3954,10 @@ COMPILER_SOURCE["parser.c"] =
   "        expect(TOK_RPAREN, \"expected ')' in function pointer typedef\");\n" +
   "        expect(TOK_LPAREN, \"expected '(' for function pointer typedef parameters\");\n" +
   "        while (!at(TOK_RPAREN) && !at(TOK_EOF)) {\n" +
-  "            while (at(TOK_CONST)) advance_tok();\n" +
+  "            while (at(TOK_CONST) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
   "            if (at(TOK_VOID)) { advance_tok(); if (at(TOK_STAR)) { while (at(TOK_STAR)) advance_tok(); if (at(TOK_IDENT)) advance_tok(); td_nparams++; } }\n" +
   "            else {\n" +
-  "                if (at(TOK_STRUCT)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
+  "                if (at(TOK_STRUCT) || at(TOK_UNION)) { advance_tok(); if (at(TOK_IDENT)) advance_tok(); }\n" +
   "                else if (at(TOK_UNSIGNED)||at(TOK_SIGNED)||at(TOK_SHORT)||at(TOK_LONG)) { advance_tok(); if (at(TOK_INT)) advance_tok(); }\n" +
   "                if (at(TOK_INT)||at(TOK_CHAR_KW)||at(TOK_FLOAT)||at(TOK_DOUBLE)||at(TOK_IDENT)) advance_tok();\n" +
   "                while (at(TOK_STAR)) advance_tok();\n" +
@@ -3069,8 +4037,8 @@ COMPILER_SOURCE["parser.c"] =
   "            }\n" +
   "        }\n" +
   "\n" +
-  "        /* struct definition */\n" +
-  "        if (at(TOK_STRUCT)) {\n" +
+  "        /* struct/union definition */\n" +
+  "        if (at(TOK_STRUCT) || at(TOK_UNION)) {\n" +
   "            sp = lex_pos;\n" +
   "            sl = lex_line;\n" +
   "            sc = lex_col;\n" +
@@ -3096,7 +4064,9 @@ COMPILER_SOURCE["parser.c"] =
   "        sl = lex_line;\n" +
   "        sc = lex_col;\n" +
   "        st = cur;\n" +
-  "        if (at(TOK_STRUCT) || at(TOK_ENUM)) {\n" +
+  "        /* skip storage class and type qualifiers for lookahead */\n" +
+  "        while (at(TOK_STATIC) || at(TOK_EXTERN) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
+  "        if (at(TOK_STRUCT) || at(TOK_UNION) || at(TOK_ENUM)) {\n" +
   "            advance_tok();\n" +
   "            if (at(TOK_IDENT)) advance_tok();\n" +
   "        } else {\n" +
@@ -3113,6 +4083,8 @@ COMPILER_SOURCE["parser.c"] =
   "        lex_line = sl;\n" +
   "        lex_col = sc;\n" +
   "        cur = st;\n" +
+  "        /* consume storage class specifiers before parsing */\n" +
+  "        while (at(TOK_STATIC) || at(TOK_EXTERN) || at(TOK_REGISTER) || at(TOK_AUTO) || at(TOK_VOLATILE)) advance_tok();\n" +
   "        if (is_func) {\n" +
   "            nlist_push(decls, parse_func());\n" +
   "        } else {\n" +
@@ -3134,16 +4106,27 @@ COMPILER_SOURCE["codegen.h"] =
   "    int lv_elem_size;     /* 1=char, 2=short, 4=int */\n" +
   "    int lv_is_unsigned;\n" +
   "    int lv_is_float;      /* 0=int, 1=float(f32), 2=double(f64) */\n" +
+  "    int lv_arr_dim2;      /* inner dimension for 2D arrays, 0 for 1D */\n" +
+  "};\n" +
+  "\n" +
+  "struct StaticLocalMap {\n" +
+  "    char *local_name;\n" +
+  "    char *global_name;\n" +
   "};\n" +
   "\n" +
   "/* Shared codegen functions */\n" +
   "void init_local_tracking(void);\n" +
   "int find_local(char *name);\n" +
   "void add_local(char *name, int elem_size, int is_unsigned, int is_float);\n" +
+  "void add_local_dim2(char *name, int dim2);\n" +
   "void collect_locals(struct Node *n);\n" +
   "void init_loop_labels(void);\n" +
+  "void init_static_map(void);\n" +
+  "void init_goto_labels(void);\n" +
+  "char *find_static_global(char *name);\n" +
   "int var_elem_size(char *name);\n" +
   "int var_is_unsigned(char *name);\n" +
+  "int var_arr_dim2(char *name);\n" +
   "int expr_elem_size(struct Node *n);\n" +
   "int expr_is_unsigned(struct Node *n);\n" +
   "int var_is_float(char *name);\n" +
@@ -3157,9 +4140,20 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "struct LocalVar **local_vars;\n" +
   "int nlocals;\n" +
   "\n" +
+  "/* --- Static local variable mapping --- */\n" +
+  "struct StaticLocalMap **static_map;\n" +
+  "int nstatic_map;\n" +
+  "char *codegen_func_name;\n" +
+  "\n" +
   "void init_local_tracking(void) {\n" +
   "    local_vars = (struct LocalVar **)malloc(MAX_LOCALS * sizeof(void *));\n" +
   "    nlocals = 0;\n" +
+  "}\n" +
+  "\n" +
+  "void init_static_map(void) {\n" +
+  "    static_map = (struct StaticLocalMap **)malloc(MAX_STATIC_LOCALS * sizeof(void *));\n" +
+  "    nstatic_map = 0;\n" +
+  "    codegen_func_name = (char *)0;\n" +
   "}\n" +
   "\n" +
   "int find_local(char *name) {\n" +
@@ -3168,6 +4162,14 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "        if (strcmp(local_vars[i]->name, name) == 0) return i;\n" +
   "    }\n" +
   "    return -1;\n" +
+  "}\n" +
+  "\n" +
+  "char *find_static_global(char *name) {\n" +
+  "    int i;\n" +
+  "    for (i = 0; i < nstatic_map; i++) {\n" +
+  "        if (strcmp(static_map[i]->local_name, name) == 0) return static_map[i]->global_name;\n" +
+  "    }\n" +
+  "    return (char *)0;\n" +
   "}\n" +
   "\n" +
   "void add_local(char *name, int elem_size, int is_unsigned, int is_float) {\n" +
@@ -3181,7 +4183,16 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "    local_vars[nlocals]->lv_elem_size = elem_size;\n" +
   "    local_vars[nlocals]->lv_is_unsigned = is_unsigned;\n" +
   "    local_vars[nlocals]->lv_is_float = is_float;\n" +
+  "    local_vars[nlocals]->lv_arr_dim2 = 0;\n" +
   "    nlocals++;\n" +
+  "}\n" +
+  "\n" +
+  "void add_local_dim2(char *name, int dim2) {\n" +
+  "    int li;\n" +
+  "    li = find_local(name);\n" +
+  "    if (li >= 0) {\n" +
+  "        local_vars[li]->lv_arr_dim2 = dim2;\n" +
+  "    }\n" +
   "}\n" +
   "\n" +
   "void collect_locals(struct Node *n) {\n" +
@@ -3189,7 +4200,24 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "    if (n == (struct Node *)0) return;\n" +
   "    switch (n->kind) {\n" +
   "    case ND_VAR_DECL:\n" +
-  "        add_local(n->sval, n->ival2, n->ival3 & 0xF, n->ival3 >> 4);\n" +
+  "        if (n->ival3 & 0x100) {\n" +
+  "            /* static local: add to static_map, not to locals */\n" +
+  "            if (nstatic_map < MAX_STATIC_LOCALS) {\n" +
+  "                char *gn;\n" +
+  "                gn = mangle_static(codegen_func_name, n->sval);\n" +
+  "                static_map[nstatic_map] = (struct StaticLocalMap *)malloc(sizeof(struct StaticLocalMap));\n" +
+  "                static_map[nstatic_map]->local_name = n->sval;\n" +
+  "                static_map[nstatic_map]->global_name = gn;\n" +
+  "                nstatic_map++;\n" +
+  "            }\n" +
+  "        } else if (n->ival3 & 0x200) {\n" +
+  "            /* extern local: skip entirely */\n" +
+  "        } else {\n" +
+  "            add_local(n->sval, n->ival2, n->ival3 & 0xF, (n->ival3 >> 4) & 0xF);\n" +
+  "            if ((n->ival3 >> 16) & 0xFFFF) {\n" +
+  "                add_local_dim2(n->sval, (n->ival3 >> 16) & 0xFFFF);\n" +
+  "            }\n" +
+  "        }\n" +
   "        break;\n" +
   "    case ND_BLOCK:\n" +
   "        for (i = 0; i < n->ival2; i++) {\n" +
@@ -3240,6 +4268,13 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "int var_elem_size(char *name) {\n" +
   "    int li;\n" +
   "    int gi;\n" +
+  "    char *sg;\n" +
+  "    sg = find_static_global(name);\n" +
+  "    if (sg != (char *)0) {\n" +
+  "        gi = find_global(sg);\n" +
+  "        if (gi >= 0) return globals_tbl[gi]->gv_elem_size;\n" +
+  "        return 4;\n" +
+  "    }\n" +
   "    li = find_local(name);\n" +
   "    if (li >= 0) {\n" +
   "        return local_vars[li]->lv_elem_size;\n" +
@@ -3254,6 +4289,13 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "int var_is_unsigned(char *name) {\n" +
   "    int li;\n" +
   "    int gi;\n" +
+  "    char *sg;\n" +
+  "    sg = find_static_global(name);\n" +
+  "    if (sg != (char *)0) {\n" +
+  "        gi = find_global(sg);\n" +
+  "        if (gi >= 0) return globals_tbl[gi]->gv_is_unsigned;\n" +
+  "        return 0;\n" +
+  "    }\n" +
   "    li = find_local(name);\n" +
   "    if (li >= 0) {\n" +
   "        return local_vars[li]->lv_is_unsigned;\n" +
@@ -3262,6 +4304,16 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "    if (gi >= 0) {\n" +
   "        return globals_tbl[gi]->gv_is_unsigned;\n" +
   "    }\n" +
+  "    return 0;\n" +
+  "}\n" +
+  "\n" +
+  "int var_arr_dim2(char *name) {\n" +
+  "    int li;\n" +
+  "    li = find_local(name);\n" +
+  "    if (li >= 0) {\n" +
+  "        return local_vars[li]->lv_arr_dim2;\n" +
+  "    }\n" +
+  "    /* TODO: also check globals for 2D global arrays */\n" +
   "    return 0;\n" +
   "}\n" +
   "\n" +
@@ -3281,6 +4333,13 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "int var_is_float(char *name) {\n" +
   "    int li;\n" +
   "    int gi;\n" +
+  "    char *sg;\n" +
+  "    sg = find_static_global(name);\n" +
+  "    if (sg != (char *)0) {\n" +
+  "        gi = find_global(sg);\n" +
+  "        if (gi >= 0) return globals_tbl[gi]->gv_is_float;\n" +
+  "        return 0;\n" +
+  "    }\n" +
   "    li = find_local(name);\n" +
   "    if (li >= 0) {\n" +
   "        return local_vars[li]->lv_is_float;\n" +
@@ -3504,6 +4563,11 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "/* codegen_wat.c — WAT text format code generator */\n" +
   "\n" +
   "int indent_level;\n" +
+  "int uses_realloc;\n" +
+  "int uses_sprintf;\n" +
+  "int uses_qsort;\n" +
+  "int uses_bsearch;\n" +
+  "int uses_varargs;\n" +
   "\n" +
   "void emit_indent(void) {\n" +
   "    int i;\n" +
@@ -3529,6 +4593,8 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "/* Forward declarations for dispatch table refactoring */\n" +
   "void gen_expr(struct Node *n);\n" +
   "void gen_stmt(struct Node *n);\n" +
+  "void gen_stmt_goto(struct Node *n);\n" +
+  "void gen_stmt_label(struct Node *n);\n" +
   "\n" +
   "typedef void (*GenExprFn)(struct Node *);\n" +
   "typedef void (*GenStmtFn)(struct Node *);\n" +
@@ -3571,8 +4637,13 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "\n" +
   "void gen_expr_ident(struct Node *n) {\n" +
   "    int vf;\n" +
+  "    char *sg;\n" +
   "    vf = var_is_float(n->sval);\n" +
-  "    if (find_global(n->sval) >= 0) {\n" +
+  "    sg = find_static_global(n->sval);\n" +
+  "    if (sg != (char *)0) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.get $\"); out(sg); out(\"\\n\");\n" +
+  "    } else if (find_global(n->sval) >= 0) {\n" +
   "        emit_indent();\n" +
   "        out(\"global.get $\"); out(n->sval); out(\"\\n\");\n" +
   "    } else {\n" +
@@ -3595,6 +4666,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "void gen_expr_assign(struct Node *n) {\n" +
   "    struct Node *tgt;\n" +
   "    char *name;\n" +
+  "    char *rname;\n" +
   "    int is_global;\n" +
   "    int off;\n" +
   "    int esz;\n" +
@@ -3602,8 +4674,16 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    tgt = n->c0;\n" +
   "    if (tgt->kind == ND_IDENT) {\n" +
   "        int tgt_float;\n" +
+  "        char *sg;\n" +
   "        name = tgt->sval;\n" +
-  "        is_global = (find_global(name) >= 0);\n" +
+  "        sg = find_static_global(name);\n" +
+  "        if (sg != (char *)0) {\n" +
+  "            rname = sg;\n" +
+  "            is_global = 1;\n" +
+  "        } else {\n" +
+  "            rname = name;\n" +
+  "            is_global = (find_global(name) >= 0);\n" +
+  "        }\n" +
   "        tgt_float = var_is_float(name);\n" +
   "        if (n->ival == TOK_EQ) {\n" +
   "            gen_expr(n->c1);\n" +
@@ -3620,9 +4700,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        } else if (n->ival == TOK_PLUS_EQ) {\n" +
   "            emit_indent();\n" +
   "            if (is_global) {\n" +
-  "                out(\"global.get $\"); out(name); out(\"\\n\");\n" +
+  "                out(\"global.get $\"); out(rname); out(\"\\n\");\n" +
   "            } else {\n" +
-  "                out(\"local.get $\"); out(name); out(\"\\n\");\n" +
+  "                out(\"local.get $\"); out(rname); out(\"\\n\");\n" +
   "            }\n" +
   "            gen_expr(n->c1);\n" +
   "            if (tgt_float) {\n" +
@@ -3641,9 +4721,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        } else if (n->ival == TOK_MINUS_EQ) {\n" +
   "            emit_indent();\n" +
   "            if (is_global) {\n" +
-  "                out(\"global.get $\"); out(name); out(\"\\n\");\n" +
+  "                out(\"global.get $\"); out(rname); out(\"\\n\");\n" +
   "            } else {\n" +
-  "                out(\"local.get $\"); out(name); out(\"\\n\");\n" +
+  "                out(\"local.get $\"); out(rname); out(\"\\n\");\n" +
   "            }\n" +
   "            gen_expr(n->c1);\n" +
   "            if (tgt_float) {\n" +
@@ -3659,14 +4739,54 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "                out(\"i32.sub\\n\");\n" +
   "                last_expr_is_float = 0;\n" +
   "            }\n" +
+  "        } else if (n->ival == TOK_STAR_EQ || n->ival == TOK_SLASH_EQ ||\n" +
+  "                   n->ival == TOK_PERCENT_EQ) {\n" +
+  "            emit_indent();\n" +
+  "            if (is_global) {\n" +
+  "                out(\"global.get $\"); out(rname); out(\"\\n\");\n" +
+  "            } else {\n" +
+  "                out(\"local.get $\"); out(rname); out(\"\\n\");\n" +
+  "            }\n" +
+  "            gen_expr(n->c1);\n" +
+  "            if (tgt_float && n->ival != TOK_PERCENT_EQ) {\n" +
+  "                if (!last_expr_is_float) {\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"f64.convert_i32_s\\n\");\n" +
+  "                }\n" +
+  "                emit_indent();\n" +
+  "                if (n->ival == TOK_STAR_EQ) {\n" +
+  "                    out(\"f64.mul\\n\");\n" +
+  "                } else {\n" +
+  "                    out(\"f64.div\\n\");\n" +
+  "                }\n" +
+  "                last_expr_is_float = 2;\n" +
+  "            } else {\n" +
+  "                emit_indent();\n" +
+  "                if (n->ival == TOK_STAR_EQ) {\n" +
+  "                    out(\"i32.mul\\n\");\n" +
+  "                } else if (n->ival == TOK_SLASH_EQ) {\n" +
+  "                    if (expr_is_unsigned(tgt)) {\n" +
+  "                        out(\"i32.div_u\\n\");\n" +
+  "                    } else {\n" +
+  "                        out(\"i32.div_s\\n\");\n" +
+  "                    }\n" +
+  "                } else {\n" +
+  "                    if (expr_is_unsigned(tgt)) {\n" +
+  "                        out(\"i32.rem_u\\n\");\n" +
+  "                    } else {\n" +
+  "                        out(\"i32.rem_s\\n\");\n" +
+  "                    }\n" +
+  "                }\n" +
+  "                last_expr_is_float = 0;\n" +
+  "            }\n" +
   "        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||\n" +
   "                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||\n" +
   "                   n->ival == TOK_RSHIFT_EQ) {\n" +
   "            emit_indent();\n" +
   "            if (is_global) {\n" +
-  "                out(\"global.get $\"); out(name); out(\"\\n\");\n" +
+  "                out(\"global.get $\"); out(rname); out(\"\\n\");\n" +
   "            } else {\n" +
-  "                out(\"local.get $\"); out(name); out(\"\\n\");\n" +
+  "                out(\"local.get $\"); out(rname); out(\"\\n\");\n" +
   "            }\n" +
   "            gen_expr(n->c1);\n" +
   "            emit_indent();\n" +
@@ -3680,7 +4800,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "                emit_indent();\n" +
   "                out(\"local.get $__ftmp\\n\");\n" +
   "                emit_indent();\n" +
-  "                out(\"global.set $\"); out(name); out(\"\\n\");\n" +
+  "                out(\"global.set $\"); out(rname); out(\"\\n\");\n" +
   "                emit_indent();\n" +
   "                out(\"local.get $__ftmp\\n\");\n" +
   "            } else {\n" +
@@ -3689,13 +4809,13 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "                emit_indent();\n" +
   "                out(\"local.get $__atmp\\n\");\n" +
   "                emit_indent();\n" +
-  "                out(\"global.set $\"); out(name); out(\"\\n\");\n" +
+  "                out(\"global.set $\"); out(rname); out(\"\\n\");\n" +
   "                emit_indent();\n" +
   "                out(\"local.get $__atmp\\n\");\n" +
   "            }\n" +
   "        } else {\n" +
   "            emit_indent();\n" +
-  "            out(\"local.tee $\"); out(name); out(\"\\n\");\n" +
+  "            out(\"local.tee $\"); out(rname); out(\"\\n\");\n" +
   "        }\n" +
   "        last_expr_is_float = tgt_float;\n" +
   "    } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {\n" +
@@ -3716,6 +4836,20 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            gen_expr(n->c1);\n" +
   "            emit_indent();\n" +
   "            out(\"i32.sub\\n\");\n" +
+  "        } else if (n->ival == TOK_STAR_EQ || n->ival == TOK_SLASH_EQ ||\n" +
+  "                   n->ival == TOK_PERCENT_EQ) {\n" +
+  "            gen_expr(tgt->c0);\n" +
+  "            emit_indent();\n" +
+  "            emit_load(esz);\n" +
+  "            gen_expr(n->c1);\n" +
+  "            emit_indent();\n" +
+  "            if (n->ival == TOK_STAR_EQ) {\n" +
+  "                out(\"i32.mul\\n\");\n" +
+  "            } else if (n->ival == TOK_SLASH_EQ) {\n" +
+  "                out(\"i32.div_s\\n\");\n" +
+  "            } else {\n" +
+  "                out(\"i32.rem_s\\n\");\n" +
+  "            }\n" +
   "        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||\n" +
   "                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||\n" +
   "                   n->ival == TOK_RSHIFT_EQ) {\n" +
@@ -3777,6 +4911,26 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            gen_expr(n->c1);\n" +
   "            emit_indent();\n" +
   "            out(\"i32.sub\\n\");\n" +
+  "        } else if (n->ival == TOK_STAR_EQ || n->ival == TOK_SLASH_EQ ||\n" +
+  "                   n->ival == TOK_PERCENT_EQ) {\n" +
+  "            gen_expr(tgt->c0);\n" +
+  "            if (off > 0) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.const \"); out_d(off); out(\"\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.add\\n\");\n" +
+  "            }\n" +
+  "            emit_indent();\n" +
+  "            out(\"i32.load\\n\");\n" +
+  "            gen_expr(n->c1);\n" +
+  "            emit_indent();\n" +
+  "            if (n->ival == TOK_STAR_EQ) {\n" +
+  "                out(\"i32.mul\\n\");\n" +
+  "            } else if (n->ival == TOK_SLASH_EQ) {\n" +
+  "                out(\"i32.div_s\\n\");\n" +
+  "            } else {\n" +
+  "                out(\"i32.rem_s\\n\");\n" +
+  "            }\n" +
   "        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||\n" +
   "                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||\n" +
   "                   n->ival == TOK_RSHIFT_EQ) {\n" +
@@ -3844,6 +4998,29 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            gen_expr(n->c1);\n" +
   "            emit_indent();\n" +
   "            out(\"i32.sub\\n\");\n" +
+  "        } else if (n->ival == TOK_STAR_EQ || n->ival == TOK_SLASH_EQ ||\n" +
+  "                   n->ival == TOK_PERCENT_EQ) {\n" +
+  "            gen_expr(tgt->c0);\n" +
+  "            gen_expr(tgt->c1);\n" +
+  "            if (esz > 1) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.const \"); out_d(esz); out(\"\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.mul\\n\");\n" +
+  "            }\n" +
+  "            emit_indent();\n" +
+  "            out(\"i32.add\\n\");\n" +
+  "            emit_indent();\n" +
+  "            emit_load(esz);\n" +
+  "            gen_expr(n->c1);\n" +
+  "            emit_indent();\n" +
+  "            if (n->ival == TOK_STAR_EQ) {\n" +
+  "                out(\"i32.mul\\n\");\n" +
+  "            } else if (n->ival == TOK_SLASH_EQ) {\n" +
+  "                out(\"i32.div_s\\n\");\n" +
+  "            } else {\n" +
+  "                out(\"i32.rem_s\\n\");\n" +
+  "            }\n" +
   "        } else if (n->ival == TOK_PIPE_EQ || n->ival == TOK_AMP_EQ ||\n" +
   "                   n->ival == TOK_CARET_EQ || n->ival == TOK_LSHIFT_EQ ||\n" +
   "                   n->ival == TOK_RSHIFT_EQ) {\n" +
@@ -3949,6 +5126,14 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    int left_float;\n" +
   "    int right_float;\n" +
   "    int op_float;\n" +
+  "    /* comma operator: evaluate left, discard, evaluate right */\n" +
+  "    if (n->ival == TOK_COMMA) {\n" +
+  "        gen_expr(n->c0);\n" +
+  "        emit_indent();\n" +
+  "        out(\"drop\\n\");\n" +
+  "        gen_expr(n->c1);\n" +
+  "        return;\n" +
+  "    }\n" +
   "    gen_expr(n->c0);\n" +
   "    left_float = last_expr_is_float;\n" +
   "    gen_expr(n->c1);\n" +
@@ -4020,6 +5205,28 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    int fi;\n" +
   "    int sid;\n" +
   "    int i;\n" +
+  "\n" +
+  "    /* va_start(ap, last) — set ap = __va_ptr */\n" +
+  "    if (strcmp(n->sval, \"va_start\") == 0) {\n" +
+  "        if (n->ival2 < 1 || n->list[0]->kind != ND_IDENT)\n" +
+  "            error(n->nline, n->ncol, \"va_start requires identifier\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"local.get $__va_ptr\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"local.set $\"); out(n->list[0]->sval); out(\"\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 0\\n\");\n" +
+  "        last_expr_is_float = 0;\n" +
+  "        return;\n" +
+  "    }\n" +
+  "\n" +
+  "    /* va_end(ap) — no-op */\n" +
+  "    if (strcmp(n->sval, \"va_end\") == 0) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 0\\n\");\n" +
+  "        last_expr_is_float = 0;\n" +
+  "        return;\n" +
+  "    }\n" +
   "\n" +
   "    if (strcmp(n->sval, \"printf\") == 0) {\n" +
   "        if (n->ival2 < 1 || n->list[0]->kind != ND_STR_LIT) {\n" +
@@ -4277,6 +5484,143 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        gen_expr(n->list[2]);\n" +
   "        emit_indent();\n" +
   "        out(\"call $strtol\\n\");\n" +
+  "    } else if (strcmp(n->sval, \"realloc\") == 0) {\n" +
+  "        uses_realloc = 1;\n" +
+  "        gen_expr(n->list[0]);\n" +
+  "        gen_expr(n->list[1]);\n" +
+  "        emit_indent();\n" +
+  "        out(\"call $realloc\\n\");\n" +
+  "    } else if (strcmp(n->sval, \"qsort\") == 0) {\n" +
+  "        uses_qsort = 1;\n" +
+  "        gen_expr(n->list[0]);\n" +
+  "        gen_expr(n->list[1]);\n" +
+  "        gen_expr(n->list[2]);\n" +
+  "        gen_expr(n->list[3]);\n" +
+  "        emit_indent();\n" +
+  "        out(\"call $qsort\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 0\\n\"); /* qsort returns void; push dummy */\n" +
+  "    } else if (strcmp(n->sval, \"bsearch\") == 0) {\n" +
+  "        uses_bsearch = 1;\n" +
+  "        gen_expr(n->list[0]);\n" +
+  "        gen_expr(n->list[1]);\n" +
+  "        gen_expr(n->list[2]);\n" +
+  "        gen_expr(n->list[3]);\n" +
+  "        gen_expr(n->list[4]);\n" +
+  "        emit_indent();\n" +
+  "        out(\"call $bsearch\\n\");\n" +
+  "    } else if (strcmp(n->sval, \"sprintf\") == 0) {\n" +
+  "        uses_sprintf = 1;\n" +
+  "        /* compile-time lowered: sprintf(buf, fmt, ...) → series of __sprint_* calls */\n" +
+  "        if (n->ival2 < 2 || n->list[1]->kind != ND_STR_LIT) {\n" +
+  "            error(n->nline, n->ncol, \"sprintf requires string literal format\");\n" +
+  "        }\n" +
+  "        /* push buffer pointer, save in __atmp as running position */\n" +
+  "        gen_expr(n->list[0]);\n" +
+  "        emit_indent();\n" +
+  "        out(\"local.set $__atmp\\n\");\n" +
+  "        sid = n->list[1]->ival;\n" +
+  "        fmt = str_table[sid]->data;\n" +
+  "        flen = str_table[sid]->len;\n" +
+  "        ai = 2;\n" +
+  "        for (fi = 0; fi < flen; fi++) {\n" +
+  "            if (fmt[fi] == '%' && fi + 1 < flen) {\n" +
+  "                fi++;\n" +
+  "                if (fmt[fi] == 'd') {\n" +
+  "                    if (ai >= n->ival2) error(n->nline, n->ncol, \"sprintf: missing arg for %d\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.get $__atmp\\n\");\n" +
+  "                    gen_expr(n->list[ai]);\n" +
+  "                    ai++;\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"call $__sprint_int\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.set $__atmp\\n\");\n" +
+  "                } else if (fmt[fi] == 's') {\n" +
+  "                    if (ai >= n->ival2) error(n->nline, n->ncol, \"sprintf: missing arg for %s\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.get $__atmp\\n\");\n" +
+  "                    gen_expr(n->list[ai]);\n" +
+  "                    ai++;\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"call $__sprint_str\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.set $__atmp\\n\");\n" +
+  "                } else if (fmt[fi] == 'c') {\n" +
+  "                    if (ai >= n->ival2) error(n->nline, n->ncol, \"sprintf: missing arg for %c\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.get $__atmp\\n\");\n" +
+  "                    gen_expr(n->list[ai]);\n" +
+  "                    ai++;\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"i32.store8\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.get $__atmp\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"i32.const 1\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"i32.add\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.set $__atmp\\n\");\n" +
+  "                } else if (fmt[fi] == 'x') {\n" +
+  "                    if (ai >= n->ival2) error(n->nline, n->ncol, \"sprintf: missing arg for %x\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.get $__atmp\\n\");\n" +
+  "                    gen_expr(n->list[ai]);\n" +
+  "                    ai++;\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"call $__sprint_hex\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.set $__atmp\\n\");\n" +
+  "                } else if (fmt[fi] == '%') {\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.get $__atmp\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"i32.const 37\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"i32.store8\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.get $__atmp\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"i32.const 1\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"i32.add\\n\");\n" +
+  "                    emit_indent();\n" +
+  "                    out(\"local.set $__atmp\\n\");\n" +
+  "                } else {\n" +
+  "                    error(n->nline, n->ncol, \"unsupported sprintf format\");\n" +
+  "                }\n" +
+  "            } else {\n" +
+  "                emit_indent();\n" +
+  "                out(\"local.get $__atmp\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.const \"); out_d(fmt[fi] & 255); out(\"\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.store8\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"local.get $__atmp\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.const 1\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.add\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"local.set $__atmp\\n\");\n" +
+  "            }\n" +
+  "        }\n" +
+  "        /* null-terminate */\n" +
+  "        emit_indent();\n" +
+  "        out(\"local.get $__atmp\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 0\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.store8\\n\");\n" +
+  "        /* return number of chars written */\n" +
+  "        emit_indent();\n" +
+  "        out(\"local.get $__atmp\\n\");\n" +
+  "        gen_expr(n->list[0]);\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.sub\\n\");\n" +
+  "        last_expr_is_float = 0;\n" +
   "    } else if (strcmp(n->sval, \"__open_file\") == 0) {\n" +
   "        gen_expr(n->list[0]);\n" +
   "        gen_expr(n->list[1]);\n" +
@@ -4294,6 +5638,63 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        out(\"call $__close_file\\n\");\n" +
   "        emit_indent();\n" +
   "        out(\"i32.const 0\\n\");\n" +
+  "    } else if (func_is_variadic(n->sval)) {\n" +
+  "        /* variadic call: push fixed args, pack va args, push va_area */\n" +
+  "        int fixed;\n" +
+  "        int va_off;\n" +
+  "        fixed = 0;\n" +
+  "        {\n" +
+  "            int vi;\n" +
+  "            for (vi = 0; vi < nfunc_sigs; vi++) {\n" +
+  "                if (strcmp(func_sigs[vi]->name, n->sval) == 0) {\n" +
+  "                    fixed = func_sigs[vi]->nparam;\n" +
+  "                    break;\n" +
+  "                }\n" +
+  "            }\n" +
+  "        }\n" +
+  "        /* push fixed (named) args */\n" +
+  "        for (i = 0; i < fixed && i < n->ival2; i++) {\n" +
+  "            gen_expr(n->list[i]);\n" +
+  "            if (func_param_is_float(n->sval, i) && !last_expr_is_float) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"f64.convert_i32_s\\n\");\n" +
+  "            } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.trunc_f64_s\\n\");\n" +
+  "            }\n" +
+  "        }\n" +
+  "        /* pack variadic args into __va_area */\n" +
+  "        va_off = 0;\n" +
+  "        for (i = fixed; i < n->ival2; i++) {\n" +
+  "            emit_indent();\n" +
+  "            out(\"global.get $__va_area\\n\");\n" +
+  "            if (va_off > 0) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.const \"); out_d(va_off); out(\"\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.add\\n\");\n" +
+  "            }\n" +
+  "            gen_expr(n->list[i]);\n" +
+  "            if (last_expr_is_float) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.trunc_f64_s\\n\");\n" +
+  "            }\n" +
+  "            emit_indent();\n" +
+  "            out(\"i32.store\\n\");\n" +
+  "            va_off = va_off + 4;\n" +
+  "        }\n" +
+  "        /* push va_area pointer as hidden last param */\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.get $__va_area\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"call $\"); out(n->sval); out(\"\\n\");\n" +
+  "        if (func_is_void(n->sval)) {\n" +
+  "            emit_indent();\n" +
+  "            out(\"i32.const 0\\n\");\n" +
+  "            last_expr_is_float = 0;\n" +
+  "        } else {\n" +
+  "            last_expr_is_float = func_ret_is_float(n->sval);\n" +
+  "        }\n" +
   "    } else {\n" +
   "        for (i = 0; i < n->ival2; i++) {\n" +
   "            gen_expr(n->list[i]);\n" +
@@ -4315,6 +5716,33 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        } else {\n" +
   "            last_expr_is_float = func_ret_is_float(n->sval);\n" +
   "        }\n" +
+  "    }\n" +
+  "}\n" +
+  "\n" +
+  "void gen_expr_va_arg(struct Node *n) {\n" +
+  "    /* va_arg(ap, type): load from ap address, advance ap by sizeof(type) */\n" +
+  "    char *ap_name;\n" +
+  "    ap_name = n->c0->sval;\n" +
+  "    /* stack: push current ap value (the load address) */\n" +
+  "    emit_indent();\n" +
+  "    out(\"local.get $\"); out(ap_name); out(\"\\n\");\n" +
+  "    /* advance ap: ap = ap + sizeof(type) */\n" +
+  "    emit_indent();\n" +
+  "    out(\"local.get $\"); out(ap_name); out(\"\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"i32.const \"); out_d(n->ival); out(\"\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"i32.add\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"local.set $\"); out(ap_name); out(\"\\n\");\n" +
+  "    /* load from the original address (still on stack) */\n" +
+  "    emit_indent();\n" +
+  "    if (n->ival3) {\n" +
+  "        out(\"f64.load\\n\");\n" +
+  "        last_expr_is_float = 1;\n" +
+  "    } else {\n" +
+  "        out(\"i32.load\\n\");\n" +
+  "        last_expr_is_float = 0;\n" +
   "    }\n" +
   "}\n" +
   "\n" +
@@ -4385,6 +5813,29 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "\n" +
   "void gen_expr_subscript(struct Node *n) {\n" +
   "    int esz;\n" +
+  "    int dim2;\n" +
+  "    int row_stride;\n" +
+  "\n" +
+  "    /* Check if base is a 2D array (first subscript should compute address, not load) */\n" +
+  "    if (n->c0->kind == ND_IDENT) {\n" +
+  "        dim2 = var_arr_dim2(n->c0->sval);\n" +
+  "        if (dim2 > 0) {\n" +
+  "            esz = expr_elem_size(n->c0);\n" +
+  "            row_stride = dim2 * esz;\n" +
+  "            gen_expr(n->c0);\n" +
+  "            gen_expr(n->c1);\n" +
+  "            if (row_stride > 1) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.const \"); out_d(row_stride); out(\"\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.mul\\n\");\n" +
+  "            }\n" +
+  "            emit_indent();\n" +
+  "            out(\"i32.add\\n\");\n" +
+  "            /* DON'T load — return address for next subscript */\n" +
+  "            return;\n" +
+  "        }\n" +
+  "    }\n" +
   "\n" +
   "    esz = expr_elem_size(n->c0);\n" +
   "    gen_expr(n->c0);\n" +
@@ -4404,21 +5855,30 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "void gen_expr_post_inc_dec(struct Node *n) {\n" +
   "    struct Node *tgt2;\n" +
   "    char *pname;\n" +
+  "    char *prname;\n" +
   "    int pis_global;\n" +
   "    int pesz;\n" +
   "    int poff;\n" +
+  "    char *psg;\n" +
   "    tgt2 = n->c0;\n" +
   "    if (tgt2->kind == ND_IDENT) {\n" +
   "        pname = tgt2->sval;\n" +
-  "        pis_global = (find_global(pname) >= 0);\n" +
+  "        psg = find_static_global(pname);\n" +
+  "        if (psg != (char *)0) {\n" +
+  "            prname = psg;\n" +
+  "            pis_global = 1;\n" +
+  "        } else {\n" +
+  "            prname = pname;\n" +
+  "            pis_global = (find_global(pname) >= 0);\n" +
+  "        }\n" +
   "        if (pis_global) {\n" +
-  "            emit_indent(); out(\"global.get $\"); out(pname); out(\"\\n\");\n" +
+  "            emit_indent(); out(\"global.get $\"); out(prname); out(\"\\n\");\n" +
   "            emit_indent(); out(\"local.set $__atmp\\n\");\n" +
-  "            emit_indent(); out(\"global.get $\"); out(pname); out(\"\\n\");\n" +
+  "            emit_indent(); out(\"global.get $\"); out(prname); out(\"\\n\");\n" +
   "            emit_indent(); out(\"i32.const 1\\n\");\n" +
   "            emit_indent();\n" +
   "            out(n->kind == ND_POST_INC ? \"i32.add\\n\" : \"i32.sub\\n\");\n" +
-  "            emit_indent(); out(\"global.set $\"); out(pname); out(\"\\n\");\n" +
+  "            emit_indent(); out(\"global.set $\"); out(prname); out(\"\\n\");\n" +
   "            emit_indent(); out(\"local.get $__atmp\\n\");\n" +
   "        } else {\n" +
   "            emit_indent(); out(\"local.get $\"); out(pname); out(\"\\n\");\n" +
@@ -4551,7 +6011,11 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "void gen_stmt_var_decl(struct Node *n) {\n" +
   "    int bsz;\n" +
   "    int vd_is_flt;\n" +
-  "    vd_is_flt = n->ival3 >> 4;\n" +
+  "    /* static local: no runtime init needed (global handles it) */\n" +
+  "    if (n->ival3 & 0x100) return;\n" +
+  "    /* extern local: no codegen needed */\n" +
+  "    if (n->ival3 & 0x200) return;\n" +
+  "    vd_is_flt = (n->ival3 >> 4) & 0xF;\n" +
   "    if (n->ival > 0) {\n" +
   "        /* Array: allocate n->ival elements of elem_size bytes */\n" +
   "        bsz = n->ival * n->ival2;\n" +
@@ -4947,6 +6411,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    gen_expr_tbl[ND_POST_INC] = gen_expr_post_inc_dec;\n" +
   "    gen_expr_tbl[ND_POST_DEC] = gen_expr_post_inc_dec;\n" +
   "    gen_expr_tbl[ND_TERNARY] = gen_expr_ternary;\n" +
+  "    gen_expr_tbl[ND_VA_ARG] = gen_expr_va_arg;\n" +
   "}\n" +
   "\n" +
   "void init_gen_stmt_tbl(void) {\n" +
@@ -4966,6 +6431,182 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    gen_stmt_tbl[ND_CONTINUE] = gen_stmt_continue;\n" +
   "    gen_stmt_tbl[ND_BLOCK] = gen_stmt_block;\n" +
   "    gen_stmt_tbl[ND_SWITCH] = gen_stmt_switch;\n" +
+  "    gen_stmt_tbl[ND_GOTO] = gen_stmt_goto;\n" +
+  "    gen_stmt_tbl[ND_LABEL] = gen_stmt_label;\n" +
+  "}\n" +
+  "\n" +
+  "/* --- Goto state machine support --- */\n" +
+  "\n" +
+  "#define MAX_GOTO_LABELS 64\n" +
+  "\n" +
+  "char **goto_label_names;\n" +
+  "int goto_label_count;\n" +
+  "int goto_active; /* 1 when inside a goto state machine */\n" +
+  "\n" +
+  "void init_goto_labels(void) {\n" +
+  "    goto_label_names = (char **)malloc(MAX_GOTO_LABELS * sizeof(void *));\n" +
+  "    goto_label_count = 0;\n" +
+  "    goto_active = 0;\n" +
+  "}\n" +
+  "\n" +
+  "int goto_label_state(char *name) {\n" +
+  "    int i;\n" +
+  "    for (i = 0; i < goto_label_count; i++) {\n" +
+  "        if (strcmp(goto_label_names[i], name) == 0) return i + 1;\n" +
+  "    }\n" +
+  "    return -1;\n" +
+  "}\n" +
+  "\n" +
+  "int ast_has_goto(struct Node *n) {\n" +
+  "    int i;\n" +
+  "    if (n == (struct Node *)0) return 0;\n" +
+  "    if (n->kind == ND_GOTO || n->kind == ND_LABEL) return 1;\n" +
+  "    if (ast_has_goto(n->c0)) return 1;\n" +
+  "    if (ast_has_goto(n->c1)) return 1;\n" +
+  "    if (ast_has_goto(n->c2)) return 1;\n" +
+  "    if (ast_has_goto(n->c3)) return 1;\n" +
+  "    if (n->list != (struct Node **)0) {\n" +
+  "        for (i = 0; i < n->ival2; i++) {\n" +
+  "            if (ast_has_goto(n->list[i])) return 1;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    return 0;\n" +
+  "}\n" +
+  "\n" +
+  "void collect_goto_labels(struct Node *n) {\n" +
+  "    int i;\n" +
+  "    if (n == (struct Node *)0) return;\n" +
+  "    if (n->kind == ND_LABEL) {\n" +
+  "        if (goto_label_count < MAX_GOTO_LABELS) {\n" +
+  "            goto_label_names[goto_label_count] = n->sval;\n" +
+  "            goto_label_count++;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    collect_goto_labels(n->c0);\n" +
+  "    collect_goto_labels(n->c1);\n" +
+  "    collect_goto_labels(n->c2);\n" +
+  "    collect_goto_labels(n->c3);\n" +
+  "    if (n->list != (struct Node **)0) {\n" +
+  "        for (i = 0; i < n->ival2; i++) {\n" +
+  "            collect_goto_labels(n->list[i]);\n" +
+  "        }\n" +
+  "    }\n" +
+  "}\n" +
+  "\n" +
+  "void gen_stmt_goto(struct Node *n) {\n" +
+  "    int state;\n" +
+  "    state = goto_label_state(n->sval);\n" +
+  "    if (state < 0) error(n->nline, n->ncol, \"undefined label in goto\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"i32.const \"); out_d(state); out(\"\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"local.set $__goto_state\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"br $__goto_loop\\n\");\n" +
+  "}\n" +
+  "\n" +
+  "void gen_stmt_label(struct Node *n) {\n" +
+  "    /* labels are handled by the state machine partitioning, not here */\n" +
+  "    (void)n;\n" +
+  "}\n" +
+  "\n" +
+  "void gen_goto_body(struct Node *body) {\n" +
+  "    int i;\n" +
+  "    int nstmts;\n" +
+  "    int cur_state;\n" +
+  "\n" +
+  "    nstmts = body->ival2;\n" +
+  "\n" +
+  "    /* emit __goto_state local */\n" +
+  "    emit_indent();\n" +
+  "    out(\"(local $__goto_state i32)\\n\");\n" +
+  "\n" +
+  "    /* state machine wrapper */\n" +
+  "    emit_indent();\n" +
+  "    out(\"(block $__goto_exit\\n\");\n" +
+  "    indent_level++;\n" +
+  "    emit_indent();\n" +
+  "    out(\"(loop $__goto_loop\\n\");\n" +
+  "    indent_level++;\n" +
+  "\n" +
+  "    /* emit state dispatch: one if block per state */\n" +
+  "    cur_state = 0;\n" +
+  "    /* state 0 */\n" +
+  "    emit_indent();\n" +
+  "    out(\"(local.get $__goto_state)\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"(i32.eqz)\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"(if (then\\n\");\n" +
+  "    indent_level++;\n" +
+  "    for (i = 0; i < nstmts; i++) {\n" +
+  "        if (body->list[i]->kind == ND_LABEL) break;\n" +
+  "        gen_stmt(body->list[i]);\n" +
+  "    }\n" +
+  "    /* fall through to next state or exit */\n" +
+  "    if (goto_label_count > 0) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 1\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"local.set $__goto_state\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"br $__goto_loop\\n\");\n" +
+  "    } else {\n" +
+  "        emit_indent();\n" +
+  "        out(\"br $__goto_exit\\n\");\n" +
+  "    }\n" +
+  "    indent_level--;\n" +
+  "    emit_indent();\n" +
+  "    out(\"))\\n\");\n" +
+  "\n" +
+  "    /* states 1..N for each label */\n" +
+  "    cur_state = 1;\n" +
+  "    while (i < nstmts) {\n" +
+  "        /* skip the ND_LABEL node itself */\n" +
+  "        if (body->list[i]->kind == ND_LABEL) {\n" +
+  "            emit_indent();\n" +
+  "            out(\"(local.get $__goto_state)\\n\");\n" +
+  "            emit_indent();\n" +
+  "            out(\"(i32.const \"); out_d(cur_state); out(\")\\n\");\n" +
+  "            emit_indent();\n" +
+  "            out(\"(i32.eq)\\n\");\n" +
+  "            emit_indent();\n" +
+  "            out(\"(if (then\\n\");\n" +
+  "            indent_level++;\n" +
+  "            i++;\n" +
+  "            /* emit statements until next label or end */\n" +
+  "            while (i < nstmts && body->list[i]->kind != ND_LABEL) {\n" +
+  "                gen_stmt(body->list[i]);\n" +
+  "                i++;\n" +
+  "            }\n" +
+  "            /* fall through to next state or exit */\n" +
+  "            if (i < nstmts && body->list[i]->kind == ND_LABEL) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.const \"); out_d(cur_state + 1); out(\"\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"local.set $__goto_state\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"br $__goto_loop\\n\");\n" +
+  "            } else {\n" +
+  "                emit_indent();\n" +
+  "                out(\"br $__goto_exit\\n\");\n" +
+  "            }\n" +
+  "            indent_level--;\n" +
+  "            emit_indent();\n" +
+  "            out(\"))\\n\");\n" +
+  "            cur_state++;\n" +
+  "        } else {\n" +
+  "            i++;\n" +
+  "        }\n" +
+  "    }\n" +
+  "\n" +
+  "    /* end loop and exit block */\n" +
+  "    indent_level--;\n" +
+  "    emit_indent();\n" +
+  "    out(\")\\n\"); /* end loop */\n" +
+  "    indent_level--;\n" +
+  "    emit_indent();\n" +
+  "    out(\")\\n\"); /* end block */\n" +
   "}\n" +
   "\n" +
   "/* --- Function codegen --- */\n" +
@@ -4975,17 +6616,22 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    int i;\n" +
   "    int nparam_locals;\n" +
   "    int ret_float;\n" +
-  "    int has_any_float;\n" +
   "\n" +
   "    if (n->c0 == (struct Node *)0) return;\n" +
   "\n" +
   "    nlocals = 0;\n" +
+  "    nstatic_map = 0;\n" +
+  "    codegen_func_name = n->sval;\n" +
   "    label_cnt = 0;\n" +
   "    loop_sp = 0;\n" +
   "    ret_float = n->ival3; /* 0=int, 1=float, 2=double */\n" +
   "    /* register params as locals for is_char tracking */\n" +
   "    for (i = 0; i < n->ival2; i++) {\n" +
   "        add_local(n->list[i]->sval, n->list[i]->ival2, n->list[i]->ival3 & 0xF, n->list[i]->ival3 >> 4);\n" +
+  "    }\n" +
+  "    /* hidden va_ptr param for variadic functions */\n" +
+  "    if (func_is_variadic(n->sval)) {\n" +
+  "        add_local(\"__va_ptr\", 4, 0, 0);\n" +
   "    }\n" +
   "    nparam_locals = nlocals;\n" +
   "    collect_locals(n->c0);\n" +
@@ -4998,6 +6644,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            out(\" (param $\"); out(n->list[i]->sval); out(\" i32)\");\n" +
   "        }\n" +
   "    }\n" +
+  "    if (func_is_variadic(n->sval)) {\n" +
+  "        out(\" (param $__va_ptr i32)\");\n" +
+  "    }\n" +
   "    if (n->ival == 1) {\n" +
   "        /* void */\n" +
   "    } else if (ret_float) {\n" +
@@ -5009,19 +6658,13 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "\n" +
   "    indent_level = 2;\n" +
   "    /* emit only non-param locals */\n" +
-  "    has_any_float = 0;\n" +
   "    for (i = nparam_locals; i < nlocals; i++) {\n" +
   "        emit_indent();\n" +
   "        if (local_vars[i]->lv_is_float) {\n" +
   "            out(\"(local $\"); out(local_vars[i]->name); out(\" f64)\\n\");\n" +
-  "            has_any_float = 1;\n" +
   "        } else {\n" +
   "            out(\"(local $\"); out(local_vars[i]->name); out(\" i32)\\n\");\n" +
   "        }\n" +
-  "    }\n" +
-  "    /* check params for float too */\n" +
-  "    for (i = 0; i < nparam_locals; i++) {\n" +
-  "        if (local_vars[i]->lv_is_float) has_any_float = 1;\n" +
   "    }\n" +
   "    emit_indent();\n" +
   "    out(\"(local $__atmp i32)\\n\");\n" +
@@ -5030,8 +6673,17 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    emit_indent();\n" +
   "    out(\"(local $__ftmp f64)\\n\");\n" +
   "    body = n->c0;\n" +
-  "    for (i = 0; i < body->ival2; i++) {\n" +
-  "        gen_stmt(body->list[i]);\n" +
+  "    /* Check if function uses goto/labels */\n" +
+  "    if (ast_has_goto(body)) {\n" +
+  "        goto_label_count = 0;\n" +
+  "        collect_goto_labels(body);\n" +
+  "        goto_active = 1;\n" +
+  "        gen_goto_body(body);\n" +
+  "        goto_active = 0;\n" +
+  "    } else {\n" +
+  "        for (i = 0; i < body->ival2; i++) {\n" +
+  "            gen_stmt(body->list[i]);\n" +
+  "        }\n" +
   "    }\n" +
   "    if (n->ival != 1) {\n" +
   "        if (ret_float) {\n" +
@@ -5082,6 +6734,12 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    int i;\n" +
   "    int gi;\n" +
   "\n" +
+  "    uses_realloc = 0;\n" +
+  "    uses_sprintf = 0;\n" +
+  "    uses_qsort = 0;\n" +
+  "    uses_bsearch = 0;\n" +
+  "    uses_varargs = 0;\n" +
+  "\n" +
   "    emit_indent();\n" +
   "    out(\"(module\\n\");\n" +
   "    indent_level++;\n" +
@@ -5106,6 +6764,10 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    emit_indent();\n" +
   "    out(\"\\n\");\n" +
   "\n" +
+  "    /* type for qsort/bsearch comparator (always available) */\n" +
+  "    emit_indent();\n" +
+  "    out(\"(type $__fntype_2_i32 (func (param i32) (param i32) (result i32)))\\n\");\n" +
+  "\n" +
   "    /* function pointer type declarations and table */\n" +
   "    if (fn_table_count > 0) {\n" +
   "        int fti;\n" +
@@ -5121,9 +6783,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "                need_types[np] = need_types[np] | (1 << vd);\n" +
   "            }\n" +
   "        }\n" +
-  "        /* emit type declarations */\n" +
+  "        /* emit type declarations (skip $__fntype_2_i32 — already emitted above) */\n" +
   "        for (fti = 0; fti <= 16; fti++) {\n" +
-  "            if (need_types[fti] & 1) {\n" +
+  "            if ((need_types[fti] & 1) && fti != 2) {\n" +
   "                int pi;\n" +
   "                emit_indent();\n" +
   "                out(\"(type $__fntype_\"); out_d(fti); out(\"_i32 (func\");\n" +
@@ -5152,6 +6814,13 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    }\n" +
   "\n" +
   "    /* static data section */\n" +
+  "    /* check if any variadic functions exist; reserve va_area if so */\n" +
+  "    {\n" +
+  "        int vi;\n" +
+  "        for (vi = 0; vi < nfunc_sigs; vi++) {\n" +
+  "            if (func_sigs[vi]->is_variadic) { uses_varargs = 1; break; }\n" +
+  "        }\n" +
+  "    }\n" +
   "    for (i = 0; i < nstrings; i++) {\n" +
   "        out(\"  (data (i32.const \"); out_d(str_table[i]->offset); out(\") \\\"\");\n" +
   "        emit_wat_string(str_table[i]->data, str_table[i]->len);\n" +
@@ -5160,6 +6829,13 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    if (nstrings > 0) {\n" +
   "        emit_indent();\n" +
   "        out(\"\\n\");\n" +
+  "    }\n" +
+  "\n" +
+  "    /* varargs area: reserve 4096 bytes between data and heap if needed */\n" +
+  "    if (uses_varargs) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"(global $__va_area (mut i32) (i32.const \"); out_d(data_ptr); out(\"))\\n\");\n" +
+  "        data_ptr = data_ptr + 4096;\n" +
   "    }\n" +
   "\n" +
   "    /* heap pointer */\n" +
@@ -6405,6 +8081,320 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    /* user functions */\n" +
   "    for (i = 0; i < prog->ival2; i++) {\n" +
   "        gen_func(prog->list[i]);\n" +
+  "    }\n" +
+  "\n" +
+  "    /* optional runtime: realloc (only emitted if used) */\n" +
+  "    if (uses_realloc) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"(func $realloc (param $ptr i32) (param $new_size i32) (result i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local $new_ptr i32) (local $old_size i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (if (result i32) (i32.eqz (local.get $ptr))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (then (call $malloc (local.get $new_size)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (else\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (if (result i32) (i32.eqz (local.get $new_size))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        (then (call $free (local.get $ptr)) (i32.const 0))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        (else\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"          (local.set $old_size (i32.sub (i32.load (i32.sub (local.get $ptr) (i32.const 8))) (i32.const 8)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"          (local.set $new_ptr (call $malloc (local.get $new_size)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"          (if (i32.gt_u (local.get $old_size) (local.get $new_size))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"            (then (drop (call $memcpy (local.get $new_ptr) (local.get $ptr) (local.get $new_size))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"            (else (drop (call $memcpy (local.get $new_ptr) (local.get $ptr) (local.get $old_size))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"          )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"          (call $free (local.get $ptr))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"          (local.get $new_ptr)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\")\\n\");\n" +
+  "    }\n" +
+  "\n" +
+  "    /* optional runtime: sprintf helpers (only emitted if used) */\n" +
+  "    if (uses_sprintf) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"(func $__sprint_int (param $buf i32) (param $val i32) (result i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local $tmp i32) (local $len i32) (local $start i32) (local $i i32) (local $j i32) (local $neg i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $start (local.get $buf))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (if (i32.lt_s (local.get $val) (i32.const 0))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (then\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (local.set $neg (i32.const 1))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (local.set $val (i32.sub (i32.const 0) (local.get $val)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (if (i32.eqz (local.get $val))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (then\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (i32.store8 (local.get $buf) (i32.const 48))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (return (i32.add (local.get $buf) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $tmp (local.get $val))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $len (i32.const 0))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (if (local.get $neg)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (then\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (i32.store8 (local.get $buf) (i32.const 45))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (block $done (loop $digits\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br_if $done (i32.eqz (local.get $tmp)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (i32.store8 (i32.add (local.get $buf) (local.get $len))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (i32.add (i32.const 48) (i32.rem_u (local.get $tmp) (i32.const 10))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $tmp (i32.div_u (local.get $tmp) (i32.const 10)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $len (i32.add (local.get $len) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br $digits)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  ))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $i (i32.const 0))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $j (i32.sub (local.get $len) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (block $rdone (loop $rev\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br_if $rdone (i32.ge_u (local.get $i) (local.get $j)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $tmp (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (i32.store8 (i32.add (local.get $buf) (local.get $i))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (i32.load8_u (i32.add (local.get $buf) (local.get $j))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (i32.store8 (i32.add (local.get $buf) (local.get $j)) (local.get $tmp))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $i (i32.add (local.get $i) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $j (i32.sub (local.get $j) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br $rev)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  ))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (i32.add (local.get $buf) (local.get $len))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\")\\n\");\n" +
+  "\n" +
+  "        emit_indent();\n" +
+  "        out(\"(func $__sprint_str (param $buf i32) (param $s i32) (result i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local $c i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (block $done (loop $next\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $c (i32.load8_u (local.get $s)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br_if $done (i32.eqz (local.get $c)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (i32.store8 (local.get $buf) (local.get $c))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $s (i32.add (local.get $s) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br $next)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  ))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.get $buf)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\")\\n\");\n" +
+  "\n" +
+  "        emit_indent();\n" +
+  "        out(\"(func $__sprint_hex (param $buf i32) (param $val i32) (result i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local $i i32) (local $shift i32) (local $nib i32) (local $started i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (if (i32.eqz (local.get $val))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (then\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (i32.store8 (local.get $buf) (i32.const 48))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (return (i32.add (local.get $buf) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $shift (i32.const 28))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (block $done (loop $nibbles\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br_if $done (i32.lt_s (local.get $shift) (i32.const 0)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $nib (i32.and (i32.shr_u (local.get $val) (local.get $shift)) (i32.const 15)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (if (i32.or (local.get $started) (i32.ne (local.get $nib) (i32.const 0)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (then\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        (local.set $started (i32.const 1))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        (if (i32.lt_u (local.get $nib) (i32.const 10))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"          (then (i32.store8 (local.get $buf) (i32.add (i32.const 48) (local.get $nib))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"          (else (i32.store8 (local.get $buf) (i32.add (i32.const 87) (local.get $nib))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        (local.set $buf (i32.add (local.get $buf) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $shift (i32.sub (local.get $shift) (i32.const 4)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br $nibbles)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  ))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.get $buf)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\")\\n\");\n" +
+  "    }\n" +
+  "\n" +
+  "    /* optional runtime: qsort (only emitted if used) */\n" +
+  "    if (uses_qsort) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"(func $qsort (param $base i32) (param $nmemb i32) (param $size i32) (param $compar i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local $i i32) (local $j i32) (local $pi i32) (local $pj i32) (local $tmp i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $i (i32.const 1))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (block $outer_done (loop $outer\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br_if $outer_done (i32.ge_u (local.get $i) (local.get $nmemb)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $j (local.get $i))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (block $inner_done (loop $inner\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (br_if $inner_done (i32.le_s (local.get $j) (i32.const 0)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (local.set $pj (i32.add (local.get $base) (i32.mul (local.get $j) (local.get $size))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (local.set $pi (i32.sub (local.get $pj) (local.get $size)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (br_if $inner_done (i32.le_s\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        (call_indirect (type $__fntype_2_i32) (local.get $pi) (local.get $pj) (local.get $compar))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"        (i32.const 0)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (local.set $tmp (i32.load (local.get $pi)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (i32.store (local.get $pi) (i32.load (local.get $pj)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (i32.store (local.get $pj) (local.get $tmp))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (local.set $j (i32.sub (local.get $j) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (br $inner)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    ))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $i (i32.add (local.get $i) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br $outer)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  ))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\")\\n\");\n" +
+  "    }\n" +
+  "\n" +
+  "    /* optional runtime: bsearch (only emitted if used) */\n" +
+  "    if (uses_bsearch) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"(func $bsearch (param $key i32) (param $base i32) (param $nmemb i32) (param $size i32) (param $compar i32) (result i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local $lo i32) (local $hi i32) (local $mid i32) (local $p i32) (local $cmp i32)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $lo (i32.const 0))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (local.set $hi (local.get $nmemb))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (block $done (loop $search\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br_if $done (i32.ge_u (local.get $lo) (local.get $hi)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $mid (i32.shr_u (i32.add (local.get $lo) (local.get $hi)) (i32.const 1)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $p (i32.add (local.get $base) (i32.mul (local.get $mid) (local.get $size))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (local.set $cmp (call_indirect (type $__fntype_2_i32) (local.get $key) (local.get $p) (local.get $compar)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (if (i32.eqz (local.get $cmp))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (then (return (local.get $p)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (if (i32.lt_s (local.get $cmp) (i32.const 0))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (then (local.set $hi (local.get $mid)))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"      (else (local.set $lo (i32.add (local.get $mid) (i32.const 1))))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    )\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"    (br $search)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  ))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"  (i32.const 0)\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\")\\n\");\n" +
   "    }\n" +
   "\n" +
   "    emit_indent();\n" +
@@ -7655,11 +9645,11 @@ COMPILER_SOURCE["assembler.c"] =
   "    int nparams;\n" +
   "    int nlocals_only;\n" +
   "    int i;\n" +
-  "    int group_start;\n" +
   "    int group_type;\n" +
   "    int group_count;\n" +
   "    int ngroups;\n" +
   "    struct ByteVec *locals_buf;\n" +
+  "    (void)func_idx;\n" +
   "\n" +
   "    code = bv_new(4096);\n" +
   "    locals_buf = bv_new(256);\n" +
@@ -7786,13 +9776,9 @@ COMPILER_SOURCE["assembler.c"] =
   "\n" +
   "    /* Parse instruction body */\n" +
   "    {\n" +
-  "        int body_expr_count;\n" +
-  "        body_expr_count = 0;\n" +
   "        while (asm_tok != WTOK_RPAREN && asm_tok != WTOK_EOF) {\n" +
-  "            body_expr_count++;\n" +
   "            asm_parse_expr(code);\n" +
   "        }\n" +
-  "\n" +
   "    }\n" +
   "\n" +
   "    /* end opcode */\n" +
@@ -7811,7 +9797,6 @@ COMPILER_SOURCE["assembler.c"] =
   "    struct ByteVec *wasm;\n" +
   "    struct ByteVec *sec;\n" +
   "    struct ByteVec *code_sec;\n" +
-  "    int func_body_idx;\n" +
   "    int nlocal_funcs;\n" +
   "    int i;\n" +
   "    int j;\n" +
@@ -7832,7 +9817,6 @@ COMPILER_SOURCE["assembler.c"] =
   "    asm_nelem = 0;\n" +
   "    asm_func_export_name = (char *)0;\n" +
   "    asm_func_export_idx = -1;\n" +
-  "    func_body_idx = 0;\n" +
   "\n" +
   "    /* Skip past (module */\n" +
   "    asm_next(); /* ( */\n" +
@@ -8367,12 +10351,15 @@ COMPILER_SOURCE["main.c"] =
   "    init_type_aliases();\n" +
   "    init_local_tracking();\n" +
   "    init_loop_labels();\n" +
+  "    init_static_map();\n" +
   "    init_gen_expr_tbl();\n" +
   "    init_gen_stmt_tbl();\n" +
+  "    init_goto_labels();\n" +
   "\n" +
   "    read_source();\n" +
   "    lex_init();\n" +
   "    advance_tok();\n" +
+  "    parse_current_func = (char *)0;\n" +
   "\n" +
   "    prog = parse_program();\n" +
   "    if (binary_mode) {\n" +

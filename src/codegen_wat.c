@@ -1945,16 +1945,15 @@ void gen_stmt_goto(struct Node *n) {
 
 void gen_stmt_label(struct Node *n) {
     /* labels are handled by the state machine partitioning, not here */
+    (void)n;
 }
 
 void gen_goto_body(struct Node *body) {
     int i;
     int nstmts;
     int cur_state;
-    int nstates;
 
     nstmts = body->ival2;
-    nstates = goto_label_count + 1;
 
     /* emit __goto_state local */
     emit_indent();
@@ -2055,7 +2054,6 @@ void gen_func(struct Node *n) {
     int i;
     int nparam_locals;
     int ret_float;
-    int has_any_float;
 
     if (n->c0 == (struct Node *)0) return;
 
@@ -2098,19 +2096,13 @@ void gen_func(struct Node *n) {
 
     indent_level = 2;
     /* emit only non-param locals */
-    has_any_float = 0;
     for (i = nparam_locals; i < nlocals; i++) {
         emit_indent();
         if (local_vars[i]->lv_is_float) {
             out("(local $"); out(local_vars[i]->name); out(" f64)\n");
-            has_any_float = 1;
         } else {
             out("(local $"); out(local_vars[i]->name); out(" i32)\n");
         }
-    }
-    /* check params for float too */
-    for (i = 0; i < nparam_locals; i++) {
-        if (local_vars[i]->lv_is_float) has_any_float = 1;
     }
     emit_indent();
     out("(local $__atmp i32)\n");

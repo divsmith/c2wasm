@@ -539,7 +539,6 @@ struct Node *parse_var_decl(void) {
     int vd_is_unsigned;
     int vd_is_float;
     int vd_is_void;
-    int is_ptr;
     int ptr_depth_vd;
     int arr_size;
     int arr_dim2;
@@ -555,7 +554,6 @@ struct Node *parse_var_decl(void) {
     vd_is_unsigned = 0;
     vd_is_float = 0;
     vd_is_void = 0;
-    is_ptr = 0;
     ptr_depth_vd = 0;
     arr_size = 0;
     arr_dim2 = 0;
@@ -634,9 +632,6 @@ struct Node *parse_var_decl(void) {
             if (tai_vd >= 0 && type_aliases[tai_vd]->resolved_kind == 2) {
                 vd_elem_size = 1;
             }
-            if (tai_vd >= 0 && type_aliases[tai_vd]->is_ptr) {
-                is_ptr = 1;
-            }
             if (tai_vd >= 0 && type_aliases[tai_vd]->is_fnptr) {
                 /* fnptr typedef: next token is the variable name */
                 advance_tok(); /* consume typedef name */
@@ -659,8 +654,8 @@ struct Node *parse_var_decl(void) {
             }
         }
     }
-    while (at(TOK_STAR)) { is_ptr = 1; ptr_depth_vd++; vd_is_float = 0; advance_tok(); }
-    if (last_type_is_ptr) { is_ptr = 1; ptr_depth_vd++; }
+    while (at(TOK_STAR)) { ptr_depth_vd++; vd_is_float = 0; advance_tok(); }
+    if (last_type_is_ptr) { ptr_depth_vd++; }
     if (ptr_depth_vd >= 2) vd_elem_size = 4;
     /* function pointer: type (*name)(params) or type (*name[N])(params) */
     if (at(TOK_LPAREN)) {
@@ -1235,7 +1230,6 @@ struct Node *parse_func(void) {
     int pty;
     int ret_float;
     int sig_idx;
-    int pi;
 
     line = cur->line;
     col = cur->col;

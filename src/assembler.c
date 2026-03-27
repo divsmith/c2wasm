@@ -1163,11 +1163,11 @@ void asm_parse_func_body(int func_idx, struct ByteVec *body) {
     int nparams;
     int nlocals_only;
     int i;
-    int group_start;
     int group_type;
     int group_count;
     int ngroups;
     struct ByteVec *locals_buf;
+    (void)func_idx;
 
     code = bv_new(4096);
     locals_buf = bv_new(256);
@@ -1294,13 +1294,9 @@ void asm_parse_func_body(int func_idx, struct ByteVec *body) {
 
     /* Parse instruction body */
     {
-        int body_expr_count;
-        body_expr_count = 0;
         while (asm_tok != WTOK_RPAREN && asm_tok != WTOK_EOF) {
-            body_expr_count++;
             asm_parse_expr(code);
         }
-
     }
 
     /* end opcode */
@@ -1319,7 +1315,6 @@ void asm_second_pass(void) {
     struct ByteVec *wasm;
     struct ByteVec *sec;
     struct ByteVec *code_sec;
-    int func_body_idx;
     int nlocal_funcs;
     int i;
     int j;
@@ -1340,7 +1335,6 @@ void asm_second_pass(void) {
     asm_nelem = 0;
     asm_func_export_name = (char *)0;
     asm_func_export_idx = -1;
-    func_body_idx = 0;
 
     /* Skip past (module */
     asm_next(); /* ( */

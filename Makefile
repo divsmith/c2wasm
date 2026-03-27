@@ -20,9 +20,14 @@ ifneq ($(WASI_SDK),)
   WASM_TARGETS = $(DEMO)/compiler.wasm $(DEMO)/assembler.wasm
 endif
 
+BUNDLE_SOURCES = $(addprefix src/, c2wasm.c constants.h util.c source.c \
+  lexer.h lexer.c types.h types.c ast.h ast.c parser.h parser.c \
+  codegen.h codegen_shared.c bytevec.h bytevec.c output.h output.c \
+  codegen_wat.c assembler.h assembler.c main.c)
+
 .PHONY: all clean test test-binary test-pipeline bootstrap bundle-source serve
 
-all: $(BIN) $(BIN)-asm $(WASM_TARGETS)
+all: $(BIN) $(BIN)-asm $(WASM_TARGETS) $(DEMO)/compiler-source.js
 ifeq ($(WASI_SDK),)
 	@echo ""
 	@echo "Note: wasi-sdk not found — skipping demo/compiler.wasm build."
@@ -73,7 +78,9 @@ test-pipeline: $(BIN) $(BIN)-asm
 bootstrap: $(BIN)
 	bash tools/bootstrap.sh
 
-bundle-source:
+bundle-source: $(DEMO)/compiler-source.js
+
+$(DEMO)/compiler-source.js: $(BUNDLE_SOURCES)
 	node tools/bundle-source.js
 
 serve:
