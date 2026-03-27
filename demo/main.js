@@ -690,8 +690,8 @@
       '    printf("100 /= 3 = %d\\n", b);\n' +
       '\n' +
       '    c = 47;\n' +
-      '    c %%= 10;\n' +
-      '    printf("47 %%%%= 10 = %d\\n", c);\n' +
+      '    c %= 10;\n' +
+      '    printf("47 %%= 10 = %d\\n", c);\n' +
       '\n' +
       '    // Works with arrays too\n' +
       '    {\n' +
@@ -701,7 +701,7 @@
       '        arr[2] = 17;\n' +
       '        arr[0] *= 21;\n' +
       '        arr[1] /= 4;\n' +
-      '        arr[2] %%= 5;\n' +
+      '        arr[2] %= 5;\n' +
       '        printf("arr: %d, %d, %d\\n", arr[0], arr[1], arr[2]);\n' +
       '    }\n' +
       '\n' +
@@ -761,7 +761,6 @@
 
     storage_classes:
       '// Storage classes: static, register, auto, volatile, extern\n' +
-      '#include "libc.h"\n' +
       '\n' +
       'int counter(void) {\n' +
       '    static int n = 0;\n' +
@@ -794,7 +793,6 @@
 
     preprocessor:
       '// Preprocessor: #ifdef, #ifndef, #if, #elif, #undef, __LINE__\n' +
-      '#include "libc.h"\n' +
       '\n' +
       '#define PLATFORM 2\n' +
       '#define DEBUG 1\n' +
@@ -956,7 +954,7 @@
       '    /* Print grid */\n' +
       '    for (i = 0; i < 3; i = i + 1) {\n' +
       '        for (j = 0; j < 4; j = j + 1)\n' +
-      '            printf("%3d ", grid[i][j]);\n' +
+      '            printf("%d ", grid[i][j]);\n' +
       '        printf("\\n");\n' +
       '    }\n' +
       '\n' +
