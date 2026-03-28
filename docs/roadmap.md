@@ -22,3 +22,4 @@
 16. [ ] Add a linker, separate out the libc methods within the compiler to a real version of libc that's linked and included
 17. [ ] real random source from browser
 18. [ ] load example programs into virtual FS instead of embedding in demo page JS
+19. [ ] Compiler to depend on only WASI runtime, shim WASI into demo as a compiler harness
