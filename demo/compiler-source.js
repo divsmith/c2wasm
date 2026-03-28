@@ -53,6 +53,7 @@ COMPILER_SOURCE["c2wasm.c"] =
   "#include <string.h>\n" +
   "\n" +
   "int binary_mode = 0;\n" +
+  "int debug_mode = 0;\n" +
   "\n" +
   "#include \"constants.h\"\n" +
   "#include \"util.c\"\n" +
@@ -6382,10 +6383,25 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    loop_sp--;\n" +
   "}\n" +
   "\n" +
+  "void gen_debug_trace(int line) {\n" +
+  "    emit_indent();\n" +
+  "    out(\"i32.const \"); out_d(line); out(\"\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"call $__c2dbg_trace\\n\");\n" +
+  "}\n" +
+  "\n" +
   "void gen_stmt(struct Node *n) {\n" +
   "    GenStmtFn fn;\n" +
   "    if (n->kind < 0 || n->kind >= ND_COUNT) {\n" +
   "        error(n->nline, n->ncol, \"unsupported statement in codegen\");\n" +
+  "    }\n" +
+  "    if (debug_mode &&\n" +
+  "        n->kind != ND_BLOCK &&\n" +
+  "        n->kind != ND_LABEL &&\n" +
+  "        n->kind != ND_GOTO &&\n" +
+  "        n->kind != ND_BREAK &&\n" +
+  "        n->kind != ND_CONTINUE) {\n" +
+  "        gen_debug_trace(n->nline);\n" +
   "    }\n" +
   "    fn = gen_stmt_tbl[n->kind];\n" +
   "    fn(n);\n" +
@@ -6767,6 +6783,10 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    out(\"(import \\\"wasi_snapshot_preview1\\\" \\\"fd_close\\\" (func $__fd_close (param i32) (result i32)))\\n\");\n" +
   "    emit_indent();\n" +
   "    out(\"(import \\\"wasi_snapshot_preview1\\\" \\\"random_get\\\" (func $__random_get (param i32 i32) (result i32)))\\n\");\n" +
+  "    if (debug_mode) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"(import \\\"dbg\\\" \\\"trace\\\" (func $__c2dbg_trace (param i32)))\\n\");\n" +
+  "    }\n" +
   "    emit_indent();\n" +
   "    out(\"\\n\");\n" +
   "\n" +

@@ -11,17 +11,22 @@
 #include <string.h>
 
 extern int binary_mode;
+extern int debug_mode;
 int _c2wasm_main(void);
 
 int main(int argc, char **argv) {
     int i;
     binary_mode = 0;
+    debug_mode = 0;
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-b") == 0) {
             binary_mode = 1;
+        } else if (strcmp(argv[i], "-D") == 0) {
+            debug_mode = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("Usage: c2wasm [options] < input.c\n");
             printf("  -b       Output WASM binary instead of WAT text\n");
+            printf("  -D       Instrument output with debug trace calls\n");
             printf("  -h       Show this help message\n");
             return 0;
         } else {

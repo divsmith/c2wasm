@@ -15,6 +15,7 @@
 #include <string.h>
 
 int binary_mode = 0;
+int debug_mode = 0;
 
 #include "constants.h"
 #include "util.c"

@@ -397,3 +397,79 @@ main {
     flex: 1;
   }
 }
+
+/* ── Debugger UI ── */
+
+#debug-btn {
+  background: #3d3f44;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+#debug-btn:hover {
+  background: #4a4d55;
+}
+
+#debug-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.debug-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 2px;
+}
+
+.debug-btn-step {
+  background: #2d5a8e;
+  border-color: #3a6fa8;
+  color: #c8e0ff;
+}
+
+.debug-btn-step:hover {
+  background: #366aa8;
+}
+
+.debug-btn-continue {
+  background: #2d6b3e;
+  border-color: #3a834c;
+  color: #b6f0c8;
+}
+
+.debug-btn-continue:hover {
+  background: #368049;
+}
+
+.debug-btn-stop {
+  background: #6b2d2d;
+  border-color: #8a3a3a;
+  color: #f0b6b6;
+}
+
+.debug-btn-stop:hover {
+  background: #803636;
+}
+
+.debug-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 80px;
+}
+
+/* Monaco current-execution-line decoration */
+.debug-current-line {
+  background: rgba(65, 130, 210, 0.18);
+}
+
+.debug-current-line-gutter {
+  background: rgba(65, 130, 210, 0.55);
+  border-radius: 2px;
+}

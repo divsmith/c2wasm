@@ -153,10 +153,28 @@
   var resetSourceBtn = document.getElementById('reset-source-btn');
   var compilerModeIndicator = document.getElementById('compiler-mode-indicator');
 
+  // Debug UI DOM
+  var debugBtn = document.getElementById('debug-btn');
+  var debugControls = document.getElementById('debug-controls');
+  var debugStepBtn = document.getElementById('debug-step-btn');
+  var debugContinueBtn = document.getElementById('debug-continue-btn');
+  var debugStopBtn = document.getElementById('debug-stop-btn');
+  var debugStatusEl = document.getElementById('debug-status');
+
   var editor = null;
   var isRunning = false;
   var idleTimerId = null;
   var autoSaveTimer = null;
+
+  // ── Debugger state ──
+
+  // SAB slots for debug control (indices into Int32Array)
+  var DBG_PAUSE_SLOT = 2;
+  var DBG_MODE_SLOT  = 3;
+
+  var debugWorker = null;
+  var debugSabInt32 = null;
+  var debugCurrentDecorations = [];
 
   // ── File selector helpers ──
 
@@ -843,9 +861,209 @@
       .then(function () { isRunning = false; }, function () { isRunning = false; });
   }
 
+  // ── Debugger functions ──
+
+  function setDebugLine(line) {
+    if (!editor) return;
+    debugCurrentDecorations = editor.deltaDecorations(debugCurrentDecorations, [
+      {
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          isWholeLine: true,
+          className: 'debug-current-line',
+          glyphMarginClassName: 'debug-current-line-gutter'
+        }
+      }
+    ]);
+    // Reveal the line in the editor
+    editor.revealLineInCenterIfOutsideViewport(line);
+  }
+
+  function clearDebugLine() {
+    if (!editor) return;
+    debugCurrentDecorations = editor.deltaDecorations(debugCurrentDecorations, []);
+  }
+
+  function setDebugStatus(text) {
+    debugStatusEl.textContent = text;
+  }
+
+  function showDebugControls() {
+    debugControls.classList.remove('hidden');
+  }
+
+  function hideDebugControls() {
+    debugControls.classList.add('hidden');
+    setDebugStatus('');
+    clearDebugLine();
+  }
+
+  function debugStep() {
+    if (!debugSabInt32) return;
+    setDebugStatus('stepping…');
+    Atomics.store(debugSabInt32, DBG_PAUSE_SLOT, 1);
+    Atomics.notify(debugSabInt32, DBG_PAUSE_SLOT, 1);
+  }
+
+  function debugContinue() {
+    if (!debugSabInt32) return;
+    setDebugStatus('running…');
+    clearDebugLine();
+    Atomics.store(debugSabInt32, DBG_PAUSE_SLOT, 2);
+    Atomics.notify(debugSabInt32, DBG_PAUSE_SLOT, 1);
+  }
+
+  function debugStop() {
+    if (!debugSabInt32) return;
+    Atomics.store(debugSabInt32, DBG_PAUSE_SLOT, 3);
+    Atomics.notify(debugSabInt32, DBG_PAUSE_SLOT, 1);
+  }
+
+  function stopDebugSession() {
+    if (debugWorker) {
+      debugStop();
+      // Give the worker a moment to self-terminate, then force-terminate
+      setTimeout(function () {
+        if (debugWorker) {
+          debugWorker.terminate();
+          debugWorker = null;
+        }
+      }, 300);
+    }
+    debugSabInt32 = null;
+    isRunning = false;
+    setButtonState('idle');
+    hideDebugControls();
+    hideTerminalInput();
+  }
+
+  function debugAndRun() {
+    if (!editor || isRunning) return;
+    isRunning = true;
+
+    var source = editor.getValue();
+    clearOutput();
+    monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
+
+    if (typeof SharedArrayBuffer === 'undefined') {
+      writeConsole(
+        'SharedArrayBuffer is not available.\nRun locally with: make serve\n',
+        'output-error'
+      );
+      isRunning = false;
+      return;
+    }
+
+    setButtonState('compiling');
+    setStatus('Compiling with debug instrumentation…');
+
+    CompilerAPI.compileDebug(source)
+      .then(function (bytes) {
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      })
+      .then(function (wasmBytes) {
+        setButtonState('running');
+        setStatus('Debugging…');
+        showDebugControls();
+        setDebugStatus('paused');
+
+        // Extended SAB: slots 0,1 for stdin; slots 2,3 for debug control
+        var sab = new SharedArrayBuffer(8 + 4096);
+        var sabInt32 = new Int32Array(sab);
+        // Start in step mode (pause every statement)
+        Atomics.store(sabInt32, DBG_MODE_SLOT, 0);
+
+        debugSabInt32 = sabInt32;
+
+        var worker = new Worker('./debug-worker.js');
+        debugWorker = worker;
+        activeWorker = worker;
+
+        worker.onmessage = function (event) {
+          var msg = event.data;
+          if (msg.type === 'trace') {
+            setDebugLine(msg.line);
+            setDebugStatus('line ' + msg.line);
+          } else if (msg.type === 'output') {
+            writeConsole(msg.text);
+          } else if (msg.type === 'needInput') {
+            showTerminalInput(sab, sabInt32);
+          } else if (msg.type === 'exit') {
+            debugWorker = null;
+            activeWorker = null;
+            worker.terminate();
+            hideTerminalInput();
+            debugSabInt32 = null;
+            isRunning = false;
+            hideDebugControls();
+            var code = msg.code;
+            setButtonState(code === 0 ? 'success' : 'error');
+            setStatus(code === 0 ? 'Done' : 'Exited with code ' + code);
+            if (code !== 0) {
+              writeConsole('\n[Process exited with code ' + code + ']', 'output-info');
+            }
+          } else if (msg.type === 'stopped') {
+            debugWorker = null;
+            activeWorker = null;
+            worker.terminate();
+            hideTerminalInput();
+            debugSabInt32 = null;
+            isRunning = false;
+            hideDebugControls();
+            setButtonState('idle');
+            setStatus('Stopped');
+            writeConsole('\n[Debugger stopped]', 'output-info');
+          } else if (msg.type === 'error') {
+            debugWorker = null;
+            activeWorker = null;
+            worker.terminate();
+            hideTerminalInput();
+            debugSabInt32 = null;
+            isRunning = false;
+            hideDebugControls();
+            writeConsole(msg.message, 'output-error');
+            setButtonState('error');
+            setStatus('Error');
+          }
+        };
+
+        worker.onerror = function (e) {
+          if (debugWorker) {
+            debugWorker = null;
+            activeWorker = null;
+            worker.terminate();
+          }
+          hideTerminalInput();
+          debugSabInt32 = null;
+          isRunning = false;
+          hideDebugControls();
+          writeConsole(e.message || 'Worker error', 'output-error');
+          setButtonState('error');
+          setStatus('Error');
+        };
+
+        // Transfer wasmBytes to the worker (zero-copy)
+        worker.postMessage({ type: 'run', wasmBytes: wasmBytes, sab: sab }, [wasmBytes]);
+      })
+      .catch(function (err) {
+        var msg = err.message || String(err);
+        var errors = parseErrors(msg);
+        if (errors.length > 0) setErrorMarkers(errors);
+        writeConsole(msg, 'output-error');
+        setButtonState('error');
+        setStatus('Error');
+        isRunning = false;
+        hideDebugControls();
+      });
+  }
+
   // ── Bind events ──
 
   runBtn.addEventListener('click', compileAndRun);
+  debugBtn.addEventListener('click', debugAndRun);
+  debugStepBtn.addEventListener('click', debugStep);
+  debugContinueBtn.addEventListener('click', debugContinue);
+  debugStopBtn.addEventListener('click', stopDebugSession);
 
   // ── Service worker (cross-origin isolation for SharedArrayBuffer) ──
 

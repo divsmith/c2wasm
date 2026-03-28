@@ -175,6 +175,22 @@ var CompilerAPI = (function () {
     });
   }
 
+  /**
+   * Compile C source to debug-instrumented WASM binary.
+   * Always uses the reference compiler with -D (debug trace) and -b (binary) flags.
+   * Returns a Promise<Uint8Array>.
+   */
+  function compileDebug(cSource) {
+    return init().then(function () {
+      var ctx = runCompiler(referenceModule, cSource, true, null, ['c2wasm', '-D', '-b']);
+      var bytes = ctx.stdoutBytes;
+      if (bytes.length === 0) {
+        throw new Error(ctx.stderr || 'Compiler produced no output');
+      }
+      return bytes;
+    });
+  }
+
   function useReference() { currentMode = 'reference'; }
   function useCustom() {
     if (!customModule) throw new Error('No custom compiler available');
@@ -186,6 +202,7 @@ var CompilerAPI = (function () {
   return {
     compile: compile,
     compileBinary: compileBinary,
+    compileDebug: compileDebug,
     buildCompiler: buildCompiler,
     useReference: useReference,
     useCustom: useCustom,

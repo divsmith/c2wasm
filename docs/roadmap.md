@@ -14,7 +14,7 @@
 9. [x] Remove WAT output from demo
 10. [x] pull src and test directories out of compilers to project root
     * The demo should be an accessory to the main compiler, not an equivalent level
-11. [ ] debugger / live code visualizer
+11. [ ] debugger / live code execution visualizer
 12. [ ] use wasm f64 if not already
 13. [x] implement C features that would make the self-hosting compiler easier to implement itself, then iteratively do so
 14. [x] break compiler up into multiple components instead of one massive file. maintain self-hosting requirement and use newly supported language features to simplify where possible.

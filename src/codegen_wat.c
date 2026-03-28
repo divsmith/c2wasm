@@ -1820,10 +1820,25 @@ void gen_stmt_switch(struct Node *n) {
     loop_sp--;
 }
 
+void gen_debug_trace(int line) {
+    emit_indent();
+    out("i32.const "); out_d(line); out("\n");
+    emit_indent();
+    out("call $__c2dbg_trace\n");
+}
+
 void gen_stmt(struct Node *n) {
     GenStmtFn fn;
     if (n->kind < 0 || n->kind >= ND_COUNT) {
         error(n->nline, n->ncol, "unsupported statement in codegen");
+    }
+    if (debug_mode &&
+        n->kind != ND_BLOCK &&
+        n->kind != ND_LABEL &&
+        n->kind != ND_GOTO &&
+        n->kind != ND_BREAK &&
+        n->kind != ND_CONTINUE) {
+        gen_debug_trace(n->nline);
     }
     fn = gen_stmt_tbl[n->kind];
     fn(n);
@@ -2205,6 +2220,10 @@ void gen_module(struct Node *prog) {
     out("(import \"wasi_snapshot_preview1\" \"fd_close\" (func $__fd_close (param i32) (result i32)))\n");
     emit_indent();
     out("(import \"wasi_snapshot_preview1\" \"random_get\" (func $__random_get (param i32 i32) (result i32)))\n");
+    if (debug_mode) {
+        emit_indent();
+        out("(import \"dbg\" \"trace\" (func $__c2dbg_trace (param i32)))\n");
+    }
     emit_indent();
     out("\n");
 

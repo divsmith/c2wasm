@@ -279,6 +279,13 @@ function createWasiHarness(config) {
     }
   };
 
+  if (opts.extraImports) {
+    var extraKeys = Object.keys(opts.extraImports);
+    for (var ei = 0; ei < extraKeys.length; ei++) {
+      imports[extraKeys[ei]] = opts.extraImports[extraKeys[ei]];
+    }
+  }
+
   return {
     imports: imports,
     setMemory: function (m) { state.memory = m; },

@@ -73,6 +73,7 @@
       <button id="new-file-btn" title="New file">＋ New</button>
       <button id="delete-file-btn" title="Delete this file">✕ Delete</button>
       <button id="run-btn" title="Ctrl+Enter">▶ Compile &amp; Run</button>
+      <button id="debug-btn" title="Run with step-through debugger">🐛 Debug</button>
     </div>
     <div id="compiler-controls" class="hidden">
       <label class="toolbar-label" for="compiler-file-select">Source:</label>
@@ -81,6 +82,13 @@
       <button id="reset-source-btn" title="Reset all changes">↺ Reset</button>
     </div>
     <span id="save-indicator" class="save-indicator"></span>
+    <div id="debug-controls" class="hidden">
+      <span class="debug-label">Debugger</span>
+      <button id="debug-step-btn" class="debug-btn-step" title="Advance to next statement">⏭ Step</button>
+      <button id="debug-continue-btn" class="debug-btn-continue" title="Run to completion">▶ Continue</button>
+      <button id="debug-stop-btn" class="debug-btn-stop" title="Stop debugging">⏹ Stop</button>
+      <span id="debug-status" class="debug-status"></span>
+    </div>
     <span id="compiler-mode-indicator" class="compiler-mode-indicator">Using: Reference</span>
     <span id="status"></span>
   </div>
