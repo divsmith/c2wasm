@@ -176,7 +176,9 @@
   var debugCurrentDecorations = [];
   var breakpointDecorations  = [];
   var debugBreakpoints       = new Set(); // line numbers (1-based) with active breakpoints
-  var debugStepMode          = true;      // true = pause every statement; false = run to breakpoint
+  // 'run' = execute normally, only pause on breakpoints
+  // 'step' = pause after the very next traced statement
+  var debugMode = 'run';
 
   // ── File selector helpers ──
 
@@ -962,13 +964,13 @@
 
   function debugStep() {
     if (!debugSabInt32) return;
-    debugStepMode = true;
+    debugMode = 'step'; // pause after the next traced statement
     releaseDebugWorker();
   }
 
   function debugContinue() {
     if (!debugSabInt32) return;
-    debugStepMode = false;
+    debugMode = 'run';
     setDebugStatus('running\u2026');
     clearDebugLine();
     releaseDebugWorker();
@@ -1026,8 +1028,8 @@
         setButtonState('running');
         setStatus('Debugging…');
         showDebugControls();
-        setDebugStatus('paused');
-        debugStepMode = true; // always start in step mode
+        setDebugStatus('running\u2026');
+        debugMode = 'run'; // always start in run mode — only stop at breakpoints
 
         // SAB: slots 0,1 for stdin; slot 2 for debug pause signal
         var sab = new SharedArrayBuffer(8 + 4096);
@@ -1044,19 +1046,13 @@
           if (msg.type === 'trace') {
             var line = msg.line;
             var hitBreakpoint = debugBreakpoints.has(line);
-            if (debugStepMode || hitBreakpoint) {
-              // Pause: show the current line, update status, wait for button
+            if (debugMode === 'step' || hitBreakpoint) {
+              // Pause: show current line, wait for user button
+              debugMode = 'run'; // reset so next release goes back to run mode by default
               setDebugLine(line);
-              if (hitBreakpoint && !debugStepMode) {
-                // Breakpoint hit during "continue" — switch back to step mode
-                debugStepMode = true;
-                setDebugStatus('\u25cf line ' + line);
-              } else {
-                setDebugStatus('line ' + line);
-              }
-              // Worker stays parked until user clicks Step, Continue, or Stop
+              setDebugStatus(hitBreakpoint ? '\u25cf line ' + line : 'line ' + line);
             } else {
-              // In "continue" mode and no breakpoint — release immediately
+              // Running and no breakpoint — release immediately
               releaseDebugWorker();
             }
           } else if (msg.type === 'output') {
