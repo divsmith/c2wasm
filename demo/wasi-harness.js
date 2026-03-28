@@ -279,10 +279,10 @@ function createWasiHarness(config) {
     }
   };
 
-  if (opts.extraImports) {
-    var extraKeys = Object.keys(opts.extraImports);
+  if (config.extraImports) {
+    var extraKeys = Object.keys(config.extraImports);
     for (var ei = 0; ei < extraKeys.length; ei++) {
-      imports[extraKeys[ei]] = opts.extraImports[extraKeys[ei]];
+      imports[extraKeys[ei]] = config.extraImports[extraKeys[ei]];
     }
   }
 

@@ -400,76 +400,108 @@ main {
 
 /* ── Debugger UI ── */
 
+/* Debug button — same secondary style as #new-file-btn */
 #debug-btn {
-  background: #3d3f44;
+  background: var(--bg-secondary);
   color: var(--text-primary);
   border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
 }
 
-#debug-btn:hover {
-  background: #4a4d55;
+#debug-btn:hover:not(:disabled) {
+  border-color: var(--warning);
+  color: var(--warning);
 }
 
+#debug-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Debug control strip — inline in toolbar, separated by a border */
 #debug-controls {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
   border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
+  padding-left: 10px;
 }
 
+/* "Debug" label — same as .toolbar-label */
 .debug-label {
   font-size: 11px;
   color: var(--text-secondary);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-right: 2px;
+  white-space: nowrap;
 }
 
-.debug-btn-step {
-  background: #2d5a8e;
-  border-color: #3a6fa8;
-  color: #c8e0ff;
+/* Step / Continue — secondary toolbar buttons */
+#debug-step-btn,
+#debug-continue-btn {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
 }
 
-.debug-btn-step:hover {
-  background: #366aa8;
+#debug-step-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-.debug-btn-continue {
-  background: #2d6b3e;
-  border-color: #3a834c;
-  color: #b6f0c8;
+#debug-continue-btn:hover {
+  border-color: var(--success);
+  color: #4ec9b0;
 }
 
-.debug-btn-continue:hover {
-  background: #368049;
+/* Stop — danger style matching #delete-file-btn */
+#debug-stop-btn {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
 }
 
-.debug-btn-stop {
-  background: #6b2d2d;
-  border-color: #8a3a3a;
-  color: #f0b6b6;
+#debug-stop-btn:hover {
+  background: var(--error);
+  color: #fff;
 }
 
-.debug-btn-stop:hover {
-  background: #803636;
-}
-
+/* Debug status text */
 .debug-status {
   font-size: 11px;
   color: var(--text-secondary);
-  min-width: 80px;
+  min-width: 60px;
+  white-space: nowrap;
 }
 
 /* Monaco current-execution-line decoration */
 .debug-current-line {
-  background: rgba(65, 130, 210, 0.18);
+  background: rgba(0, 122, 204, 0.12);
+  border-left: 2px solid var(--accent);
 }
 
 .debug-current-line-gutter {
-  background: rgba(65, 130, 210, 0.55);
+  background: var(--accent);
   border-radius: 2px;
+  width: 4px !important;
+  margin-left: 2px;
 }
