@@ -6766,6 +6766,8 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    emit_indent();\n" +
   "    out(\"(import \\\"wasi_snapshot_preview1\\\" \\\"fd_close\\\" (func $__fd_close (param i32) (result i32)))\\n\");\n" +
   "    emit_indent();\n" +
+  "    out(\"(import \\\"wasi_snapshot_preview1\\\" \\\"random_get\\\" (func $__random_get (param i32 i32) (result i32)))\\n\");\n" +
+  "    emit_indent();\n" +
   "    out(\"\\n\");\n" +
   "\n" +
   "    /* memory */\n" +
@@ -8462,6 +8464,21 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        emit_indent();\n" +
   "        out(\"(func $_start (export \\\"_start\\\")\\n\");\n" +
   "        indent_level++;\n" +
+  "        /* Seed PRNG from OS entropy via WASI random_get (4 bytes into scratch at offset 0) */\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 0\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 4\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"call $__random_get\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"drop\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 0\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.load\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.set $__rand_seed\\n\");\n" +
   "        if (need_init) {\n" +
   "            emit_indent();\n" +
   "            out(\"call $__init\\n\");\n" +

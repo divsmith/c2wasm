@@ -110,12 +110,13 @@ c2wasm < input.c | c2wasm-asm > output.wasm
 
 ### Browser Integration
 
-- **Compiler → WASM**: compiled with [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) to a standalone ~667 KB `.wasm` file (no JavaScript runtime bundled)
-- **Stdin/stdout redirection**: a minimal WASI shim (`compiler-api.js`) feeds C source as stdin bytes and captures output from stdout
-- **Virtual filesystem**: the WASI shim implements `path_open`/`fd_read`/`fd_close` backed by an in-memory file map, enabling `#include` resolution in the browser for compiling multi-file projects
+- **Compiler → WASM**: compiled with [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) to a standalone ~667 KB `.wasm` file (no JavaScript runtime bundled); its only runtime dependency is the standard `wasi_snapshot_preview1` interface
+- **Unified WASI harness** (`wasi-harness.js`): a shared `createWasiHarness()` factory implements the full `wasi_snapshot_preview1` API and is used by both the compiler runner (`compiler-api.js`) and the user-program runner (`wasm-worker.js`)
+- **Cryptographic randomness**: `random_get` is implemented with `crypto.getRandomValues()` (Web Crypto API) in both the compiler and user-program harness; generated programs have `rand()` automatically seeded from OS entropy at startup via `random_get`
+- **Virtual filesystem**: the WASI harness implements `path_open`/`fd_read`/`fd_close` backed by an in-memory file map, enabling `#include` resolution in the browser for compiling multi-file projects
 - **Live compiler editing**: switch to Compiler mode to modify the compiler source; the reference `compiler.wasm` compiles your changes into a custom compiler, which then compiles user programs
 - **Direct binary output**: the browser compiler emits WASM binary directly — no `wabt.js` assembler needed
-- **Execution**: `WebAssembly.instantiate` with a WASI shim (`wasm-worker.js`); `fd_write`/`fd_read` capture stdout and supply pre-buffered stdin; programs using `getchar` read from the stdin input box in the demo UI
+- **Execution**: `WebAssembly.instantiate` with the WASI harness (`wasm-worker.js`); supports stdin/stdout/stderr, `clock_time_get`, `random_get`, environment variables, and arguments; programs using `getchar` read from the stdin input box in the demo UI
 
 ### Key Design Decisions
 

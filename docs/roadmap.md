@@ -20,6 +20,6 @@
 14. [x] break compiler up into multiple components instead of one massive file. maintain self-hosting requirement and use newly supported language features to simplify where possible.
 15. [x] build out full compiler toolchain, i.e. source -> wat, and wat -> wasm, instead of separate source -> wat and source -> wasm / binary modes
 16. [ ] Add a linker, separate out the libc methods within the compiler to a real version of libc that's linked and included
-17. [ ] real random source from browser
-18. [ ] load example programs into virtual FS instead of embedding in demo page JS
-19. [ ] Compiler to depend on only WASI runtime, shim WASI into demo as a compiler harness
+17. [x] real random source from browser
+18. [x] load example programs into virtual FS instead of embedding in demo page JS
+19. [x] Compiler to depend on only WASI runtime, shim WASI into demo as a compiler harness

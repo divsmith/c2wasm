@@ -2204,6 +2204,8 @@ void gen_module(struct Node *prog) {
     emit_indent();
     out("(import \"wasi_snapshot_preview1\" \"fd_close\" (func $__fd_close (param i32) (result i32)))\n");
     emit_indent();
+    out("(import \"wasi_snapshot_preview1\" \"random_get\" (func $__random_get (param i32 i32) (result i32)))\n");
+    emit_indent();
     out("\n");
 
     /* memory */
@@ -3900,6 +3902,21 @@ void gen_module(struct Node *prog) {
         emit_indent();
         out("(func $_start (export \"_start\")\n");
         indent_level++;
+        /* Seed PRNG from OS entropy via WASI random_get (4 bytes into scratch at offset 0) */
+        emit_indent();
+        out("i32.const 0\n");
+        emit_indent();
+        out("i32.const 4\n");
+        emit_indent();
+        out("call $__random_get\n");
+        emit_indent();
+        out("drop\n");
+        emit_indent();
+        out("i32.const 0\n");
+        emit_indent();
+        out("i32.load\n");
+        emit_indent();
+        out("global.set $__rand_seed\n");
         if (need_init) {
             emit_indent();
             out("call $__init\n");
