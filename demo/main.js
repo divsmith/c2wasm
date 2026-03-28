@@ -288,6 +288,7 @@
     if (type === 'example') {
       fetchExample(id, function (code) {
         if (editor) {
+          clearBreakpoints();
           editor.setValue(code);
           monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
         }
@@ -304,6 +305,7 @@
       code = exampleCache['hello'] || '';
     }
     if (editor) {
+      clearBreakpoints();
       editor.setValue(code);
       monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
     }
@@ -335,6 +337,7 @@
     deleteFileBtn.style.display = '';
 
     if (editor) {
+      clearBreakpoints();
       editor.setValue(newFile.content);
       monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
       editor.focus();
@@ -359,6 +362,7 @@
     deleteFileBtn.style.display = 'none';
 
     if (editor) {
+      clearBreakpoints();
       editor.setValue(exampleCache['hello'] || '');
       monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
     }
@@ -437,6 +441,7 @@
       if (active.type === 'example') {
         fetchExample(active.id, function (code) {
           if (editor) {
+            clearBreakpoints();
             editor.setValue(code);
             monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
           }
@@ -449,6 +454,7 @@
           code = exampleCache['hello'] || '';
         }
         if (editor) {
+          clearBreakpoints();
           editor.setValue(code);
           monaco.editor.setModelMarkers(editor.getModel(), 'c2wasm', []);
         }
@@ -609,14 +615,18 @@
           scheduleAutoSave();
         });
 
-        // Gutter click → toggle breakpoint (program mode only)
+        // Gutter click → toggle breakpoint (program mode only).
+        // Use numeric MouseTargetType values for robustness:
+        //   2 = GUTTER_GLYPH_MARGIN, 3 = GUTTER_LINE_NUMBERS
         editor.onMouseDown(function (e) {
-          if (!e.target || !e.target.position) return;
+          if (!e.target) return;
           var t = e.target.type;
-          if (t !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
-              t !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) return;
+          if (t !== 2 && t !== 3) return;
           if (currentEditorMode !== 'program') return;
-          toggleBreakpoint(e.target.position.lineNumber);
+          var pos = e.target.position;
+          if (!pos && e.target.range) pos = { lineNumber: e.target.range.startLineNumber };
+          if (!pos) return;
+          toggleBreakpoint(pos.lineNumber);
         });
 
         editor.addAction({
@@ -877,6 +887,13 @@
   }
 
   // ── Debugger functions ──
+
+  function clearBreakpoints() {
+    debugBreakpoints.clear();
+    if (editor) {
+      breakpointDecorations = editor.deltaDecorations(breakpointDecorations, []);
+    }
+  }
 
   function toggleBreakpoint(line) {
     if (debugBreakpoints.has(line)) {
