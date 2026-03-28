@@ -6,17 +6,18 @@ importScripts('wasi-harness.js');
 //   [0]: stdin handshake — worker sets to 0 before sleeping, main sets to 1 when input is ready
 //   [1]: stdin byte count
 //   [2]: debug pause slot — worker sets to 0 when paused, main writes signal to wake:
-//          1 = step (advance one statement, then pause again)
-//          2 = continue (run to end without pausing)
+//          1 = proceed (step or continue; main thread decides pause logic)
 //          3 = stop (throw to terminate execution)
-//   [3]: debug run mode — 0 = pause every statement, 1 = run to end (set by continue signal)
 // Byte view offset 8+: raw UTF-8 stdin bytes
+//
+// Run-mode fast-path is handled by the main thread: when in "continue" mode and the
+// current line has no breakpoint, the main thread immediately writes signal=1 and
+// notifies without waiting for user input. This keeps the worker protocol simple.
 
 var SAB_INPUT_OFFSET = 8;
 var DBG_PAUSE_SLOT   = 2;
-var DBG_MODE_SLOT    = 3;
 
-var sab = null;
+var sab      = null;
 var sabInt32 = null;
 var pendingOutput = '';
 
@@ -44,26 +45,20 @@ function flushOutput() {
 function runDebugWasm(wasmBytes) {
   var dbgImports = {
     trace: function (line) {
-      // Fast path: in run-to-end mode, don't pause
-      if (Atomics.load(sabInt32, DBG_MODE_SLOT) === 1) return;
-
       flushOutput();
       self.postMessage({ type: 'trace', line: line });
 
-      // Park: signal paused, wait for main thread to release
+      // Park: signal paused, wait for main thread to release.
+      // Main thread decides whether to immediately release (run mode, no breakpoint)
+      // or wait for a user button click (step mode or breakpoint hit).
       Atomics.store(sabInt32, DBG_PAUSE_SLOT, 0);
       Atomics.wait(sabInt32, DBG_PAUSE_SLOT, 0);
 
       var signal = Atomics.load(sabInt32, DBG_PAUSE_SLOT);
       if (signal === 3) {
-        // Stop requested — throw a sentinel to unwind the WASM call stack
         throw new Error('__C2WASM_DEBUG_STOP__');
       }
-      if (signal === 2) {
-        // Continue — switch to run mode so future traces are skipped
-        Atomics.store(sabInt32, DBG_MODE_SLOT, 1);
-      }
-      // signal === 1: step — stay in step mode (DBG_MODE_SLOT remains 0)
+      // signal === 1: proceed (step or continue — main thread decides)
     }
   };
 

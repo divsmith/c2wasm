@@ -168,13 +168,15 @@
 
   // ── Debugger state ──
 
-  // SAB slots for debug control (indices into Int32Array)
+  // SAB slot index for debug pause signal (Int32Array)
   var DBG_PAUSE_SLOT = 2;
-  var DBG_MODE_SLOT  = 3;
 
-  var debugWorker = null;
-  var debugSabInt32 = null;
+  var debugWorker            = null;
+  var debugSabInt32          = null;
   var debugCurrentDecorations = [];
+  var breakpointDecorations  = [];
+  var debugBreakpoints       = new Set(); // line numbers (1-based) with active breakpoints
+  var debugStepMode          = true;      // true = pause every statement; false = run to breakpoint
 
   // ── File selector helpers ──
 
@@ -429,6 +431,7 @@
     if (mode === 'program') {
       programControls.style.display = '';
       compilerControls.classList.add('hidden');
+      if (editor) editor.updateOptions({ glyphMargin: true });
       // Restore program file
       var active = getActiveFile();
       if (active.type === 'example') {
@@ -454,6 +457,7 @@
     } else {
       programControls.style.display = 'none';
       compilerControls.classList.remove('hidden');
+      if (editor) editor.updateOptions({ glyphMargin: false });
       var fname = getActiveCompilerFile();
       if (editor) {
         editor.setValue(compilerWorkingCopy[fname] || '');
@@ -593,6 +597,7 @@
           automaticLayout: true,
           scrollBeyondLastLine: false,
           lineNumbers: 'on',
+          glyphMargin: true,
           renderWhitespace: 'none',
           tabSize: 4,
           padding: { top: 12, bottom: 12 }
@@ -602,6 +607,16 @@
 
         editor.onDidChangeModelContent(function () {
           scheduleAutoSave();
+        });
+
+        // Gutter click → toggle breakpoint (program mode only)
+        editor.onMouseDown(function (e) {
+          if (!e.target || !e.target.position) return;
+          var t = e.target.type;
+          if (t !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN &&
+              t !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) return;
+          if (currentEditorMode !== 'program') return;
+          toggleBreakpoint(e.target.position.lineNumber);
         });
 
         editor.addAction({
@@ -863,6 +878,31 @@
 
   // ── Debugger functions ──
 
+  function toggleBreakpoint(line) {
+    if (debugBreakpoints.has(line)) {
+      debugBreakpoints.delete(line);
+    } else {
+      debugBreakpoints.add(line);
+    }
+    renderBreakpointDecorations();
+  }
+
+  function renderBreakpointDecorations() {
+    if (!editor) return;
+    var newDecors = [];
+    debugBreakpoints.forEach(function (line) {
+      newDecors.push({
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          isWholeLine: true,
+          className: 'debug-breakpoint-line',
+          glyphMarginClassName: 'debug-breakpoint-glyph'
+        }
+      });
+    });
+    breakpointDecorations = editor.deltaDecorations(breakpointDecorations, newDecors);
+  }
+
   function setDebugLine(line) {
     if (!editor) return;
     debugCurrentDecorations = editor.deltaDecorations(debugCurrentDecorations, [
@@ -875,7 +915,6 @@
         }
       }
     ]);
-    // Reveal the line in the editor
     editor.revealLineInCenterIfOutsideViewport(line);
   }
 
@@ -898,19 +937,24 @@
     clearDebugLine();
   }
 
-  function debugStep() {
+  function releaseDebugWorker() {
     if (!debugSabInt32) return;
-    setDebugStatus('stepping…');
     Atomics.store(debugSabInt32, DBG_PAUSE_SLOT, 1);
     Atomics.notify(debugSabInt32, DBG_PAUSE_SLOT, 1);
   }
 
+  function debugStep() {
+    if (!debugSabInt32) return;
+    debugStepMode = true;
+    releaseDebugWorker();
+  }
+
   function debugContinue() {
     if (!debugSabInt32) return;
-    setDebugStatus('running…');
+    debugStepMode = false;
+    setDebugStatus('running\u2026');
     clearDebugLine();
-    Atomics.store(debugSabInt32, DBG_PAUSE_SLOT, 2);
-    Atomics.notify(debugSabInt32, DBG_PAUSE_SLOT, 1);
+    releaseDebugWorker();
   }
 
   function debugStop() {
@@ -966,12 +1010,11 @@
         setStatus('Debugging…');
         showDebugControls();
         setDebugStatus('paused');
+        debugStepMode = true; // always start in step mode
 
-        // Extended SAB: slots 0,1 for stdin; slots 2,3 for debug control
+        // SAB: slots 0,1 for stdin; slot 2 for debug pause signal
         var sab = new SharedArrayBuffer(8 + 4096);
         var sabInt32 = new Int32Array(sab);
-        // Start in step mode (pause every statement)
-        Atomics.store(sabInt32, DBG_MODE_SLOT, 0);
 
         debugSabInt32 = sabInt32;
 
@@ -982,8 +1025,23 @@
         worker.onmessage = function (event) {
           var msg = event.data;
           if (msg.type === 'trace') {
-            setDebugLine(msg.line);
-            setDebugStatus('line ' + msg.line);
+            var line = msg.line;
+            var hitBreakpoint = debugBreakpoints.has(line);
+            if (debugStepMode || hitBreakpoint) {
+              // Pause: show the current line, update status, wait for button
+              setDebugLine(line);
+              if (hitBreakpoint && !debugStepMode) {
+                // Breakpoint hit during "continue" — switch back to step mode
+                debugStepMode = true;
+                setDebugStatus('\u25cf line ' + line);
+              } else {
+                setDebugStatus('line ' + line);
+              }
+              // Worker stays parked until user clicks Step, Continue, or Stop
+            } else {
+              // In "continue" mode and no breakpoint — release immediately
+              releaseDebugWorker();
+            }
           } else if (msg.type === 'output') {
             writeConsole(msg.text);
           } else if (msg.type === 'needInput') {

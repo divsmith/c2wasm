@@ -433,6 +433,10 @@ main {
   padding-left: 10px;
 }
 
+#debug-controls.hidden {
+  display: none;
+}
+
 /* "Debug" label — same as .toolbar-label */
 .debug-label {
   font-size: 11px;
@@ -504,4 +508,24 @@ main {
   border-radius: 2px;
   width: 4px !important;
   margin-left: 2px;
+}
+
+/* Breakpoint dot in the glyph margin */
+.debug-breakpoint-glyph {
+  background: var(--error);
+  border-radius: 50%;
+  width: 12px !important;
+  height: 12px !important;
+  margin: 3px 2px;
+  cursor: pointer;
+}
+
+/* Faint red tint on breakpointed lines */
+.debug-breakpoint-line {
+  background: rgba(244, 71, 71, 0.07);
+}
+
+/* Clickable cursor over the gutter in program mode */
+.monaco-editor .margin-view-overlays > div:hover {
+  cursor: pointer;
 }
