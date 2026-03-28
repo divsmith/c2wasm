@@ -616,12 +616,12 @@
         });
 
         // Gutter click → toggle breakpoint (program mode only).
-        // Use numeric MouseTargetType values for robustness:
-        //   2 = GUTTER_GLYPH_MARGIN, 3 = GUTTER_LINE_NUMBERS
+        // Only handle GUTTER_GLYPH_MARGIN (type 2) — the narrow strip to the
+        // left of line numbers. Accepting GUTTER_LINE_NUMBERS (type 3) would
+        // cause accidental breakpoints whenever a user clicks a line number.
         editor.onMouseDown(function (e) {
           if (!e.target) return;
-          var t = e.target.type;
-          if (t !== 2 && t !== 3) return;
+          if (e.target.type !== 2) return; // 2 = GUTTER_GLYPH_MARGIN
           if (currentEditorMode !== 'program') return;
           var pos = e.target.position;
           if (!pos && e.target.range) pos = { lineNumber: e.target.range.startLineNumber };
