@@ -78,7 +78,17 @@ void collect_locals(struct Node *n) {
         } else if (n->ival3 & 0x200) {
             /* extern local: skip entirely */
         } else {
-            add_local(n->sval, n->ival2, n->ival3 & 0xF, (n->ival3 >> 4) & 0xF);
+            int cl_esz;
+            int cl_isfloat;
+            cl_esz = n->ival2;
+            cl_isfloat = (n->ival3 >> 4) & 0xF;
+            /* Array variable is an i32 pointer to heap memory.
+               Encode float element type in lv_elem_size (5 for f32, 8 for f64). */
+            if (n->ival > 0) {
+                if (cl_isfloat == 1) { cl_esz = 5; }
+                cl_isfloat = 0;
+            }
+            add_local(n->sval, cl_esz, n->ival3 & 0xF, cl_isfloat);
             if ((n->ival3 >> 16) & 0xFFFF) {
                 add_local_dim2(n->sval, (n->ival3 >> 16) & 0xFFFF);
             }

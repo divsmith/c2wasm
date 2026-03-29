@@ -1486,8 +1486,9 @@ COMPILER_SOURCE["lexer.c"] =
   "                    fbuf[flen++] = la();\n" +
   "                }\n" +
   "            }\n" +
-  "            /* consume optional f/F suffix */\n" +
-  "            if (lp() == 'f' || lp() == 'F') la();\n" +
+  "            /* consume optional f/F suffix; track f32 vs f64 */\n" +
+  "            if (lp() == 'f' || lp() == 'F') { la(); t->int_val = 1; }\n" +
+  "            else { t->int_val = 2; }\n" +
   "        }\n" +
   "        if (is_flt) {\n" +
   "            fbuf[flen] = '\\0';\n" +
@@ -2319,6 +2320,7 @@ COMPILER_SOURCE["parser.c"] =
   "    if (at(TOK_FLOAT_LIT)) {\n" +
   "        n = node_new(ND_FLOAT_LIT, cur->line, cur->col);\n" +
   "        n->sval = strdupn(cur->text, 127);\n" +
+  "        n->ival = cur->int_val; /* 1=f32, 2=f64 */\n" +
   "        advance_tok();\n" +
   "        return n;\n" +
   "    }\n" +
@@ -2886,7 +2888,13 @@ COMPILER_SOURCE["parser.c"] =
   "            }\n" +
   "        }\n" +
   "    }\n" +
-  "    while (at(TOK_STAR)) { ptr_depth_vd++; vd_is_float = 0; advance_tok(); }\n" +
+  "    while (at(TOK_STAR)) {\n" +
+  "        ptr_depth_vd++;\n" +
+  "        /* f32 element: float* uses elem_size=5 to distinguish from int* */\n" +
+  "        if (vd_is_float == 1 && ptr_depth_vd == 1) vd_elem_size = 5;\n" +
+  "        vd_is_float = 0;\n" +
+  "        advance_tok();\n" +
+  "    }\n" +
   "    if (last_type_is_ptr) { ptr_depth_vd++; }\n" +
   "    if (ptr_depth_vd >= 2) vd_elem_size = 4;\n" +
   "    /* function pointer: type (*name)(params) or type (*name[N])(params) */\n" +
@@ -3512,7 +3520,12 @@ COMPILER_SOURCE["parser.c"] =
   "            advance_tok();\n" +
   "        } else {\n" +
   "            pty = parse_type();\n" +
-  "            while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }\n" +
+  "            while (at(TOK_STAR)) {\n" +
+  "                /* f32 element: float* uses elem_size=5 */\n" +
+  "                if (last_type_is_float == 1) last_type_elem_size = 5;\n" +
+  "                last_type_is_float = 0;\n" +
+  "                advance_tok();\n" +
+  "            }\n" +
   "            /* function pointer parameter: type (*name)(params) */\n" +
   "            if (at(TOK_LPAREN)) {\n" +
   "                int fparam_np;\n" +
@@ -3574,7 +3587,12 @@ COMPILER_SOURCE["parser.c"] =
   "                    break;\n" +
   "                }\n" +
   "                pty = parse_type();\n" +
-  "                while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }\n" +
+  "                while (at(TOK_STAR)) {\n" +
+  "                    /* f32 element: float* uses elem_size=5 */\n" +
+  "                    if (last_type_is_float == 1) last_type_elem_size = 5;\n" +
+  "                    last_type_is_float = 0;\n" +
+  "                    advance_tok();\n" +
+  "                }\n" +
   "                /* function pointer parameter in subsequent position */\n" +
   "                if (at(TOK_LPAREN)) {\n" +
   "                    int fparam_np2;\n" +
@@ -4288,7 +4306,17 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "        } else if (n->ival3 & 0x200) {\n" +
   "            /* extern local: skip entirely */\n" +
   "        } else {\n" +
-  "            add_local(n->sval, n->ival2, n->ival3 & 0xF, (n->ival3 >> 4) & 0xF);\n" +
+  "            int cl_esz;\n" +
+  "            int cl_isfloat;\n" +
+  "            cl_esz = n->ival2;\n" +
+  "            cl_isfloat = (n->ival3 >> 4) & 0xF;\n" +
+  "            /* Array variable is an i32 pointer to heap memory.\n" +
+  "               Encode float element type in lv_elem_size (5 for f32, 8 for f64). */\n" +
+  "            if (n->ival > 0) {\n" +
+  "                if (cl_isfloat == 1) { cl_esz = 5; }\n" +
+  "                cl_isfloat = 0;\n" +
+  "            }\n" +
+  "            add_local(n->sval, cl_esz, n->ival3 & 0xF, cl_isfloat);\n" +
   "            if ((n->ival3 >> 16) & 0xFFFF) {\n" +
   "                add_local_dim2(n->sval, (n->ival3 >> 16) & 0xFFFF);\n" +
   "            }\n" +
@@ -4654,13 +4682,36 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "void emit_load(int esz) {\n" +
   "    if (esz == 1) { out(\"i32.load8_u\\n\"); }\n" +
   "    else if (esz == 2) { out(\"i32.load16_s\\n\"); }\n" +
+  "    else if (esz == 5) { out(\"f32.load\\n\"); }\n" +
+  "    else if (esz == 8) { out(\"f64.load\\n\"); }\n" +
   "    else { out(\"i32.load\\n\"); }\n" +
   "}\n" +
   "\n" +
   "void emit_store(int esz) {\n" +
   "    if (esz == 1) { out(\"i32.store8\\n\"); }\n" +
   "    else if (esz == 2) { out(\"i32.store16\\n\"); }\n" +
+  "    else if (esz == 5) { out(\"f32.store\\n\"); }\n" +
+  "    else if (esz == 8) { out(\"f64.store\\n\"); }\n" +
   "    else { out(\"i32.store\\n\"); }\n" +
+  "}\n" +
+  "\n" +
+  "/* Returns the WASM type name for a float kind: 1=f32, 2=f64 */\n" +
+  "char *ftype_str(int ft) {\n" +
+  "    if (ft == 1) return \"f32\";\n" +
+  "    return \"f64\";\n" +
+  "}\n" +
+  "\n" +
+  "/* Returns the byte stride for an element size (f32 elem has esz=5, stride=4) */\n" +
+  "int elem_stride(int esz) {\n" +
+  "    if (esz == 5) return 4;\n" +
+  "    return esz;\n" +
+  "}\n" +
+  "\n" +
+  "/* Returns the float kind for an element size (5=f32, 8=f64, else 0) */\n" +
+  "int esz_float_kind(int esz) {\n" +
+  "    if (esz == 5) return 1;\n" +
+  "    if (esz == 8) return 2;\n" +
+  "    return 0;\n" +
   "}\n" +
   "\n" +
   "/* --- Expression codegen --- */\n" +
@@ -4686,28 +4737,44 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "}\n" +
   "\n" +
   "void gen_expr_float_lit(struct Node *n) {\n" +
+  "    int ft;\n" +
+  "    ft = n->ival ? n->ival : 2; /* default to f64 if not set */\n" +
   "    emit_indent();\n" +
-  "    out(\"f64.const \"); out(n->sval); out(\"\\n\");\n" +
-  "    last_expr_is_float = 2;\n" +
+  "    out(ftype_str(ft)); out(\".const \"); out(n->sval); out(\"\\n\");\n" +
+  "    last_expr_is_float = ft;\n" +
   "}\n" +
   "\n" +
   "void gen_expr_cast(struct Node *n) {\n" +
+  "    int tgt_ft;\n" +
+  "    tgt_ft = n->ival; /* 1=float, 2=double, 0=int */\n" +
   "    gen_expr(n->c0);\n" +
-  "    if (n->ival >= 1 && !last_expr_is_float) {\n" +
-  "        /* cast to float/double, expr is int */\n" +
+  "    if (tgt_ft && !last_expr_is_float) {\n" +
+  "        /* int → float/double */\n" +
   "        emit_indent();\n" +
-  "        out(\"f64.convert_i32_s\\n\");\n" +
-  "        last_expr_is_float = 2;\n" +
-  "    } else if (n->ival >= 1 && last_expr_is_float) {\n" +
-  "        /* cast to float/double, already float — no-op */\n" +
-  "        last_expr_is_float = 2;\n" +
-  "    } else if (n->ival == 0 && last_expr_is_float) {\n" +
-  "        /* cast to int, expr is float */\n" +
+  "        out(ftype_str(tgt_ft)); out(\".convert_i32_s\\n\");\n" +
+  "        last_expr_is_float = tgt_ft;\n" +
+  "    } else if (tgt_ft && last_expr_is_float && tgt_ft != last_expr_is_float) {\n" +
+  "        /* float ↔ double conversion */\n" +
   "        emit_indent();\n" +
-  "        out(\"i32.trunc_f64_s\\n\");\n" +
+  "        if (tgt_ft == 1 && last_expr_is_float == 2) {\n" +
+  "            out(\"f32.demote_f64\\n\");\n" +
+  "        } else {\n" +
+  "            out(\"f64.promote_f32\\n\");\n" +
+  "        }\n" +
+  "        last_expr_is_float = tgt_ft;\n" +
+  "    } else if (tgt_ft && last_expr_is_float == tgt_ft) {\n" +
+  "        /* same float type — no-op */\n" +
+  "    } else if (!tgt_ft && last_expr_is_float) {\n" +
+  "        /* float/double → int */\n" +
+  "        emit_indent();\n" +
+  "        if (last_expr_is_float == 1) {\n" +
+  "            out(\"i32.trunc_f32_s\\n\");\n" +
+  "        } else {\n" +
+  "            out(\"i32.trunc_f64_s\\n\");\n" +
+  "        }\n" +
   "        last_expr_is_float = 0;\n" +
   "    }\n" +
-  "    /* cast to int when already int — no-op */\n" +
+  "    /* int → int: no-op */\n" +
   "}\n" +
   "\n" +
   "void gen_expr_ident(struct Node *n) {\n" +
@@ -4765,9 +4832,21 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            /* insert float/int conversion if needed */\n" +
   "            if (tgt_float && !last_expr_is_float) {\n" +
   "                emit_indent();\n" +
-  "                out(\"f64.convert_i32_s\\n\");\n" +
+  "                out(ftype_str(tgt_float)); out(\".convert_i32_s\\n\");\n" +
+  "                last_expr_is_float = tgt_float;\n" +
+  "            } else if (tgt_float == 1 && last_expr_is_float == 2) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"f32.demote_f64\\n\");\n" +
+  "                last_expr_is_float = 1;\n" +
+  "            } else if (tgt_float == 2 && last_expr_is_float == 1) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"f64.promote_f32\\n\");\n" +
   "                last_expr_is_float = 2;\n" +
-  "            } else if (!tgt_float && last_expr_is_float) {\n" +
+  "            } else if (!tgt_float && last_expr_is_float == 1) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.trunc_f32_s\\n\");\n" +
+  "                last_expr_is_float = 0;\n" +
+  "            } else if (!tgt_float && last_expr_is_float == 2) {\n" +
   "                emit_indent();\n" +
   "                out(\"i32.trunc_f64_s\\n\");\n" +
   "                last_expr_is_float = 0;\n" +
@@ -4783,11 +4862,14 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            if (tgt_float) {\n" +
   "                if (!last_expr_is_float) {\n" +
   "                    emit_indent();\n" +
-  "                    out(\"f64.convert_i32_s\\n\");\n" +
+  "                    out(ftype_str(tgt_float)); out(\".convert_i32_s\\n\");\n" +
+  "                } else if (tgt_float != last_expr_is_float) {\n" +
+  "                    emit_indent();\n" +
+  "                    if (tgt_float == 1) { out(\"f32.demote_f64\\n\"); } else { out(\"f64.promote_f32\\n\"); }\n" +
   "                }\n" +
   "                emit_indent();\n" +
-  "                out(\"f64.add\\n\");\n" +
-  "                last_expr_is_float = 2;\n" +
+  "                out(ftype_str(tgt_float)); out(\".add\\n\");\n" +
+  "                last_expr_is_float = tgt_float;\n" +
   "            } else {\n" +
   "                emit_indent();\n" +
   "                out(\"i32.add\\n\");\n" +
@@ -4804,11 +4886,14 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            if (tgt_float) {\n" +
   "                if (!last_expr_is_float) {\n" +
   "                    emit_indent();\n" +
-  "                    out(\"f64.convert_i32_s\\n\");\n" +
+  "                    out(ftype_str(tgt_float)); out(\".convert_i32_s\\n\");\n" +
+  "                } else if (tgt_float != last_expr_is_float) {\n" +
+  "                    emit_indent();\n" +
+  "                    if (tgt_float == 1) { out(\"f32.demote_f64\\n\"); } else { out(\"f64.promote_f32\\n\"); }\n" +
   "                }\n" +
   "                emit_indent();\n" +
-  "                out(\"f64.sub\\n\");\n" +
-  "                last_expr_is_float = 2;\n" +
+  "                out(ftype_str(tgt_float)); out(\".sub\\n\");\n" +
+  "                last_expr_is_float = tgt_float;\n" +
   "            } else {\n" +
   "                emit_indent();\n" +
   "                out(\"i32.sub\\n\");\n" +
@@ -4826,15 +4911,18 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            if (tgt_float && n->ival != TOK_PERCENT_EQ) {\n" +
   "                if (!last_expr_is_float) {\n" +
   "                    emit_indent();\n" +
-  "                    out(\"f64.convert_i32_s\\n\");\n" +
+  "                    out(ftype_str(tgt_float)); out(\".convert_i32_s\\n\");\n" +
+  "                } else if (tgt_float != last_expr_is_float) {\n" +
+  "                    emit_indent();\n" +
+  "                    if (tgt_float == 1) { out(\"f32.demote_f64\\n\"); } else { out(\"f64.promote_f32\\n\"); }\n" +
   "                }\n" +
   "                emit_indent();\n" +
   "                if (n->ival == TOK_STAR_EQ) {\n" +
-  "                    out(\"f64.mul\\n\");\n" +
+  "                    out(ftype_str(tgt_float)); out(\".mul\\n\");\n" +
   "                } else {\n" +
-  "                    out(\"f64.div\\n\");\n" +
+  "                    out(ftype_str(tgt_float)); out(\".div\\n\");\n" +
   "                }\n" +
-  "                last_expr_is_float = 2;\n" +
+  "                last_expr_is_float = tgt_float;\n" +
   "            } else {\n" +
   "                emit_indent();\n" +
   "                if (n->ival == TOK_STAR_EQ) {\n" +
@@ -4869,7 +4957,16 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            last_expr_is_float = 0;\n" +
   "        }\n" +
   "        if (is_global) {\n" +
-  "            if (tgt_float) {\n" +
+  "            if (tgt_float == 1) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"local.set $__ftmp_f32\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"local.get $__ftmp_f32\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"global.set $\"); out(rname); out(\"\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"local.get $__ftmp_f32\\n\");\n" +
+  "            } else if (tgt_float == 2) {\n" +
   "                emit_indent();\n" +
   "                out(\"local.set $__ftmp\\n\");\n" +
   "                emit_indent();\n" +
@@ -4894,7 +4991,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        }\n" +
   "        last_expr_is_float = tgt_float;\n" +
   "    } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {\n" +
+  "        int esz_fk;\n" +
   "        esz = expr_elem_size(tgt->c0);\n" +
+  "        esz_fk = esz_float_kind(esz);\n" +
   "        if (n->ival == TOK_EQ) {\n" +
   "            gen_expr(n->c1);\n" +
   "        } else if (n->ival == TOK_PLUS_EQ) {\n" +
@@ -4936,7 +5035,23 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            emit_bitwise_assign_op(n->ival);\n" +
   "        }\n" +
   "        emit_indent();\n" +
-  "        if (last_expr_is_float) {\n" +
+  "        if (esz_fk == 1) {\n" +
+  "            /* f32 pointer store */\n" +
+  "            if (last_expr_is_float == 2) { emit_indent(); out(\"f32.demote_f64\\n\"); }\n" +
+  "            else if (!last_expr_is_float) { emit_indent(); out(\"f32.convert_i32_s\\n\"); }\n" +
+  "            out(\"local.set $__ftmp_f32\\n\");\n" +
+  "            gen_expr(tgt->c0);\n" +
+  "            emit_indent();\n" +
+  "            out(\"local.get $__ftmp_f32\\n\");\n" +
+  "            emit_indent();\n" +
+  "            out(\"f32.store\\n\");\n" +
+  "            emit_indent();\n" +
+  "            out(\"local.get $__ftmp_f32\\n\");\n" +
+  "            last_expr_is_float = 1;\n" +
+  "        } else if (esz_fk == 2) {\n" +
+  "            /* f64 pointer store */\n" +
+  "            if (last_expr_is_float == 1) { emit_indent(); out(\"f64.promote_f32\\n\"); }\n" +
+  "            else if (!last_expr_is_float) { emit_indent(); out(\"f64.convert_i32_s\\n\"); }\n" +
   "            out(\"local.set $__ftmp\\n\");\n" +
   "            gen_expr(tgt->c0);\n" +
   "            emit_indent();\n" +
@@ -4945,6 +5060,20 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            out(\"f64.store\\n\");\n" +
   "            emit_indent();\n" +
   "            out(\"local.get $__ftmp\\n\");\n" +
+  "            last_expr_is_float = 2;\n" +
+  "        } else if (last_expr_is_float) {\n" +
+  "            /* float value into non-float pointer — convert to int */\n" +
+  "            if (last_expr_is_float == 1) { emit_indent(); out(\"i32.trunc_f32_s\\n\"); }\n" +
+  "            else { emit_indent(); out(\"i32.trunc_f64_s\\n\"); }\n" +
+  "            last_expr_is_float = 0;\n" +
+  "            out(\"local.set $__atmp\\n\");\n" +
+  "            gen_expr(tgt->c0);\n" +
+  "            emit_indent();\n" +
+  "            out(\"local.get $__atmp\\n\");\n" +
+  "            emit_indent();\n" +
+  "            emit_store(esz);\n" +
+  "            emit_indent();\n" +
+  "            out(\"local.get $__atmp\\n\");\n" +
   "        } else {\n" +
   "            out(\"local.set $__atmp\\n\");\n" +
   "            gen_expr(tgt->c0);\n" +
@@ -5038,15 +5167,19 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        emit_indent();\n" +
   "        out(\"local.get $__atmp\\n\");\n" +
   "    } else if (tgt->kind == ND_SUBSCRIPT) {\n" +
+  "        int stride;\n" +
+  "        int esz_fk;\n" +
   "        esz = expr_elem_size(tgt->c0);\n" +
+  "        stride = elem_stride(esz);\n" +
+  "        esz_fk = esz_float_kind(esz);\n" +
   "        if (n->ival == TOK_EQ) {\n" +
   "            gen_expr(n->c1);\n" +
   "        } else if (n->ival == TOK_PLUS_EQ) {\n" +
   "            gen_expr(tgt->c0);\n" +
   "            gen_expr(tgt->c1);\n" +
-  "            if (esz > 1) {\n" +
+  "            if (stride > 1) {\n" +
   "                emit_indent();\n" +
-  "                out(\"i32.const \"); out_d(esz); out(\"\\n\");\n" +
+  "                out(\"i32.const \"); out_d(stride); out(\"\\n\");\n" +
   "                emit_indent();\n" +
   "                out(\"i32.mul\\n\");\n" +
   "            }\n" +
@@ -5060,9 +5193,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        } else if (n->ival == TOK_MINUS_EQ) {\n" +
   "            gen_expr(tgt->c0);\n" +
   "            gen_expr(tgt->c1);\n" +
-  "            if (esz > 1) {\n" +
+  "            if (stride > 1) {\n" +
   "                emit_indent();\n" +
-  "                out(\"i32.const \"); out_d(esz); out(\"\\n\");\n" +
+  "                out(\"i32.const \"); out_d(stride); out(\"\\n\");\n" +
   "                emit_indent();\n" +
   "                out(\"i32.mul\\n\");\n" +
   "            }\n" +
@@ -5077,9 +5210,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "                   n->ival == TOK_PERCENT_EQ) {\n" +
   "            gen_expr(tgt->c0);\n" +
   "            gen_expr(tgt->c1);\n" +
-  "            if (esz > 1) {\n" +
+  "            if (stride > 1) {\n" +
   "                emit_indent();\n" +
-  "                out(\"i32.const \"); out_d(esz); out(\"\\n\");\n" +
+  "                out(\"i32.const \"); out_d(stride); out(\"\\n\");\n" +
   "                emit_indent();\n" +
   "                out(\"i32.mul\\n\");\n" +
   "            }\n" +
@@ -5101,9 +5234,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "                   n->ival == TOK_RSHIFT_EQ) {\n" +
   "            gen_expr(tgt->c0);\n" +
   "            gen_expr(tgt->c1);\n" +
-  "            if (esz > 1) {\n" +
+  "            if (stride > 1) {\n" +
   "                emit_indent();\n" +
-  "                out(\"i32.const \"); out_d(esz); out(\"\\n\");\n" +
+  "                out(\"i32.const \"); out_d(stride); out(\"\\n\");\n" +
   "                emit_indent();\n" +
   "                out(\"i32.mul\\n\");\n" +
   "            }\n" +
@@ -5116,23 +5249,56 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "            emit_bitwise_assign_op(n->ival);\n" +
   "        }\n" +
   "        emit_indent();\n" +
-  "        out(\"local.set $__atmp\\n\");\n" +
-  "        gen_expr(tgt->c0);\n" +
-  "        gen_expr(tgt->c1);\n" +
-  "        if (esz > 1) {\n" +
+  "        if (esz_fk == 1) {\n" +
+  "            if (last_expr_is_float == 2) { emit_indent(); out(\"f32.demote_f64\\n\"); }\n" +
+  "            else if (!last_expr_is_float) { emit_indent(); out(\"f32.convert_i32_s\\n\"); }\n" +
+  "            out(\"local.set $__ftmp_f32\\n\");\n" +
+  "            gen_expr(tgt->c0);\n" +
+  "            gen_expr(tgt->c1);\n" +
+  "            if (stride > 1) {\n" +
+  "                emit_indent(); out(\"i32.const \"); out_d(stride); out(\"\\n\");\n" +
+  "                emit_indent(); out(\"i32.mul\\n\");\n" +
+  "            }\n" +
+  "            emit_indent(); out(\"i32.add\\n\");\n" +
+  "            emit_indent(); out(\"local.get $__ftmp_f32\\n\");\n" +
+  "            emit_indent(); out(\"f32.store\\n\");\n" +
+  "            emit_indent(); out(\"local.get $__ftmp_f32\\n\");\n" +
+  "            last_expr_is_float = 1;\n" +
+  "        } else if (esz_fk == 2) {\n" +
+  "            if (last_expr_is_float == 1) { emit_indent(); out(\"f64.promote_f32\\n\"); }\n" +
+  "            else if (!last_expr_is_float) { emit_indent(); out(\"f64.convert_i32_s\\n\"); }\n" +
+  "            out(\"local.set $__ftmp\\n\");\n" +
+  "            gen_expr(tgt->c0);\n" +
+  "            gen_expr(tgt->c1);\n" +
+  "            if (stride > 1) {\n" +
+  "                emit_indent(); out(\"i32.const \"); out_d(stride); out(\"\\n\");\n" +
+  "                emit_indent(); out(\"i32.mul\\n\");\n" +
+  "            }\n" +
+  "            emit_indent(); out(\"i32.add\\n\");\n" +
+  "            emit_indent(); out(\"local.get $__ftmp\\n\");\n" +
+  "            emit_indent(); out(\"f64.store\\n\");\n" +
+  "            emit_indent(); out(\"local.get $__ftmp\\n\");\n" +
+  "            last_expr_is_float = 2;\n" +
+  "        } else {\n" +
+  "            out(\"local.set $__atmp\\n\");\n" +
+  "            gen_expr(tgt->c0);\n" +
+  "            gen_expr(tgt->c1);\n" +
+  "            if (stride > 1) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.const \"); out_d(stride); out(\"\\n\");\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.mul\\n\");\n" +
+  "            }\n" +
   "            emit_indent();\n" +
-  "            out(\"i32.const \"); out_d(esz); out(\"\\n\");\n" +
+  "            out(\"i32.add\\n\");\n" +
   "            emit_indent();\n" +
-  "            out(\"i32.mul\\n\");\n" +
+  "            out(\"local.get $__atmp\\n\");\n" +
+  "            emit_indent();\n" +
+  "            emit_store(esz);\n" +
+  "            emit_indent();\n" +
+  "            out(\"local.get $__atmp\\n\");\n" +
+  "            last_expr_is_float = 0;\n" +
   "        }\n" +
-  "        emit_indent();\n" +
-  "        out(\"i32.add\\n\");\n" +
-  "        emit_indent();\n" +
-  "        out(\"local.get $__atmp\\n\");\n" +
-  "        emit_indent();\n" +
-  "        emit_store(esz);\n" +
-  "        emit_indent();\n" +
-  "        out(\"local.get $__atmp\\n\");\n" +
   "    }\n" +
   "}\n" +
   "\n" +
@@ -5144,7 +5310,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        gen_expr(n->c0);\n" +
   "        if (last_expr_is_float) {\n" +
   "            emit_indent();\n" +
-  "            out(\"f64.neg\\n\");\n" +
+  "            out(ftype_str(last_expr_is_float)); out(\".neg\\n\");\n" +
   "        } else {\n" +
   "            /* save value, push 0, push value, sub */\n" +
   "            emit_indent();\n" +
@@ -5160,10 +5326,12 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    case TOK_BANG:\n" +
   "        gen_expr(n->c0);\n" +
   "        if (last_expr_is_float) {\n" +
+  "            int bft;\n" +
+  "            bft = last_expr_is_float;\n" +
   "            emit_indent();\n" +
-  "            out(\"f64.const 0\\n\");\n" +
+  "            out(ftype_str(bft)); out(\".const 0\\n\");\n" +
   "            emit_indent();\n" +
-  "            out(\"f64.eq\\n\");\n" +
+  "            out(ftype_str(bft)); out(\".eq\\n\");\n" +
   "            last_expr_is_float = 0;\n" +
   "        } else {\n" +
   "            emit_indent();\n" +
@@ -5181,7 +5349,11 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    case TOK_STAR:\n" +
   "        esz = expr_elem_size(n->c0);\n" +
   "        gen_expr(n->c0);\n" +
-  "        if (esz == 8) {\n" +
+  "        if (esz == 5) {\n" +
+  "            emit_indent();\n" +
+  "            out(\"f32.load\\n\");\n" +
+  "            last_expr_is_float = 1;\n" +
+  "        } else if (esz == 8) {\n" +
   "            emit_indent();\n" +
   "            out(\"f64.load\\n\");\n" +
   "            last_expr_is_float = 2;\n" +
@@ -5214,36 +5386,47 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    gen_expr(n->c1);\n" +
   "    right_float = last_expr_is_float;\n" +
   "    op_float = 0;\n" +
-  "    if (left_float || right_float) {\n" +
-  "        op_float = 2;\n" +
-  "        /* promote: if either is float, both should be f64 */\n" +
-  "        if (left_float && !right_float) {\n" +
-  "            /* stack: [f64, i32] — convert top (right) from i32 to f64 */\n" +
-  "            emit_indent();\n" +
-  "            out(\"f64.convert_i32_s\\n\");\n" +
-  "        } else if (!left_float && right_float) {\n" +
-  "            /* stack: [i32, f64] — need to swap and convert left */\n" +
-  "            emit_indent();\n" +
-  "            out(\"local.set $__ftmp\\n\");\n" +
-  "            emit_indent();\n" +
-  "            out(\"f64.convert_i32_s\\n\");\n" +
-  "            emit_indent();\n" +
-  "            out(\"local.get $__ftmp\\n\");\n" +
+  "    if (left_float > op_float) op_float = left_float;\n" +
+  "    if (right_float > op_float) op_float = right_float;\n" +
+  "    if (op_float) {\n" +
+  "        /* ensure both operands are the same float type */\n" +
+  "        if (!left_float && right_float) {\n" +
+  "            /* stack: [i32, f32/f64] — convert left from i32 */\n" +
+  "            if (op_float == 1) {\n" +
+  "                emit_indent(); out(\"local.set $__ftmp_f32\\n\");\n" +
+  "                emit_indent(); out(\"f32.convert_i32_s\\n\");\n" +
+  "                emit_indent(); out(\"local.get $__ftmp_f32\\n\");\n" +
+  "            } else {\n" +
+  "                emit_indent(); out(\"local.set $__ftmp\\n\");\n" +
+  "                emit_indent(); out(\"f64.convert_i32_s\\n\");\n" +
+  "                emit_indent(); out(\"local.get $__ftmp\\n\");\n" +
+  "            }\n" +
+  "        } else if (left_float && !right_float) {\n" +
+  "            /* stack: [f32/f64, i32] — convert right from i32 */\n" +
+  "            emit_indent(); out(ftype_str(op_float)); out(\".convert_i32_s\\n\");\n" +
+  "        } else if (left_float == 1 && right_float == 2) {\n" +
+  "            /* stack: [f32, f64] — promote left f32 to f64 */\n" +
+  "            emit_indent(); out(\"local.set $__ftmp\\n\");\n" +
+  "            emit_indent(); out(\"f64.promote_f32\\n\");\n" +
+  "            emit_indent(); out(\"local.get $__ftmp\\n\");\n" +
+  "        } else if (left_float == 2 && right_float == 1) {\n" +
+  "            /* stack: [f64, f32] — promote right f32 to f64 */\n" +
+  "            emit_indent(); out(\"f64.promote_f32\\n\");\n" +
   "        }\n" +
   "    }\n" +
   "    if (op_float) {\n" +
   "        emit_indent();\n" +
   "        switch (n->ival) {\n" +
-  "        case TOK_PLUS:  out(\"f64.add\\n\"); last_expr_is_float = 2; break;\n" +
-  "        case TOK_MINUS: out(\"f64.sub\\n\"); last_expr_is_float = 2; break;\n" +
-  "        case TOK_STAR:  out(\"f64.mul\\n\"); last_expr_is_float = 2; break;\n" +
-  "        case TOK_SLASH: out(\"f64.div\\n\"); last_expr_is_float = 2; break;\n" +
-  "        case TOK_EQ_EQ:   out(\"f64.eq\\n\"); last_expr_is_float = 0; break;\n" +
-  "        case TOK_BANG_EQ: out(\"f64.ne\\n\"); last_expr_is_float = 0; break;\n" +
-  "        case TOK_LT:    out(\"f64.lt\\n\"); last_expr_is_float = 0; break;\n" +
-  "        case TOK_GT:    out(\"f64.gt\\n\"); last_expr_is_float = 0; break;\n" +
-  "        case TOK_LT_EQ: out(\"f64.le\\n\"); last_expr_is_float = 0; break;\n" +
-  "        case TOK_GT_EQ: out(\"f64.ge\\n\"); last_expr_is_float = 0; break;\n" +
+  "        case TOK_PLUS:  out(ftype_str(op_float)); out(\".add\\n\"); last_expr_is_float = op_float; break;\n" +
+  "        case TOK_MINUS: out(ftype_str(op_float)); out(\".sub\\n\"); last_expr_is_float = op_float; break;\n" +
+  "        case TOK_STAR:  out(ftype_str(op_float)); out(\".mul\\n\"); last_expr_is_float = op_float; break;\n" +
+  "        case TOK_SLASH: out(ftype_str(op_float)); out(\".div\\n\"); last_expr_is_float = op_float; break;\n" +
+  "        case TOK_EQ_EQ:   out(ftype_str(op_float)); out(\".eq\\n\"); last_expr_is_float = 0; break;\n" +
+  "        case TOK_BANG_EQ: out(ftype_str(op_float)); out(\".ne\\n\"); last_expr_is_float = 0; break;\n" +
+  "        case TOK_LT:    out(ftype_str(op_float)); out(\".lt\\n\"); last_expr_is_float = 0; break;\n" +
+  "        case TOK_GT:    out(ftype_str(op_float)); out(\".gt\\n\"); last_expr_is_float = 0; break;\n" +
+  "        case TOK_LT_EQ: out(ftype_str(op_float)); out(\".le\\n\"); last_expr_is_float = 0; break;\n" +
+  "        case TOK_GT_EQ: out(ftype_str(op_float)); out(\".ge\\n\"); last_expr_is_float = 0; break;\n" +
   "        default: error(n->nline, n->ncol, \"unsupported float binary operator\");\n" +
   "        }\n" +
   "    } else {\n" +
@@ -5739,13 +5922,19 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        }\n" +
   "        /* push fixed (named) args */\n" +
   "        for (i = 0; i < fixed && i < n->ival2; i++) {\n" +
+  "            int pfloat;\n" +
   "            gen_expr(n->list[i]);\n" +
-  "            if (func_param_is_float(n->sval, i) && !last_expr_is_float) {\n" +
-  "                emit_indent();\n" +
-  "                out(\"f64.convert_i32_s\\n\");\n" +
-  "            } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {\n" +
-  "                emit_indent();\n" +
-  "                out(\"i32.trunc_f64_s\\n\");\n" +
+  "            pfloat = func_param_is_float(n->sval, i);\n" +
+  "            if (pfloat && !last_expr_is_float) {\n" +
+  "                emit_indent(); out(ftype_str(pfloat)); out(\".convert_i32_s\\n\");\n" +
+  "            } else if (!pfloat && last_expr_is_float == 1) {\n" +
+  "                emit_indent(); out(\"i32.trunc_f32_s\\n\");\n" +
+  "            } else if (!pfloat && last_expr_is_float == 2) {\n" +
+  "                emit_indent(); out(\"i32.trunc_f64_s\\n\");\n" +
+  "            } else if (pfloat == 2 && last_expr_is_float == 1) {\n" +
+  "                emit_indent(); out(\"f64.promote_f32\\n\");\n" +
+  "            } else if (pfloat == 1 && last_expr_is_float == 2) {\n" +
+  "                emit_indent(); out(\"f32.demote_f64\\n\");\n" +
   "            }\n" +
   "        }\n" +
   "        /* pack variadic args into __va_area */\n" +
@@ -5760,7 +5949,10 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "                out(\"i32.add\\n\");\n" +
   "            }\n" +
   "            gen_expr(n->list[i]);\n" +
-  "            if (last_expr_is_float) {\n" +
+  "            if (last_expr_is_float == 1) {\n" +
+  "                emit_indent();\n" +
+  "                out(\"i32.trunc_f32_s\\n\");\n" +
+  "            } else if (last_expr_is_float == 2) {\n" +
   "                emit_indent();\n" +
   "                out(\"i32.trunc_f64_s\\n\");\n" +
   "            }\n" +
@@ -5782,14 +5974,20 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        }\n" +
   "    } else {\n" +
   "        for (i = 0; i < n->ival2; i++) {\n" +
+  "            int pfloat;\n" +
   "            gen_expr(n->list[i]);\n" +
-  "            /* convert param if needed */\n" +
-  "            if (func_param_is_float(n->sval, i) && !last_expr_is_float) {\n" +
-  "                emit_indent();\n" +
-  "                out(\"f64.convert_i32_s\\n\");\n" +
-  "            } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {\n" +
-  "                emit_indent();\n" +
-  "                out(\"i32.trunc_f64_s\\n\");\n" +
+  "            pfloat = func_param_is_float(n->sval, i);\n" +
+  "            /* convert param type if needed */\n" +
+  "            if (pfloat && !last_expr_is_float) {\n" +
+  "                emit_indent(); out(ftype_str(pfloat)); out(\".convert_i32_s\\n\");\n" +
+  "            } else if (!pfloat && last_expr_is_float == 1) {\n" +
+  "                emit_indent(); out(\"i32.trunc_f32_s\\n\");\n" +
+  "            } else if (!pfloat && last_expr_is_float == 2) {\n" +
+  "                emit_indent(); out(\"i32.trunc_f64_s\\n\");\n" +
+  "            } else if (pfloat == 2 && last_expr_is_float == 1) {\n" +
+  "                emit_indent(); out(\"f64.promote_f32\\n\");\n" +
+  "            } else if (pfloat == 1 && last_expr_is_float == 2) {\n" +
+  "                emit_indent(); out(\"f32.demote_f64\\n\");\n" +
   "            }\n" +
   "        }\n" +
   "        emit_indent();\n" +
@@ -5882,6 +6080,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    } else if (n->c0 != (struct Node *)0) {\n" +
   "        /* sizeof(expr): infer size from variable */\n" +
   "        sz = n->c0->kind == ND_IDENT ? var_elem_size(n->c0->sval) : 4;\n" +
+  "        if (sz == 5) sz = 4; /* f32 element: byte size is 4 */\n" +
   "    } else if (n->sval != (char *)0 && strcmp(n->sval, \"char\") == 0) {\n" +
   "        sz = 1;\n" +
   "    } else if (n->sval != (char *)0) {\n" +
@@ -5900,13 +6099,15 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    int esz;\n" +
   "    int dim2;\n" +
   "    int row_stride;\n" +
+  "    int stride;\n" +
   "\n" +
   "    /* Check if base is a 2D array (first subscript should compute address, not load) */\n" +
   "    if (n->c0->kind == ND_IDENT) {\n" +
   "        dim2 = var_arr_dim2(n->c0->sval);\n" +
   "        if (dim2 > 0) {\n" +
   "            esz = expr_elem_size(n->c0);\n" +
-  "            row_stride = dim2 * esz;\n" +
+  "            stride = elem_stride(esz);\n" +
+  "            row_stride = dim2 * stride;\n" +
   "            gen_expr(n->c0);\n" +
   "            gen_expr(n->c1);\n" +
   "            if (row_stride > 1) {\n" +
@@ -5923,11 +6124,12 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    }\n" +
   "\n" +
   "    esz = expr_elem_size(n->c0);\n" +
+  "    stride = elem_stride(esz);\n" +
   "    gen_expr(n->c0);\n" +
   "    gen_expr(n->c1);\n" +
-  "    if (esz > 1) {\n" +
+  "    if (stride > 1) {\n" +
   "        emit_indent();\n" +
-  "        out(\"i32.const \"); out_d(esz); out(\"\\n\");\n" +
+  "        out(\"i32.const \"); out_d(stride); out(\"\\n\");\n" +
   "        emit_indent();\n" +
   "        out(\"i32.mul\\n\");\n" +
   "    }\n" +
@@ -5935,6 +6137,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    out(\"i32.add\\n\");\n" +
   "    emit_indent();\n" +
   "    emit_load(esz);\n" +
+  "    if (esz == 5) { last_expr_is_float = 1; }\n" +
+  "    else if (esz == 8) { last_expr_is_float = 2; }\n" +
+  "    else { last_expr_is_float = 0; }\n" +
   "}\n" +
   "\n" +
   "void gen_expr_post_inc_dec(struct Node *n) {\n" +
@@ -5994,18 +6199,20 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    } else if (tgt2->kind == ND_SUBSCRIPT) {\n" +
   "        /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).\n" +
   "           Correct only when the array and index expressions have no side effects. */\n" +
+  "        int pstride;\n" +
   "        pesz = expr_elem_size(tgt2->c0);\n" +
+  "        pstride = elem_stride(pesz);\n" +
   "        gen_expr(tgt2->c0); gen_expr(tgt2->c1);\n" +
-  "        if (pesz > 1) { emit_indent(); out(\"i32.const \"); out_d(pesz); out(\"\\n\"); emit_indent(); out(\"i32.mul\\n\"); }\n" +
+  "        if (pstride > 1) { emit_indent(); out(\"i32.const \"); out_d(pstride); out(\"\\n\"); emit_indent(); out(\"i32.mul\\n\"); }\n" +
   "        emit_indent(); out(\"i32.add\\n\");\n" +
   "        emit_indent();\n" +
   "        emit_load(pesz);\n" +
   "        emit_indent(); out(\"local.set $__atmp\\n\");\n" +
   "        gen_expr(tgt2->c0); gen_expr(tgt2->c1);\n" +
-  "        if (pesz > 1) { emit_indent(); out(\"i32.const \"); out_d(pesz); out(\"\\n\"); emit_indent(); out(\"i32.mul\\n\"); }\n" +
+  "        if (pstride > 1) { emit_indent(); out(\"i32.const \"); out_d(pstride); out(\"\\n\"); emit_indent(); out(\"i32.mul\\n\"); }\n" +
   "        emit_indent(); out(\"i32.add\\n\");\n" +
   "        gen_expr(tgt2->c0); gen_expr(tgt2->c1);\n" +
-  "        if (pesz > 1) { emit_indent(); out(\"i32.const \"); out_d(pesz); out(\"\\n\"); emit_indent(); out(\"i32.mul\\n\"); }\n" +
+  "        if (pstride > 1) { emit_indent(); out(\"i32.const \"); out_d(pstride); out(\"\\n\"); emit_indent(); out(\"i32.mul\\n\"); }\n" +
   "        emit_indent(); out(\"i32.add\\n\");\n" +
   "        emit_indent();\n" +
   "        emit_load(pesz);\n" +
@@ -6124,11 +6331,15 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        gen_expr(n->c0);\n" +
   "        /* type conversion if needed */\n" +
   "        if (vd_is_flt && !last_expr_is_float) {\n" +
-  "            emit_indent();\n" +
-  "            out(\"f64.convert_i32_s\\n\");\n" +
-  "        } else if (!vd_is_flt && last_expr_is_float) {\n" +
-  "            emit_indent();\n" +
-  "            out(\"i32.trunc_f64_s\\n\");\n" +
+  "            emit_indent(); out(ftype_str(vd_is_flt)); out(\".convert_i32_s\\n\");\n" +
+  "        } else if (!vd_is_flt && last_expr_is_float == 1) {\n" +
+  "            emit_indent(); out(\"i32.trunc_f32_s\\n\");\n" +
+  "        } else if (!vd_is_flt && last_expr_is_float == 2) {\n" +
+  "            emit_indent(); out(\"i32.trunc_f64_s\\n\");\n" +
+  "        } else if (vd_is_flt == 2 && last_expr_is_float == 1) {\n" +
+  "            emit_indent(); out(\"f64.promote_f32\\n\");\n" +
+  "        } else if (vd_is_flt == 1 && last_expr_is_float == 2) {\n" +
+  "            emit_indent(); out(\"f32.demote_f64\\n\");\n" +
   "        }\n" +
   "        emit_indent();\n" +
   "        out(\"local.set $\"); out(n->sval); out(\"\\n\");\n" +
@@ -6144,11 +6355,11 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "void gen_stmt_if(struct Node *n) {\n" +
   "    gen_expr(n->c0);\n" +
   "    if (last_expr_is_float) {\n" +
-  "        /* convert float condition to boolean: f64 != 0.0 */\n" +
+  "        /* convert float condition to boolean */\n" +
   "        emit_indent();\n" +
-  "        out(\"f64.const 0\\n\");\n" +
+  "        out(ftype_str(last_expr_is_float)); out(\".const 0\\n\");\n" +
   "        emit_indent();\n" +
-  "        out(\"f64.ne\\n\");\n" +
+  "        out(ftype_str(last_expr_is_float)); out(\".ne\\n\");\n" +
   "    }\n" +
   "    if (n->c2 != (struct Node *)0) {\n" +
   "        emit_indent();\n" +
@@ -6205,9 +6416,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    gen_expr(n->c0);\n" +
   "    if (last_expr_is_float) {\n" +
   "        emit_indent();\n" +
-  "        out(\"f64.const 0\\n\");\n" +
+  "        out(ftype_str(last_expr_is_float)); out(\".const 0\\n\");\n" +
   "        emit_indent();\n" +
-  "        out(\"f64.ne\\n\");\n" +
+  "        out(ftype_str(last_expr_is_float)); out(\".ne\\n\");\n" +
   "    }\n" +
   "    emit_indent();\n" +
   "    out(\"i32.eqz\\n\");\n" +
@@ -6252,9 +6463,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        gen_expr(n->c1);\n" +
   "        if (last_expr_is_float) {\n" +
   "            emit_indent();\n" +
-  "            out(\"f64.const 0\\n\");\n" +
+  "            out(ftype_str(last_expr_is_float)); out(\".const 0\\n\");\n" +
   "            emit_indent();\n" +
-  "            out(\"f64.ne\\n\");\n" +
+  "            out(ftype_str(last_expr_is_float)); out(\".ne\\n\");\n" +
   "        }\n" +
   "        emit_indent();\n" +
   "        out(\"i32.eqz\\n\");\n" +
@@ -6308,9 +6519,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    gen_expr(n->c1);\n" +
   "    if (last_expr_is_float) {\n" +
   "        emit_indent();\n" +
-  "        out(\"f64.const 0\\n\");\n" +
+  "        out(ftype_str(last_expr_is_float)); out(\".const 0\\n\");\n" +
   "        emit_indent();\n" +
-  "        out(\"f64.ne\\n\");\n" +
+  "        out(ftype_str(last_expr_is_float)); out(\".ne\\n\");\n" +
   "    }\n" +
   "    emit_indent();\n" +
   "    out(\"br_if $lp_\"); out_d(lbl); out(\"\\n\");\n" +
@@ -6759,7 +6970,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    out(\"  (func $\"); out(n->sval);\n" +
   "    for (i = 0; i < n->ival2; i++) {\n" +
   "        if (local_vars[i]->lv_is_float) {\n" +
-  "            out(\" (param $\"); out(n->list[i]->sval); out(\" f64)\");\n" +
+  "            out(\" (param $\"); out(n->list[i]->sval); out(\" \"); out(ftype_str(local_vars[i]->lv_is_float)); out(\")\");\n" +
   "        } else {\n" +
   "            out(\" (param $\"); out(n->list[i]->sval); out(\" i32)\");\n" +
   "        }\n" +
@@ -6770,7 +6981,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    if (n->ival == 1) {\n" +
   "        /* void */\n" +
   "    } else if (ret_float) {\n" +
-  "        out(\" (result f64)\");\n" +
+  "        out(\" (result \"); out(ftype_str(ret_float)); out(\")\");\n" +
   "    } else {\n" +
   "        out(\" (result i32)\");\n" +
   "    }\n" +
@@ -6781,7 +6992,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    for (i = nparam_locals; i < nlocals; i++) {\n" +
   "        emit_indent();\n" +
   "        if (local_vars[i]->lv_is_float) {\n" +
-  "            out(\"(local $\"); out(local_vars[i]->name); out(\" f64)\\n\");\n" +
+  "            out(\"(local $\"); out(local_vars[i]->name); out(\" \"); out(ftype_str(local_vars[i]->lv_is_float)); out(\")\\n\");\n" +
   "        } else {\n" +
   "            out(\"(local $\"); out(local_vars[i]->name); out(\" i32)\\n\");\n" +
   "        }\n" +
@@ -6792,6 +7003,8 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    out(\"(local $__stmp i32)\\n\");\n" +
   "    emit_indent();\n" +
   "    out(\"(local $__ftmp f64)\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"(local $__ftmp_f32 f32)\\n\");\n" +
   "    body = n->c0;\n" +
   "    if (debug_mode) {\n" +
   "        emit_indent();\n" +
@@ -6828,7 +7041,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    if (n->ival != 1) {\n" +
   "        if (ret_float) {\n" +
   "            emit_indent();\n" +
-  "            out(\"f64.const 0\\n\");\n" +
+  "            out(ftype_str(ret_float)); out(\".const 0\\n\");\n" +
   "        } else {\n" +
   "            emit_indent();\n" +
   "            out(\"i32.const 0\\n\");\n" +
@@ -7005,9 +7218,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        emit_indent();\n" +
   "        if (globals_tbl[gi]->gv_is_float) {\n" +
   "            if (globals_tbl[gi]->gv_float_init != (char *)0) {\n" +
-  "                out(\"(global $\"); out(globals_tbl[gi]->name); out(\" (mut f64) (f64.const \"); out(globals_tbl[gi]->gv_float_init); out(\"))\\n\");\n" +
+  "                out(\"(global $\"); out(globals_tbl[gi]->name); out(\" (mut \"); out(ftype_str(globals_tbl[gi]->gv_is_float)); out(\") (\"); out(ftype_str(globals_tbl[gi]->gv_is_float)); out(\".const \"); out(globals_tbl[gi]->gv_float_init); out(\"))\\n\");\n" +
   "            } else {\n" +
-  "                out(\"(global $\"); out(globals_tbl[gi]->name); out(\" (mut f64) (f64.const \"); out_d(globals_tbl[gi]->init_val); out(\"))\\n\");\n" +
+  "                out(\"(global $\"); out(globals_tbl[gi]->name); out(\" (mut \"); out(ftype_str(globals_tbl[gi]->gv_is_float)); out(\") (\"); out(ftype_str(globals_tbl[gi]->gv_is_float)); out(\".const \"); out_d(globals_tbl[gi]->init_val); out(\"))\\n\");\n" +
   "            }\n" +
   "        } else {\n" +
   "            out(\"(global $\"); out(globals_tbl[gi]->name); out(\" (mut i32) (i32.const \"); out_d(globals_tbl[gi]->init_val); out(\"))\\n\");\n" +
@@ -9145,6 +9358,20 @@ COMPILER_SOURCE["assembler.c"] =
   "    return result;\n" +
   "}\n" +
   "\n" +
+  "void asm_emit_f32(struct ByteVec *code, char *s) {\n" +
+  "    float *p;\n" +
+  "    char *b;\n" +
+  "    int i;\n" +
+  "    double d;\n" +
+  "    p = (float *)malloc(4);\n" +
+  "    d = asm_parse_float_text(s);\n" +
+  "    *p = (float)d;\n" +
+  "    b = (char *)p;\n" +
+  "    for (i = 0; i < 4; i++) {\n" +
+  "        bv_push(code, b[i] & 0xFF);\n" +
+  "    }\n" +
+  "}\n" +
+  "\n" +
   "void asm_emit_f64(struct ByteVec *code, char *s) {\n" +
   "    double *p;\n" +
   "    char *b;\n" +
@@ -9253,6 +9480,8 @@ COMPILER_SOURCE["assembler.c"] =
   "    if (strcmp(instr, \"i32.store8\") == 0) return 0;\n" +
   "    if (strcmp(instr, \"i32.load16_s\") == 0) return 1;\n" +
   "    if (strcmp(instr, \"i32.store16\") == 0) return 1;\n" +
+  "    if (strcmp(instr, \"f32.load\") == 0) return 2;\n" +
+  "    if (strcmp(instr, \"f32.store\") == 0) return 2;\n" +
   "    if (strcmp(instr, \"f64.load\") == 0) return 3;\n" +
   "    if (strcmp(instr, \"f64.store\") == 0) return 3;\n" +
   "    return 0;\n" +
@@ -9330,6 +9559,37 @@ COMPILER_SOURCE["assembler.c"] =
   "            asm_next();\n" +
   "        }\n" +
   "        else asm_error(\"expected number after f64.const\");\n" +
+  "        return;\n" +
+  "    }\n" +
+  "\n" +
+  "    if (strcmp(kw, \"f32.const\") == 0) {\n" +
+  "        bv_push(code, 0x43);\n" +
+  "        if (asm_tok == WTOK_FLOAT) { asm_emit_f32(code, asm_tok_str); asm_next(); }\n" +
+  "        else if (asm_tok == WTOK_INT) {\n" +
+  "            /* Integer literal used as float, e.g. f32.const 0 */\n" +
+  "            char buf[20];\n" +
+  "            int v;\n" +
+  "            int bi;\n" +
+  "            v = asm_tok_int;\n" +
+  "            bi = 0;\n" +
+  "            if (v < 0) { buf[bi] = '-'; bi++; v = -v; }\n" +
+  "            if (v == 0) { buf[bi] = '0'; bi++; }\n" +
+  "            else {\n" +
+  "                char tmp[12];\n" +
+  "                int ti;\n" +
+  "                ti = 0;\n" +
+  "                while (v > 0) { tmp[ti] = '0' + (v % 10); ti++; v = v / 10; }\n" +
+  "                while (ti > 0) { ti--; buf[bi] = tmp[ti]; bi++; }\n" +
+  "            }\n" +
+  "            buf[bi] = '.';\n" +
+  "            bi++;\n" +
+  "            buf[bi] = '0';\n" +
+  "            bi++;\n" +
+  "            buf[bi] = 0;\n" +
+  "            asm_emit_f32(code, buf);\n" +
+  "            asm_next();\n" +
+  "        }\n" +
+  "        else asm_error(\"expected number after f32.const\");\n" +
   "        return;\n" +
   "    }\n" +
   "\n" +
@@ -9411,10 +9671,12 @@ COMPILER_SOURCE["assembler.c"] =
   "\n" +
   "    /* Memory instructions */\n" +
   "    if (strcmp(kw, \"i32.load\") == 0) { asm_encode_mem_instr(code, 0x28, kw); return; }\n" +
+  "    if (strcmp(kw, \"f32.load\") == 0) { asm_encode_mem_instr(code, 0x2A, kw); return; }\n" +
   "    if (strcmp(kw, \"f64.load\") == 0) { asm_encode_mem_instr(code, 0x2B, kw); return; }\n" +
   "    if (strcmp(kw, \"i32.load8_u\") == 0) { asm_encode_mem_instr(code, 0x2D, kw); return; }\n" +
   "    if (strcmp(kw, \"i32.load16_s\") == 0) { asm_encode_mem_instr(code, 0x2E, kw); return; }\n" +
   "    if (strcmp(kw, \"i32.store\") == 0) { asm_encode_mem_instr(code, 0x36, kw); return; }\n" +
+  "    if (strcmp(kw, \"f32.store\") == 0) { asm_encode_mem_instr(code, 0x38, kw); return; }\n" +
   "    if (strcmp(kw, \"f64.store\") == 0) { asm_encode_mem_instr(code, 0x39, kw); return; }\n" +
   "    if (strcmp(kw, \"i32.store8\") == 0) { asm_encode_mem_instr(code, 0x3A, kw); return; }\n" +
   "    if (strcmp(kw, \"i32.store16\") == 0) { asm_encode_mem_instr(code, 0x3B, kw); return; }\n" +
@@ -9459,6 +9721,21 @@ COMPILER_SOURCE["assembler.c"] =
   "    if (strcmp(kw, \"f64.div\") == 0) { bv_push(code, 0xA3); return; }\n" +
   "    if (strcmp(kw, \"i32.trunc_f64_s\") == 0) { bv_push(code, 0xAA); return; }\n" +
   "    if (strcmp(kw, \"f64.convert_i32_s\") == 0) { bv_push(code, 0xB7); return; }\n" +
+  "    if (strcmp(kw, \"f32.eq\") == 0) { bv_push(code, 0x5B); return; }\n" +
+  "    if (strcmp(kw, \"f32.ne\") == 0) { bv_push(code, 0x5C); return; }\n" +
+  "    if (strcmp(kw, \"f32.lt\") == 0) { bv_push(code, 0x5D); return; }\n" +
+  "    if (strcmp(kw, \"f32.gt\") == 0) { bv_push(code, 0x5E); return; }\n" +
+  "    if (strcmp(kw, \"f32.le\") == 0) { bv_push(code, 0x5F); return; }\n" +
+  "    if (strcmp(kw, \"f32.ge\") == 0) { bv_push(code, 0x60); return; }\n" +
+  "    if (strcmp(kw, \"f32.neg\") == 0) { bv_push(code, 0x8C); return; }\n" +
+  "    if (strcmp(kw, \"f32.add\") == 0) { bv_push(code, 0x92); return; }\n" +
+  "    if (strcmp(kw, \"f32.sub\") == 0) { bv_push(code, 0x93); return; }\n" +
+  "    if (strcmp(kw, \"f32.mul\") == 0) { bv_push(code, 0x94); return; }\n" +
+  "    if (strcmp(kw, \"f32.div\") == 0) { bv_push(code, 0x95); return; }\n" +
+  "    if (strcmp(kw, \"i32.trunc_f32_s\") == 0) { bv_push(code, 0xA8); return; }\n" +
+  "    if (strcmp(kw, \"f32.convert_i32_s\") == 0) { bv_push(code, 0xB2); return; }\n" +
+  "    if (strcmp(kw, \"f32.demote_f64\") == 0) { bv_push(code, 0xB6); return; }\n" +
+  "    if (strcmp(kw, \"f64.promote_f32\") == 0) { bv_push(code, 0xBB); return; }\n" +
   "\n" +
   "    printf(\"assembler error: unknown instruction '%s'\\n\", kw);\n" +
   "    exit(1);\n" +
@@ -9850,7 +10127,8 @@ COMPILER_SOURCE["assembler.c"] =
   "            } else {\n" +
   "                /* Unnamed params: (param i32 i32 ...) */\n" +
   "                while (asm_tok == WTOK_KW && (strcmp(asm_tok_str, \"i32\") == 0 ||\n" +
-  "                       strcmp(asm_tok_str, \"i64\") == 0 || strcmp(asm_tok_str, \"f64\") == 0)) {\n" +
+  "                       strcmp(asm_tok_str, \"i64\") == 0 || strcmp(asm_tok_str, \"f64\") == 0 ||\n" +
+  "                       strcmp(asm_tok_str, \"f32\") == 0)) {\n" +
   "                    if (asm_nlocals < ASM_MAX_LOCALS) {\n" +
   "                        asm_local_names[asm_nlocals] = (char *)0;\n" +
   "                        asm_local_types[asm_nlocals] = asm_parse_valtype(asm_tok_str);\n" +
@@ -10167,6 +10445,32 @@ COMPILER_SOURCE["assembler.c"] =
   "                        if (strcmp(init_kw, \"i32.const\") == 0) {\n" +
   "                            bv_push(init, 0x41);\n" +
   "                            bv_i32(init, asm_tok_int);\n" +
+  "                        } else if (strcmp(init_kw, \"f32.const\") == 0) {\n" +
+  "                            bv_push(init, 0x43);\n" +
+  "                            if (asm_tok == WTOK_FLOAT) {\n" +
+  "                                asm_emit_f32(init, asm_tok_str);\n" +
+  "                            } else {\n" +
+  "                                char buf[20];\n" +
+  "                                int v;\n" +
+  "                                int bi;\n" +
+  "                                v = asm_tok_int;\n" +
+  "                                bi = 0;\n" +
+  "                                if (v < 0) { buf[bi] = '-'; bi++; v = -v; }\n" +
+  "                                if (v == 0) { buf[bi] = '0'; bi++; }\n" +
+  "                                else {\n" +
+  "                                    char tmp[12];\n" +
+  "                                    int ti;\n" +
+  "                                    ti = 0;\n" +
+  "                                    while (v > 0) { tmp[ti] = '0' + (v % 10); ti++; v = v / 10; }\n" +
+  "                                    while (ti > 0) { ti--; buf[bi] = tmp[ti]; bi++; }\n" +
+  "                                }\n" +
+  "                                buf[bi] = '.';\n" +
+  "                                bi++;\n" +
+  "                                buf[bi] = '0';\n" +
+  "                                bi++;\n" +
+  "                                buf[bi] = 0;\n" +
+  "                                asm_emit_f32(init, buf);\n" +
+  "                            }\n" +
   "                        } else if (strcmp(init_kw, \"f64.const\") == 0) {\n" +
   "                            bv_push(init, 0x44);\n" +
   "                            if (asm_tok == WTOK_FLOAT) {\n" +
@@ -10262,7 +10566,8 @@ COMPILER_SOURCE["assembler.c"] =
   "                            asm_next();\n" +
   "                            if (asm_tok == WTOK_NAME) asm_next();\n" +
   "                            while (asm_tok == WTOK_KW && (strcmp(asm_tok_str, \"i32\") == 0 ||\n" +
-  "                                   strcmp(asm_tok_str, \"i64\") == 0 || strcmp(asm_tok_str, \"f64\") == 0)) {\n" +
+  "                                   strcmp(asm_tok_str, \"i64\") == 0 || strcmp(asm_tok_str, \"f64\") == 0 ||\n" +
+  "                                   strcmp(asm_tok_str, \"f32\") == 0)) {\n" +
   "                                if (np < ASM_MAX_PARAMS) { ptypes[np] = asm_parse_valtype(asm_tok_str); np++; }\n" +
   "                                asm_next();\n" +
   "                            }\n" +

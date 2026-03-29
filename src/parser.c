@@ -153,6 +153,7 @@ struct Node *parse_atom(void) {
     if (at(TOK_FLOAT_LIT)) {
         n = node_new(ND_FLOAT_LIT, cur->line, cur->col);
         n->sval = strdupn(cur->text, 127);
+        n->ival = cur->int_val; /* 1=f32, 2=f64 */
         advance_tok();
         return n;
     }
@@ -720,7 +721,13 @@ struct Node *parse_var_decl(void) {
             }
         }
     }
-    while (at(TOK_STAR)) { ptr_depth_vd++; vd_is_float = 0; advance_tok(); }
+    while (at(TOK_STAR)) {
+        ptr_depth_vd++;
+        /* f32 element: float* uses elem_size=5 to distinguish from int* */
+        if (vd_is_float == 1 && ptr_depth_vd == 1) vd_elem_size = 5;
+        vd_is_float = 0;
+        advance_tok();
+    }
     if (last_type_is_ptr) { ptr_depth_vd++; }
     if (ptr_depth_vd >= 2) vd_elem_size = 4;
     /* function pointer: type (*name)(params) or type (*name[N])(params) */
@@ -1346,7 +1353,12 @@ struct Node *parse_func(void) {
             advance_tok();
         } else {
             pty = parse_type();
-            while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
+            while (at(TOK_STAR)) {
+                /* f32 element: float* uses elem_size=5 */
+                if (last_type_is_float == 1) last_type_elem_size = 5;
+                last_type_is_float = 0;
+                advance_tok();
+            }
             /* function pointer parameter: type (*name)(params) */
             if (at(TOK_LPAREN)) {
                 int fparam_np;
@@ -1408,7 +1420,12 @@ struct Node *parse_func(void) {
                     break;
                 }
                 pty = parse_type();
-                while (at(TOK_STAR)) { last_type_is_float = 0; advance_tok(); }
+                while (at(TOK_STAR)) {
+                    /* f32 element: float* uses elem_size=5 */
+                    if (last_type_is_float == 1) last_type_elem_size = 5;
+                    last_type_is_float = 0;
+                    advance_tok();
+                }
                 /* function pointer parameter in subsequent position */
                 if (at(TOK_LPAREN)) {
                     int fparam_np2;

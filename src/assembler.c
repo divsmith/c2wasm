@@ -494,6 +494,20 @@ double asm_parse_float_text(char *s) {
     return result;
 }
 
+void asm_emit_f32(struct ByteVec *code, char *s) {
+    float *p;
+    char *b;
+    int i;
+    double d;
+    p = (float *)malloc(4);
+    d = asm_parse_float_text(s);
+    *p = (float)d;
+    b = (char *)p;
+    for (i = 0; i < 4; i++) {
+        bv_push(code, b[i] & 0xFF);
+    }
+}
+
 void asm_emit_f64(struct ByteVec *code, char *s) {
     double *p;
     char *b;
@@ -602,6 +616,8 @@ int asm_mem_align(char *instr) {
     if (strcmp(instr, "i32.store8") == 0) return 0;
     if (strcmp(instr, "i32.load16_s") == 0) return 1;
     if (strcmp(instr, "i32.store16") == 0) return 1;
+    if (strcmp(instr, "f32.load") == 0) return 2;
+    if (strcmp(instr, "f32.store") == 0) return 2;
     if (strcmp(instr, "f64.load") == 0) return 3;
     if (strcmp(instr, "f64.store") == 0) return 3;
     return 0;
@@ -679,6 +695,37 @@ void asm_encode_instr(char *kw, struct ByteVec *code) {
             asm_next();
         }
         else asm_error("expected number after f64.const");
+        return;
+    }
+
+    if (strcmp(kw, "f32.const") == 0) {
+        bv_push(code, 0x43);
+        if (asm_tok == WTOK_FLOAT) { asm_emit_f32(code, asm_tok_str); asm_next(); }
+        else if (asm_tok == WTOK_INT) {
+            /* Integer literal used as float, e.g. f32.const 0 */
+            char buf[20];
+            int v;
+            int bi;
+            v = asm_tok_int;
+            bi = 0;
+            if (v < 0) { buf[bi] = '-'; bi++; v = -v; }
+            if (v == 0) { buf[bi] = '0'; bi++; }
+            else {
+                char tmp[12];
+                int ti;
+                ti = 0;
+                while (v > 0) { tmp[ti] = '0' + (v % 10); ti++; v = v / 10; }
+                while (ti > 0) { ti--; buf[bi] = tmp[ti]; bi++; }
+            }
+            buf[bi] = '.';
+            bi++;
+            buf[bi] = '0';
+            bi++;
+            buf[bi] = 0;
+            asm_emit_f32(code, buf);
+            asm_next();
+        }
+        else asm_error("expected number after f32.const");
         return;
     }
 
@@ -760,10 +807,12 @@ void asm_encode_instr(char *kw, struct ByteVec *code) {
 
     /* Memory instructions */
     if (strcmp(kw, "i32.load") == 0) { asm_encode_mem_instr(code, 0x28, kw); return; }
+    if (strcmp(kw, "f32.load") == 0) { asm_encode_mem_instr(code, 0x2A, kw); return; }
     if (strcmp(kw, "f64.load") == 0) { asm_encode_mem_instr(code, 0x2B, kw); return; }
     if (strcmp(kw, "i32.load8_u") == 0) { asm_encode_mem_instr(code, 0x2D, kw); return; }
     if (strcmp(kw, "i32.load16_s") == 0) { asm_encode_mem_instr(code, 0x2E, kw); return; }
     if (strcmp(kw, "i32.store") == 0) { asm_encode_mem_instr(code, 0x36, kw); return; }
+    if (strcmp(kw, "f32.store") == 0) { asm_encode_mem_instr(code, 0x38, kw); return; }
     if (strcmp(kw, "f64.store") == 0) { asm_encode_mem_instr(code, 0x39, kw); return; }
     if (strcmp(kw, "i32.store8") == 0) { asm_encode_mem_instr(code, 0x3A, kw); return; }
     if (strcmp(kw, "i32.store16") == 0) { asm_encode_mem_instr(code, 0x3B, kw); return; }
@@ -808,6 +857,21 @@ void asm_encode_instr(char *kw, struct ByteVec *code) {
     if (strcmp(kw, "f64.div") == 0) { bv_push(code, 0xA3); return; }
     if (strcmp(kw, "i32.trunc_f64_s") == 0) { bv_push(code, 0xAA); return; }
     if (strcmp(kw, "f64.convert_i32_s") == 0) { bv_push(code, 0xB7); return; }
+    if (strcmp(kw, "f32.eq") == 0) { bv_push(code, 0x5B); return; }
+    if (strcmp(kw, "f32.ne") == 0) { bv_push(code, 0x5C); return; }
+    if (strcmp(kw, "f32.lt") == 0) { bv_push(code, 0x5D); return; }
+    if (strcmp(kw, "f32.gt") == 0) { bv_push(code, 0x5E); return; }
+    if (strcmp(kw, "f32.le") == 0) { bv_push(code, 0x5F); return; }
+    if (strcmp(kw, "f32.ge") == 0) { bv_push(code, 0x60); return; }
+    if (strcmp(kw, "f32.neg") == 0) { bv_push(code, 0x8C); return; }
+    if (strcmp(kw, "f32.add") == 0) { bv_push(code, 0x92); return; }
+    if (strcmp(kw, "f32.sub") == 0) { bv_push(code, 0x93); return; }
+    if (strcmp(kw, "f32.mul") == 0) { bv_push(code, 0x94); return; }
+    if (strcmp(kw, "f32.div") == 0) { bv_push(code, 0x95); return; }
+    if (strcmp(kw, "i32.trunc_f32_s") == 0) { bv_push(code, 0xA8); return; }
+    if (strcmp(kw, "f32.convert_i32_s") == 0) { bv_push(code, 0xB2); return; }
+    if (strcmp(kw, "f32.demote_f64") == 0) { bv_push(code, 0xB6); return; }
+    if (strcmp(kw, "f64.promote_f32") == 0) { bv_push(code, 0xBB); return; }
 
     printf("assembler error: unknown instruction '%s'\n", kw);
     exit(1);
@@ -1199,7 +1263,8 @@ void asm_parse_func_body(int func_idx, struct ByteVec *body) {
             } else {
                 /* Unnamed params: (param i32 i32 ...) */
                 while (asm_tok == WTOK_KW && (strcmp(asm_tok_str, "i32") == 0 ||
-                       strcmp(asm_tok_str, "i64") == 0 || strcmp(asm_tok_str, "f64") == 0)) {
+                       strcmp(asm_tok_str, "i64") == 0 || strcmp(asm_tok_str, "f64") == 0 ||
+                       strcmp(asm_tok_str, "f32") == 0)) {
                     if (asm_nlocals < ASM_MAX_LOCALS) {
                         asm_local_names[asm_nlocals] = (char *)0;
                         asm_local_types[asm_nlocals] = asm_parse_valtype(asm_tok_str);
@@ -1516,6 +1581,32 @@ void asm_second_pass(void) {
                         if (strcmp(init_kw, "i32.const") == 0) {
                             bv_push(init, 0x41);
                             bv_i32(init, asm_tok_int);
+                        } else if (strcmp(init_kw, "f32.const") == 0) {
+                            bv_push(init, 0x43);
+                            if (asm_tok == WTOK_FLOAT) {
+                                asm_emit_f32(init, asm_tok_str);
+                            } else {
+                                char buf[20];
+                                int v;
+                                int bi;
+                                v = asm_tok_int;
+                                bi = 0;
+                                if (v < 0) { buf[bi] = '-'; bi++; v = -v; }
+                                if (v == 0) { buf[bi] = '0'; bi++; }
+                                else {
+                                    char tmp[12];
+                                    int ti;
+                                    ti = 0;
+                                    while (v > 0) { tmp[ti] = '0' + (v % 10); ti++; v = v / 10; }
+                                    while (ti > 0) { ti--; buf[bi] = tmp[ti]; bi++; }
+                                }
+                                buf[bi] = '.';
+                                bi++;
+                                buf[bi] = '0';
+                                bi++;
+                                buf[bi] = 0;
+                                asm_emit_f32(init, buf);
+                            }
                         } else if (strcmp(init_kw, "f64.const") == 0) {
                             bv_push(init, 0x44);
                             if (asm_tok == WTOK_FLOAT) {
@@ -1611,7 +1702,8 @@ void asm_second_pass(void) {
                             asm_next();
                             if (asm_tok == WTOK_NAME) asm_next();
                             while (asm_tok == WTOK_KW && (strcmp(asm_tok_str, "i32") == 0 ||
-                                   strcmp(asm_tok_str, "i64") == 0 || strcmp(asm_tok_str, "f64") == 0)) {
+                                   strcmp(asm_tok_str, "i64") == 0 || strcmp(asm_tok_str, "f64") == 0 ||
+                                   strcmp(asm_tok_str, "f32") == 0)) {
                                 if (np < ASM_MAX_PARAMS) { ptypes[np] = asm_parse_valtype(asm_tok_str); np++; }
                                 asm_next();
                             }

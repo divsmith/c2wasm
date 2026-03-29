@@ -17,13 +17,36 @@ void emit_indent(void) {
 void emit_load(int esz) {
     if (esz == 1) { out("i32.load8_u\n"); }
     else if (esz == 2) { out("i32.load16_s\n"); }
+    else if (esz == 5) { out("f32.load\n"); }
+    else if (esz == 8) { out("f64.load\n"); }
     else { out("i32.load\n"); }
 }
 
 void emit_store(int esz) {
     if (esz == 1) { out("i32.store8\n"); }
     else if (esz == 2) { out("i32.store16\n"); }
+    else if (esz == 5) { out("f32.store\n"); }
+    else if (esz == 8) { out("f64.store\n"); }
     else { out("i32.store\n"); }
+}
+
+/* Returns the WASM type name for a float kind: 1=f32, 2=f64 */
+char *ftype_str(int ft) {
+    if (ft == 1) return "f32";
+    return "f64";
+}
+
+/* Returns the byte stride for an element size (f32 elem has esz=5, stride=4) */
+int elem_stride(int esz) {
+    if (esz == 5) return 4;
+    return esz;
+}
+
+/* Returns the float kind for an element size (5=f32, 8=f64, else 0) */
+int esz_float_kind(int esz) {
+    if (esz == 5) return 1;
+    if (esz == 8) return 2;
+    return 0;
 }
 
 /* --- Expression codegen --- */
@@ -49,28 +72,44 @@ void gen_expr_int_lit(struct Node *n) {
 }
 
 void gen_expr_float_lit(struct Node *n) {
+    int ft;
+    ft = n->ival ? n->ival : 2; /* default to f64 if not set */
     emit_indent();
-    out("f64.const "); out(n->sval); out("\n");
-    last_expr_is_float = 2;
+    out(ftype_str(ft)); out(".const "); out(n->sval); out("\n");
+    last_expr_is_float = ft;
 }
 
 void gen_expr_cast(struct Node *n) {
+    int tgt_ft;
+    tgt_ft = n->ival; /* 1=float, 2=double, 0=int */
     gen_expr(n->c0);
-    if (n->ival >= 1 && !last_expr_is_float) {
-        /* cast to float/double, expr is int */
+    if (tgt_ft && !last_expr_is_float) {
+        /* int → float/double */
         emit_indent();
-        out("f64.convert_i32_s\n");
-        last_expr_is_float = 2;
-    } else if (n->ival >= 1 && last_expr_is_float) {
-        /* cast to float/double, already float — no-op */
-        last_expr_is_float = 2;
-    } else if (n->ival == 0 && last_expr_is_float) {
-        /* cast to int, expr is float */
+        out(ftype_str(tgt_ft)); out(".convert_i32_s\n");
+        last_expr_is_float = tgt_ft;
+    } else if (tgt_ft && last_expr_is_float && tgt_ft != last_expr_is_float) {
+        /* float ↔ double conversion */
         emit_indent();
-        out("i32.trunc_f64_s\n");
+        if (tgt_ft == 1 && last_expr_is_float == 2) {
+            out("f32.demote_f64\n");
+        } else {
+            out("f64.promote_f32\n");
+        }
+        last_expr_is_float = tgt_ft;
+    } else if (tgt_ft && last_expr_is_float == tgt_ft) {
+        /* same float type — no-op */
+    } else if (!tgt_ft && last_expr_is_float) {
+        /* float/double → int */
+        emit_indent();
+        if (last_expr_is_float == 1) {
+            out("i32.trunc_f32_s\n");
+        } else {
+            out("i32.trunc_f64_s\n");
+        }
         last_expr_is_float = 0;
     }
-    /* cast to int when already int — no-op */
+    /* int → int: no-op */
 }
 
 void gen_expr_ident(struct Node *n) {
@@ -128,9 +167,21 @@ void gen_expr_assign(struct Node *n) {
             /* insert float/int conversion if needed */
             if (tgt_float && !last_expr_is_float) {
                 emit_indent();
-                out("f64.convert_i32_s\n");
+                out(ftype_str(tgt_float)); out(".convert_i32_s\n");
+                last_expr_is_float = tgt_float;
+            } else if (tgt_float == 1 && last_expr_is_float == 2) {
+                emit_indent();
+                out("f32.demote_f64\n");
+                last_expr_is_float = 1;
+            } else if (tgt_float == 2 && last_expr_is_float == 1) {
+                emit_indent();
+                out("f64.promote_f32\n");
                 last_expr_is_float = 2;
-            } else if (!tgt_float && last_expr_is_float) {
+            } else if (!tgt_float && last_expr_is_float == 1) {
+                emit_indent();
+                out("i32.trunc_f32_s\n");
+                last_expr_is_float = 0;
+            } else if (!tgt_float && last_expr_is_float == 2) {
                 emit_indent();
                 out("i32.trunc_f64_s\n");
                 last_expr_is_float = 0;
@@ -146,11 +197,14 @@ void gen_expr_assign(struct Node *n) {
             if (tgt_float) {
                 if (!last_expr_is_float) {
                     emit_indent();
-                    out("f64.convert_i32_s\n");
+                    out(ftype_str(tgt_float)); out(".convert_i32_s\n");
+                } else if (tgt_float != last_expr_is_float) {
+                    emit_indent();
+                    if (tgt_float == 1) { out("f32.demote_f64\n"); } else { out("f64.promote_f32\n"); }
                 }
                 emit_indent();
-                out("f64.add\n");
-                last_expr_is_float = 2;
+                out(ftype_str(tgt_float)); out(".add\n");
+                last_expr_is_float = tgt_float;
             } else {
                 emit_indent();
                 out("i32.add\n");
@@ -167,11 +221,14 @@ void gen_expr_assign(struct Node *n) {
             if (tgt_float) {
                 if (!last_expr_is_float) {
                     emit_indent();
-                    out("f64.convert_i32_s\n");
+                    out(ftype_str(tgt_float)); out(".convert_i32_s\n");
+                } else if (tgt_float != last_expr_is_float) {
+                    emit_indent();
+                    if (tgt_float == 1) { out("f32.demote_f64\n"); } else { out("f64.promote_f32\n"); }
                 }
                 emit_indent();
-                out("f64.sub\n");
-                last_expr_is_float = 2;
+                out(ftype_str(tgt_float)); out(".sub\n");
+                last_expr_is_float = tgt_float;
             } else {
                 emit_indent();
                 out("i32.sub\n");
@@ -189,15 +246,18 @@ void gen_expr_assign(struct Node *n) {
             if (tgt_float && n->ival != TOK_PERCENT_EQ) {
                 if (!last_expr_is_float) {
                     emit_indent();
-                    out("f64.convert_i32_s\n");
+                    out(ftype_str(tgt_float)); out(".convert_i32_s\n");
+                } else if (tgt_float != last_expr_is_float) {
+                    emit_indent();
+                    if (tgt_float == 1) { out("f32.demote_f64\n"); } else { out("f64.promote_f32\n"); }
                 }
                 emit_indent();
                 if (n->ival == TOK_STAR_EQ) {
-                    out("f64.mul\n");
+                    out(ftype_str(tgt_float)); out(".mul\n");
                 } else {
-                    out("f64.div\n");
+                    out(ftype_str(tgt_float)); out(".div\n");
                 }
-                last_expr_is_float = 2;
+                last_expr_is_float = tgt_float;
             } else {
                 emit_indent();
                 if (n->ival == TOK_STAR_EQ) {
@@ -232,7 +292,16 @@ void gen_expr_assign(struct Node *n) {
             last_expr_is_float = 0;
         }
         if (is_global) {
-            if (tgt_float) {
+            if (tgt_float == 1) {
+                emit_indent();
+                out("local.set $__ftmp_f32\n");
+                emit_indent();
+                out("local.get $__ftmp_f32\n");
+                emit_indent();
+                out("global.set $"); out(rname); out("\n");
+                emit_indent();
+                out("local.get $__ftmp_f32\n");
+            } else if (tgt_float == 2) {
                 emit_indent();
                 out("local.set $__ftmp\n");
                 emit_indent();
@@ -257,7 +326,9 @@ void gen_expr_assign(struct Node *n) {
         }
         last_expr_is_float = tgt_float;
     } else if (tgt->kind == ND_UNARY && tgt->ival == TOK_STAR) {
+        int esz_fk;
         esz = expr_elem_size(tgt->c0);
+        esz_fk = esz_float_kind(esz);
         if (n->ival == TOK_EQ) {
             gen_expr(n->c1);
         } else if (n->ival == TOK_PLUS_EQ) {
@@ -299,7 +370,23 @@ void gen_expr_assign(struct Node *n) {
             emit_bitwise_assign_op(n->ival);
         }
         emit_indent();
-        if (last_expr_is_float) {
+        if (esz_fk == 1) {
+            /* f32 pointer store */
+            if (last_expr_is_float == 2) { emit_indent(); out("f32.demote_f64\n"); }
+            else if (!last_expr_is_float) { emit_indent(); out("f32.convert_i32_s\n"); }
+            out("local.set $__ftmp_f32\n");
+            gen_expr(tgt->c0);
+            emit_indent();
+            out("local.get $__ftmp_f32\n");
+            emit_indent();
+            out("f32.store\n");
+            emit_indent();
+            out("local.get $__ftmp_f32\n");
+            last_expr_is_float = 1;
+        } else if (esz_fk == 2) {
+            /* f64 pointer store */
+            if (last_expr_is_float == 1) { emit_indent(); out("f64.promote_f32\n"); }
+            else if (!last_expr_is_float) { emit_indent(); out("f64.convert_i32_s\n"); }
             out("local.set $__ftmp\n");
             gen_expr(tgt->c0);
             emit_indent();
@@ -308,6 +395,20 @@ void gen_expr_assign(struct Node *n) {
             out("f64.store\n");
             emit_indent();
             out("local.get $__ftmp\n");
+            last_expr_is_float = 2;
+        } else if (last_expr_is_float) {
+            /* float value into non-float pointer — convert to int */
+            if (last_expr_is_float == 1) { emit_indent(); out("i32.trunc_f32_s\n"); }
+            else { emit_indent(); out("i32.trunc_f64_s\n"); }
+            last_expr_is_float = 0;
+            out("local.set $__atmp\n");
+            gen_expr(tgt->c0);
+            emit_indent();
+            out("local.get $__atmp\n");
+            emit_indent();
+            emit_store(esz);
+            emit_indent();
+            out("local.get $__atmp\n");
         } else {
             out("local.set $__atmp\n");
             gen_expr(tgt->c0);
@@ -401,15 +502,19 @@ void gen_expr_assign(struct Node *n) {
         emit_indent();
         out("local.get $__atmp\n");
     } else if (tgt->kind == ND_SUBSCRIPT) {
+        int stride;
+        int esz_fk;
         esz = expr_elem_size(tgt->c0);
+        stride = elem_stride(esz);
+        esz_fk = esz_float_kind(esz);
         if (n->ival == TOK_EQ) {
             gen_expr(n->c1);
         } else if (n->ival == TOK_PLUS_EQ) {
             gen_expr(tgt->c0);
             gen_expr(tgt->c1);
-            if (esz > 1) {
+            if (stride > 1) {
                 emit_indent();
-                out("i32.const "); out_d(esz); out("\n");
+                out("i32.const "); out_d(stride); out("\n");
                 emit_indent();
                 out("i32.mul\n");
             }
@@ -423,9 +528,9 @@ void gen_expr_assign(struct Node *n) {
         } else if (n->ival == TOK_MINUS_EQ) {
             gen_expr(tgt->c0);
             gen_expr(tgt->c1);
-            if (esz > 1) {
+            if (stride > 1) {
                 emit_indent();
-                out("i32.const "); out_d(esz); out("\n");
+                out("i32.const "); out_d(stride); out("\n");
                 emit_indent();
                 out("i32.mul\n");
             }
@@ -440,9 +545,9 @@ void gen_expr_assign(struct Node *n) {
                    n->ival == TOK_PERCENT_EQ) {
             gen_expr(tgt->c0);
             gen_expr(tgt->c1);
-            if (esz > 1) {
+            if (stride > 1) {
                 emit_indent();
-                out("i32.const "); out_d(esz); out("\n");
+                out("i32.const "); out_d(stride); out("\n");
                 emit_indent();
                 out("i32.mul\n");
             }
@@ -464,9 +569,9 @@ void gen_expr_assign(struct Node *n) {
                    n->ival == TOK_RSHIFT_EQ) {
             gen_expr(tgt->c0);
             gen_expr(tgt->c1);
-            if (esz > 1) {
+            if (stride > 1) {
                 emit_indent();
-                out("i32.const "); out_d(esz); out("\n");
+                out("i32.const "); out_d(stride); out("\n");
                 emit_indent();
                 out("i32.mul\n");
             }
@@ -479,23 +584,56 @@ void gen_expr_assign(struct Node *n) {
             emit_bitwise_assign_op(n->ival);
         }
         emit_indent();
-        out("local.set $__atmp\n");
-        gen_expr(tgt->c0);
-        gen_expr(tgt->c1);
-        if (esz > 1) {
+        if (esz_fk == 1) {
+            if (last_expr_is_float == 2) { emit_indent(); out("f32.demote_f64\n"); }
+            else if (!last_expr_is_float) { emit_indent(); out("f32.convert_i32_s\n"); }
+            out("local.set $__ftmp_f32\n");
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (stride > 1) {
+                emit_indent(); out("i32.const "); out_d(stride); out("\n");
+                emit_indent(); out("i32.mul\n");
+            }
+            emit_indent(); out("i32.add\n");
+            emit_indent(); out("local.get $__ftmp_f32\n");
+            emit_indent(); out("f32.store\n");
+            emit_indent(); out("local.get $__ftmp_f32\n");
+            last_expr_is_float = 1;
+        } else if (esz_fk == 2) {
+            if (last_expr_is_float == 1) { emit_indent(); out("f64.promote_f32\n"); }
+            else if (!last_expr_is_float) { emit_indent(); out("f64.convert_i32_s\n"); }
+            out("local.set $__ftmp\n");
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (stride > 1) {
+                emit_indent(); out("i32.const "); out_d(stride); out("\n");
+                emit_indent(); out("i32.mul\n");
+            }
+            emit_indent(); out("i32.add\n");
+            emit_indent(); out("local.get $__ftmp\n");
+            emit_indent(); out("f64.store\n");
+            emit_indent(); out("local.get $__ftmp\n");
+            last_expr_is_float = 2;
+        } else {
+            out("local.set $__atmp\n");
+            gen_expr(tgt->c0);
+            gen_expr(tgt->c1);
+            if (stride > 1) {
+                emit_indent();
+                out("i32.const "); out_d(stride); out("\n");
+                emit_indent();
+                out("i32.mul\n");
+            }
             emit_indent();
-            out("i32.const "); out_d(esz); out("\n");
+            out("i32.add\n");
             emit_indent();
-            out("i32.mul\n");
+            out("local.get $__atmp\n");
+            emit_indent();
+            emit_store(esz);
+            emit_indent();
+            out("local.get $__atmp\n");
+            last_expr_is_float = 0;
         }
-        emit_indent();
-        out("i32.add\n");
-        emit_indent();
-        out("local.get $__atmp\n");
-        emit_indent();
-        emit_store(esz);
-        emit_indent();
-        out("local.get $__atmp\n");
     }
 }
 
@@ -507,7 +645,7 @@ void gen_expr_unary(struct Node *n) {
         gen_expr(n->c0);
         if (last_expr_is_float) {
             emit_indent();
-            out("f64.neg\n");
+            out(ftype_str(last_expr_is_float)); out(".neg\n");
         } else {
             /* save value, push 0, push value, sub */
             emit_indent();
@@ -523,10 +661,12 @@ void gen_expr_unary(struct Node *n) {
     case TOK_BANG:
         gen_expr(n->c0);
         if (last_expr_is_float) {
+            int bft;
+            bft = last_expr_is_float;
             emit_indent();
-            out("f64.const 0\n");
+            out(ftype_str(bft)); out(".const 0\n");
             emit_indent();
-            out("f64.eq\n");
+            out(ftype_str(bft)); out(".eq\n");
             last_expr_is_float = 0;
         } else {
             emit_indent();
@@ -544,7 +684,11 @@ void gen_expr_unary(struct Node *n) {
     case TOK_STAR:
         esz = expr_elem_size(n->c0);
         gen_expr(n->c0);
-        if (esz == 8) {
+        if (esz == 5) {
+            emit_indent();
+            out("f32.load\n");
+            last_expr_is_float = 1;
+        } else if (esz == 8) {
             emit_indent();
             out("f64.load\n");
             last_expr_is_float = 2;
@@ -577,36 +721,47 @@ void gen_expr_binary(struct Node *n) {
     gen_expr(n->c1);
     right_float = last_expr_is_float;
     op_float = 0;
-    if (left_float || right_float) {
-        op_float = 2;
-        /* promote: if either is float, both should be f64 */
-        if (left_float && !right_float) {
-            /* stack: [f64, i32] — convert top (right) from i32 to f64 */
-            emit_indent();
-            out("f64.convert_i32_s\n");
-        } else if (!left_float && right_float) {
-            /* stack: [i32, f64] — need to swap and convert left */
-            emit_indent();
-            out("local.set $__ftmp\n");
-            emit_indent();
-            out("f64.convert_i32_s\n");
-            emit_indent();
-            out("local.get $__ftmp\n");
+    if (left_float > op_float) op_float = left_float;
+    if (right_float > op_float) op_float = right_float;
+    if (op_float) {
+        /* ensure both operands are the same float type */
+        if (!left_float && right_float) {
+            /* stack: [i32, f32/f64] — convert left from i32 */
+            if (op_float == 1) {
+                emit_indent(); out("local.set $__ftmp_f32\n");
+                emit_indent(); out("f32.convert_i32_s\n");
+                emit_indent(); out("local.get $__ftmp_f32\n");
+            } else {
+                emit_indent(); out("local.set $__ftmp\n");
+                emit_indent(); out("f64.convert_i32_s\n");
+                emit_indent(); out("local.get $__ftmp\n");
+            }
+        } else if (left_float && !right_float) {
+            /* stack: [f32/f64, i32] — convert right from i32 */
+            emit_indent(); out(ftype_str(op_float)); out(".convert_i32_s\n");
+        } else if (left_float == 1 && right_float == 2) {
+            /* stack: [f32, f64] — promote left f32 to f64 */
+            emit_indent(); out("local.set $__ftmp\n");
+            emit_indent(); out("f64.promote_f32\n");
+            emit_indent(); out("local.get $__ftmp\n");
+        } else if (left_float == 2 && right_float == 1) {
+            /* stack: [f64, f32] — promote right f32 to f64 */
+            emit_indent(); out("f64.promote_f32\n");
         }
     }
     if (op_float) {
         emit_indent();
         switch (n->ival) {
-        case TOK_PLUS:  out("f64.add\n"); last_expr_is_float = 2; break;
-        case TOK_MINUS: out("f64.sub\n"); last_expr_is_float = 2; break;
-        case TOK_STAR:  out("f64.mul\n"); last_expr_is_float = 2; break;
-        case TOK_SLASH: out("f64.div\n"); last_expr_is_float = 2; break;
-        case TOK_EQ_EQ:   out("f64.eq\n"); last_expr_is_float = 0; break;
-        case TOK_BANG_EQ: out("f64.ne\n"); last_expr_is_float = 0; break;
-        case TOK_LT:    out("f64.lt\n"); last_expr_is_float = 0; break;
-        case TOK_GT:    out("f64.gt\n"); last_expr_is_float = 0; break;
-        case TOK_LT_EQ: out("f64.le\n"); last_expr_is_float = 0; break;
-        case TOK_GT_EQ: out("f64.ge\n"); last_expr_is_float = 0; break;
+        case TOK_PLUS:  out(ftype_str(op_float)); out(".add\n"); last_expr_is_float = op_float; break;
+        case TOK_MINUS: out(ftype_str(op_float)); out(".sub\n"); last_expr_is_float = op_float; break;
+        case TOK_STAR:  out(ftype_str(op_float)); out(".mul\n"); last_expr_is_float = op_float; break;
+        case TOK_SLASH: out(ftype_str(op_float)); out(".div\n"); last_expr_is_float = op_float; break;
+        case TOK_EQ_EQ:   out(ftype_str(op_float)); out(".eq\n"); last_expr_is_float = 0; break;
+        case TOK_BANG_EQ: out(ftype_str(op_float)); out(".ne\n"); last_expr_is_float = 0; break;
+        case TOK_LT:    out(ftype_str(op_float)); out(".lt\n"); last_expr_is_float = 0; break;
+        case TOK_GT:    out(ftype_str(op_float)); out(".gt\n"); last_expr_is_float = 0; break;
+        case TOK_LT_EQ: out(ftype_str(op_float)); out(".le\n"); last_expr_is_float = 0; break;
+        case TOK_GT_EQ: out(ftype_str(op_float)); out(".ge\n"); last_expr_is_float = 0; break;
         default: error(n->nline, n->ncol, "unsupported float binary operator");
         }
     } else {
@@ -1102,13 +1257,19 @@ void gen_expr_call(struct Node *n) {
         }
         /* push fixed (named) args */
         for (i = 0; i < fixed && i < n->ival2; i++) {
+            int pfloat;
             gen_expr(n->list[i]);
-            if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
-                emit_indent();
-                out("f64.convert_i32_s\n");
-            } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
-                emit_indent();
-                out("i32.trunc_f64_s\n");
+            pfloat = func_param_is_float(n->sval, i);
+            if (pfloat && !last_expr_is_float) {
+                emit_indent(); out(ftype_str(pfloat)); out(".convert_i32_s\n");
+            } else if (!pfloat && last_expr_is_float == 1) {
+                emit_indent(); out("i32.trunc_f32_s\n");
+            } else if (!pfloat && last_expr_is_float == 2) {
+                emit_indent(); out("i32.trunc_f64_s\n");
+            } else if (pfloat == 2 && last_expr_is_float == 1) {
+                emit_indent(); out("f64.promote_f32\n");
+            } else if (pfloat == 1 && last_expr_is_float == 2) {
+                emit_indent(); out("f32.demote_f64\n");
             }
         }
         /* pack variadic args into __va_area */
@@ -1123,7 +1284,10 @@ void gen_expr_call(struct Node *n) {
                 out("i32.add\n");
             }
             gen_expr(n->list[i]);
-            if (last_expr_is_float) {
+            if (last_expr_is_float == 1) {
+                emit_indent();
+                out("i32.trunc_f32_s\n");
+            } else if (last_expr_is_float == 2) {
                 emit_indent();
                 out("i32.trunc_f64_s\n");
             }
@@ -1145,14 +1309,20 @@ void gen_expr_call(struct Node *n) {
         }
     } else {
         for (i = 0; i < n->ival2; i++) {
+            int pfloat;
             gen_expr(n->list[i]);
-            /* convert param if needed */
-            if (func_param_is_float(n->sval, i) && !last_expr_is_float) {
-                emit_indent();
-                out("f64.convert_i32_s\n");
-            } else if (!func_param_is_float(n->sval, i) && last_expr_is_float) {
-                emit_indent();
-                out("i32.trunc_f64_s\n");
+            pfloat = func_param_is_float(n->sval, i);
+            /* convert param type if needed */
+            if (pfloat && !last_expr_is_float) {
+                emit_indent(); out(ftype_str(pfloat)); out(".convert_i32_s\n");
+            } else if (!pfloat && last_expr_is_float == 1) {
+                emit_indent(); out("i32.trunc_f32_s\n");
+            } else if (!pfloat && last_expr_is_float == 2) {
+                emit_indent(); out("i32.trunc_f64_s\n");
+            } else if (pfloat == 2 && last_expr_is_float == 1) {
+                emit_indent(); out("f64.promote_f32\n");
+            } else if (pfloat == 1 && last_expr_is_float == 2) {
+                emit_indent(); out("f32.demote_f64\n");
             }
         }
         emit_indent();
@@ -1245,6 +1415,7 @@ void gen_expr_sizeof(struct Node *n) {
     } else if (n->c0 != (struct Node *)0) {
         /* sizeof(expr): infer size from variable */
         sz = n->c0->kind == ND_IDENT ? var_elem_size(n->c0->sval) : 4;
+        if (sz == 5) sz = 4; /* f32 element: byte size is 4 */
     } else if (n->sval != (char *)0 && strcmp(n->sval, "char") == 0) {
         sz = 1;
     } else if (n->sval != (char *)0) {
@@ -1263,13 +1434,15 @@ void gen_expr_subscript(struct Node *n) {
     int esz;
     int dim2;
     int row_stride;
+    int stride;
 
     /* Check if base is a 2D array (first subscript should compute address, not load) */
     if (n->c0->kind == ND_IDENT) {
         dim2 = var_arr_dim2(n->c0->sval);
         if (dim2 > 0) {
             esz = expr_elem_size(n->c0);
-            row_stride = dim2 * esz;
+            stride = elem_stride(esz);
+            row_stride = dim2 * stride;
             gen_expr(n->c0);
             gen_expr(n->c1);
             if (row_stride > 1) {
@@ -1286,11 +1459,12 @@ void gen_expr_subscript(struct Node *n) {
     }
 
     esz = expr_elem_size(n->c0);
+    stride = elem_stride(esz);
     gen_expr(n->c0);
     gen_expr(n->c1);
-    if (esz > 1) {
+    if (stride > 1) {
         emit_indent();
-        out("i32.const "); out_d(esz); out("\n");
+        out("i32.const "); out_d(stride); out("\n");
         emit_indent();
         out("i32.mul\n");
     }
@@ -1298,6 +1472,9 @@ void gen_expr_subscript(struct Node *n) {
     out("i32.add\n");
     emit_indent();
     emit_load(esz);
+    if (esz == 5) { last_expr_is_float = 1; }
+    else if (esz == 8) { last_expr_is_float = 2; }
+    else { last_expr_is_float = 0; }
 }
 
 void gen_expr_post_inc_dec(struct Node *n) {
@@ -1357,18 +1534,20 @@ void gen_expr_post_inc_dec(struct Node *n) {
     } else if (tgt2->kind == ND_SUBSCRIPT) {
         /* NOTE: tgt2->c0 and tgt2->c1 each evaluated 3x (save old val, store addr, reload).
            Correct only when the array and index expressions have no side effects. */
+        int pstride;
         pesz = expr_elem_size(tgt2->c0);
+        pstride = elem_stride(pesz);
         gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-        if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
+        if (pstride > 1) { emit_indent(); out("i32.const "); out_d(pstride); out("\n"); emit_indent(); out("i32.mul\n"); }
         emit_indent(); out("i32.add\n");
         emit_indent();
         emit_load(pesz);
         emit_indent(); out("local.set $__atmp\n");
         gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-        if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
+        if (pstride > 1) { emit_indent(); out("i32.const "); out_d(pstride); out("\n"); emit_indent(); out("i32.mul\n"); }
         emit_indent(); out("i32.add\n");
         gen_expr(tgt2->c0); gen_expr(tgt2->c1);
-        if (pesz > 1) { emit_indent(); out("i32.const "); out_d(pesz); out("\n"); emit_indent(); out("i32.mul\n"); }
+        if (pstride > 1) { emit_indent(); out("i32.const "); out_d(pstride); out("\n"); emit_indent(); out("i32.mul\n"); }
         emit_indent(); out("i32.add\n");
         emit_indent();
         emit_load(pesz);
@@ -1487,11 +1666,15 @@ void gen_stmt_var_decl(struct Node *n) {
         gen_expr(n->c0);
         /* type conversion if needed */
         if (vd_is_flt && !last_expr_is_float) {
-            emit_indent();
-            out("f64.convert_i32_s\n");
-        } else if (!vd_is_flt && last_expr_is_float) {
-            emit_indent();
-            out("i32.trunc_f64_s\n");
+            emit_indent(); out(ftype_str(vd_is_flt)); out(".convert_i32_s\n");
+        } else if (!vd_is_flt && last_expr_is_float == 1) {
+            emit_indent(); out("i32.trunc_f32_s\n");
+        } else if (!vd_is_flt && last_expr_is_float == 2) {
+            emit_indent(); out("i32.trunc_f64_s\n");
+        } else if (vd_is_flt == 2 && last_expr_is_float == 1) {
+            emit_indent(); out("f64.promote_f32\n");
+        } else if (vd_is_flt == 1 && last_expr_is_float == 2) {
+            emit_indent(); out("f32.demote_f64\n");
         }
         emit_indent();
         out("local.set $"); out(n->sval); out("\n");
@@ -1507,11 +1690,11 @@ void gen_stmt_expr_stmt(struct Node *n) {
 void gen_stmt_if(struct Node *n) {
     gen_expr(n->c0);
     if (last_expr_is_float) {
-        /* convert float condition to boolean: f64 != 0.0 */
+        /* convert float condition to boolean */
         emit_indent();
-        out("f64.const 0\n");
+        out(ftype_str(last_expr_is_float)); out(".const 0\n");
         emit_indent();
-        out("f64.ne\n");
+        out(ftype_str(last_expr_is_float)); out(".ne\n");
     }
     if (n->c2 != (struct Node *)0) {
         emit_indent();
@@ -1568,9 +1751,9 @@ void gen_stmt_while(struct Node *n) {
     gen_expr(n->c0);
     if (last_expr_is_float) {
         emit_indent();
-        out("f64.const 0\n");
+        out(ftype_str(last_expr_is_float)); out(".const 0\n");
         emit_indent();
-        out("f64.ne\n");
+        out(ftype_str(last_expr_is_float)); out(".ne\n");
     }
     emit_indent();
     out("i32.eqz\n");
@@ -1615,9 +1798,9 @@ void gen_stmt_for(struct Node *n) {
         gen_expr(n->c1);
         if (last_expr_is_float) {
             emit_indent();
-            out("f64.const 0\n");
+            out(ftype_str(last_expr_is_float)); out(".const 0\n");
             emit_indent();
-            out("f64.ne\n");
+            out(ftype_str(last_expr_is_float)); out(".ne\n");
         }
         emit_indent();
         out("i32.eqz\n");
@@ -1671,9 +1854,9 @@ void gen_stmt_do_while(struct Node *n) {
     gen_expr(n->c1);
     if (last_expr_is_float) {
         emit_indent();
-        out("f64.const 0\n");
+        out(ftype_str(last_expr_is_float)); out(".const 0\n");
         emit_indent();
-        out("f64.ne\n");
+        out(ftype_str(last_expr_is_float)); out(".ne\n");
     }
     emit_indent();
     out("br_if $lp_"); out_d(lbl); out("\n");
@@ -2122,7 +2305,7 @@ void gen_func(struct Node *n) {
     out("  (func $"); out(n->sval);
     for (i = 0; i < n->ival2; i++) {
         if (local_vars[i]->lv_is_float) {
-            out(" (param $"); out(n->list[i]->sval); out(" f64)");
+            out(" (param $"); out(n->list[i]->sval); out(" "); out(ftype_str(local_vars[i]->lv_is_float)); out(")");
         } else {
             out(" (param $"); out(n->list[i]->sval); out(" i32)");
         }
@@ -2133,7 +2316,7 @@ void gen_func(struct Node *n) {
     if (n->ival == 1) {
         /* void */
     } else if (ret_float) {
-        out(" (result f64)");
+        out(" (result "); out(ftype_str(ret_float)); out(")");
     } else {
         out(" (result i32)");
     }
@@ -2144,7 +2327,7 @@ void gen_func(struct Node *n) {
     for (i = nparam_locals; i < nlocals; i++) {
         emit_indent();
         if (local_vars[i]->lv_is_float) {
-            out("(local $"); out(local_vars[i]->name); out(" f64)\n");
+            out("(local $"); out(local_vars[i]->name); out(" "); out(ftype_str(local_vars[i]->lv_is_float)); out(")\n");
         } else {
             out("(local $"); out(local_vars[i]->name); out(" i32)\n");
         }
@@ -2155,6 +2338,8 @@ void gen_func(struct Node *n) {
     out("(local $__stmp i32)\n");
     emit_indent();
     out("(local $__ftmp f64)\n");
+    emit_indent();
+    out("(local $__ftmp_f32 f32)\n");
     body = n->c0;
     if (debug_mode) {
         emit_indent();
@@ -2191,7 +2376,7 @@ void gen_func(struct Node *n) {
     if (n->ival != 1) {
         if (ret_float) {
             emit_indent();
-            out("f64.const 0\n");
+            out(ftype_str(ret_float)); out(".const 0\n");
         } else {
             emit_indent();
             out("i32.const 0\n");
@@ -2368,9 +2553,9 @@ void gen_module(struct Node *prog) {
         emit_indent();
         if (globals_tbl[gi]->gv_is_float) {
             if (globals_tbl[gi]->gv_float_init != (char *)0) {
-                out("(global $"); out(globals_tbl[gi]->name); out(" (mut f64) (f64.const "); out(globals_tbl[gi]->gv_float_init); out("))\n");
+                out("(global $"); out(globals_tbl[gi]->name); out(" (mut "); out(ftype_str(globals_tbl[gi]->gv_is_float)); out(") ("); out(ftype_str(globals_tbl[gi]->gv_is_float)); out(".const "); out(globals_tbl[gi]->gv_float_init); out("))\n");
             } else {
-                out("(global $"); out(globals_tbl[gi]->name); out(" (mut f64) (f64.const "); out_d(globals_tbl[gi]->init_val); out("))\n");
+                out("(global $"); out(globals_tbl[gi]->name); out(" (mut "); out(ftype_str(globals_tbl[gi]->gv_is_float)); out(") ("); out(ftype_str(globals_tbl[gi]->gv_is_float)); out(".const "); out_d(globals_tbl[gi]->init_val); out("))\n");
             }
         } else {
             out("(global $"); out(globals_tbl[gi]->name); out(" (mut i32) (i32.const "); out_d(globals_tbl[gi]->init_val); out("))\n");

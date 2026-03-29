@@ -1118,8 +1118,9 @@ struct Token *next_token(void) {
                     fbuf[flen++] = la();
                 }
             }
-            /* consume optional f/F suffix */
-            if (lp() == 'f' || lp() == 'F') la();
+            /* consume optional f/F suffix; track f32 vs f64 */
+            if (lp() == 'f' || lp() == 'F') { la(); t->int_val = 1; }
+            else { t->int_val = 2; }
         }
         if (is_flt) {
             fbuf[flen] = '\0';
