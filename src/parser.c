@@ -378,6 +378,10 @@ struct Node *parse_expr_bp(int min_bp) {
     int rbp;
     int lbp;
     int valid;
+    int cf_l;
+    int cf_r;
+    int cf_result;
+    int cf_folded;
 
     /* prefix operators */
     pbp = prefix_bp(cur->kind);
@@ -400,9 +404,25 @@ struct Node *parse_expr_bp(int min_bp) {
                 left->ival = TOK_MINUS_EQ;
             }
         } else {
-            left = node_new(ND_UNARY, line, col);
-            left->ival = op;
-            left->c0 = operand;
+            /* constant fold unary on integer literal */
+            if (operand->kind == ND_INT_LIT &&
+                (op == TOK_MINUS || op == TOK_TILDE || op == TOK_BANG)) {
+                if (op == TOK_TILDE)     { operand->ival = ~operand->ival; left = operand; }
+                else if (op == TOK_BANG) { operand->ival = !operand->ival; left = operand; }
+                else if (op == TOK_MINUS && operand->ival != (-2147483647 - 1)) {
+                    /* guard INT_MIN: -INT_MIN is UB in signed C */
+                    operand->ival = -operand->ival;
+                    left = operand;
+                } else {
+                    left = node_new(ND_UNARY, line, col);
+                    left->ival = op;
+                    left->c0 = operand;
+                }
+            } else {
+                left = node_new(ND_UNARY, line, col);
+                left->ival = op;
+                left->c0 = operand;
+            }
         }
     } else {
         left = parse_atom();
@@ -510,6 +530,52 @@ struct Node *parse_expr_bp(int min_bp) {
             bin->ival = op;
             bin->c0 = left;
             bin->c1 = right;
+            /* constant fold: both operands are integer literals */
+            if (left->kind == ND_INT_LIT && right->kind == ND_INT_LIT) {
+                cf_l = left->ival;
+                cf_r = right->ival;
+                cf_result = 0;
+                cf_folded = 1;
+                if      (op == TOK_PLUS)    cf_result = cf_l + cf_r; /* i32 wrap matches WASM */
+                else if (op == TOK_MINUS)   cf_result = cf_l - cf_r; /* i32 wrap matches WASM */
+                else if (op == TOK_STAR)    cf_result = cf_l * cf_r; /* i32 wrap matches WASM */
+                else if (op == TOK_SLASH)  {
+                    /* guard: div-by-zero and INT_MIN/-1 (both UB in C) */
+                    if (cf_r == 0 || (cf_l == (-2147483647 - 1) && cf_r == -1)) cf_folded = 0;
+                    else cf_result = cf_l / cf_r;
+                }
+                else if (op == TOK_PERCENT) {
+                    /* guard: div-by-zero and INT_MIN%-1 (UB in C) */
+                    if (cf_r == 0 || (cf_l == (-2147483647 - 1) && cf_r == -1)) cf_folded = 0;
+                    else cf_result = cf_l % cf_r;
+                }
+                else if (op == TOK_AMP)     cf_result = cf_l & cf_r;
+                else if (op == TOK_PIPE)    cf_result = cf_l | cf_r;
+                else if (op == TOK_CARET)   cf_result = cf_l ^ cf_r;
+                else if (op == TOK_LSHIFT) {
+                    /* guard: negative left operand or shift >= 32 is UB */
+                    if (cf_r >= 0 && cf_r < 32 && cf_l >= 0) cf_result = cf_l << cf_r;
+                    else cf_folded = 0;
+                }
+                else if (op == TOK_RSHIFT) {
+                    /* arithmetic right shift; matches WASM i32.shr_s */
+                    if (cf_r >= 0 && cf_r < 32) cf_result = cf_l >> cf_r;
+                    else cf_folded = 0;
+                }
+                else if (op == TOK_EQ_EQ)   cf_result = (cf_l == cf_r);
+                else if (op == TOK_BANG_EQ) cf_result = (cf_l != cf_r);
+                else if (op == TOK_LT)      cf_result = (cf_l < cf_r);
+                else if (op == TOK_GT)      cf_result = (cf_l > cf_r);
+                else if (op == TOK_LT_EQ)   cf_result = (cf_l <= cf_r);
+                else if (op == TOK_GT_EQ)   cf_result = (cf_l >= cf_r);
+                else cf_folded = 0;
+                if (cf_folded) {
+                    bin->kind = ND_INT_LIT;
+                    bin->ival = cf_result;
+                    bin->c0 = (struct Node *)0;
+                    bin->c1 = (struct Node *)0;
+                }
+            }
             left = bin;
         }
     }

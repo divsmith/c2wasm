@@ -2544,6 +2544,10 @@ COMPILER_SOURCE["parser.c"] =
   "    int rbp;\n" +
   "    int lbp;\n" +
   "    int valid;\n" +
+  "    int cf_l;\n" +
+  "    int cf_r;\n" +
+  "    int cf_result;\n" +
+  "    int cf_folded;\n" +
   "\n" +
   "    /* prefix operators */\n" +
   "    pbp = prefix_bp(cur->kind);\n" +
@@ -2566,9 +2570,25 @@ COMPILER_SOURCE["parser.c"] =
   "                left->ival = TOK_MINUS_EQ;\n" +
   "            }\n" +
   "        } else {\n" +
-  "            left = node_new(ND_UNARY, line, col);\n" +
-  "            left->ival = op;\n" +
-  "            left->c0 = operand;\n" +
+  "            /* constant fold unary on integer literal */\n" +
+  "            if (operand->kind == ND_INT_LIT &&\n" +
+  "                (op == TOK_MINUS || op == TOK_TILDE || op == TOK_BANG)) {\n" +
+  "                if (op == TOK_TILDE)     { operand->ival = ~operand->ival; left = operand; }\n" +
+  "                else if (op == TOK_BANG) { operand->ival = !operand->ival; left = operand; }\n" +
+  "                else if (op == TOK_MINUS && operand->ival != (-2147483647 - 1)) {\n" +
+  "                    /* guard INT_MIN: -INT_MIN is UB in signed C */\n" +
+  "                    operand->ival = -operand->ival;\n" +
+  "                    left = operand;\n" +
+  "                } else {\n" +
+  "                    left = node_new(ND_UNARY, line, col);\n" +
+  "                    left->ival = op;\n" +
+  "                    left->c0 = operand;\n" +
+  "                }\n" +
+  "            } else {\n" +
+  "                left = node_new(ND_UNARY, line, col);\n" +
+  "                left->ival = op;\n" +
+  "                left->c0 = operand;\n" +
+  "            }\n" +
   "        }\n" +
   "    } else {\n" +
   "        left = parse_atom();\n" +
@@ -2676,6 +2696,52 @@ COMPILER_SOURCE["parser.c"] =
   "            bin->ival = op;\n" +
   "            bin->c0 = left;\n" +
   "            bin->c1 = right;\n" +
+  "            /* constant fold: both operands are integer literals */\n" +
+  "            if (left->kind == ND_INT_LIT && right->kind == ND_INT_LIT) {\n" +
+  "                cf_l = left->ival;\n" +
+  "                cf_r = right->ival;\n" +
+  "                cf_result = 0;\n" +
+  "                cf_folded = 1;\n" +
+  "                if      (op == TOK_PLUS)    cf_result = cf_l + cf_r; /* i32 wrap matches WASM */\n" +
+  "                else if (op == TOK_MINUS)   cf_result = cf_l - cf_r; /* i32 wrap matches WASM */\n" +
+  "                else if (op == TOK_STAR)    cf_result = cf_l * cf_r; /* i32 wrap matches WASM */\n" +
+  "                else if (op == TOK_SLASH)  {\n" +
+  "                    /* guard: div-by-zero and INT_MIN/-1 (both UB in C) */\n" +
+  "                    if (cf_r == 0 || (cf_l == (-2147483647 - 1) && cf_r == -1)) cf_folded = 0;\n" +
+  "                    else cf_result = cf_l / cf_r;\n" +
+  "                }\n" +
+  "                else if (op == TOK_PERCENT) {\n" +
+  "                    /* guard: div-by-zero and INT_MIN%-1 (UB in C) */\n" +
+  "                    if (cf_r == 0 || (cf_l == (-2147483647 - 1) && cf_r == -1)) cf_folded = 0;\n" +
+  "                    else cf_result = cf_l % cf_r;\n" +
+  "                }\n" +
+  "                else if (op == TOK_AMP)     cf_result = cf_l & cf_r;\n" +
+  "                else if (op == TOK_PIPE)    cf_result = cf_l | cf_r;\n" +
+  "                else if (op == TOK_CARET)   cf_result = cf_l ^ cf_r;\n" +
+  "                else if (op == TOK_LSHIFT) {\n" +
+  "                    /* guard: negative left operand or shift >= 32 is UB */\n" +
+  "                    if (cf_r >= 0 && cf_r < 32 && cf_l >= 0) cf_result = cf_l << cf_r;\n" +
+  "                    else cf_folded = 0;\n" +
+  "                }\n" +
+  "                else if (op == TOK_RSHIFT) {\n" +
+  "                    /* arithmetic right shift; matches WASM i32.shr_s */\n" +
+  "                    if (cf_r >= 0 && cf_r < 32) cf_result = cf_l >> cf_r;\n" +
+  "                    else cf_folded = 0;\n" +
+  "                }\n" +
+  "                else if (op == TOK_EQ_EQ)   cf_result = (cf_l == cf_r);\n" +
+  "                else if (op == TOK_BANG_EQ) cf_result = (cf_l != cf_r);\n" +
+  "                else if (op == TOK_LT)      cf_result = (cf_l < cf_r);\n" +
+  "                else if (op == TOK_GT)      cf_result = (cf_l > cf_r);\n" +
+  "                else if (op == TOK_LT_EQ)   cf_result = (cf_l <= cf_r);\n" +
+  "                else if (op == TOK_GT_EQ)   cf_result = (cf_l >= cf_r);\n" +
+  "                else cf_folded = 0;\n" +
+  "                if (cf_folded) {\n" +
+  "                    bin->kind = ND_INT_LIT;\n" +
+  "                    bin->ival = cf_result;\n" +
+  "                    bin->c0 = (struct Node *)0;\n" +
+  "                    bin->c1 = (struct Node *)0;\n" +
+  "                }\n" +
+  "            }\n" +
   "            left = bin;\n" +
   "        }\n" +
   "    }\n" +
