@@ -38,10 +38,10 @@
 
 ### WASM Code Quality
 
-27. [ ] `f32` for `float` type — Use WASM `f32` instead of `f64` for `float` (more correct, smaller binaries)
-28. [ ] Constant folding — Evaluate constant expressions at compile time (`2 + 3` → `i32.const 5`)
-29. [ ] Dead code elimination — Strip unreachable functions from WASM output
-30. [ ] Binary mode self-hosting fix — Resolve runtime crash in binary-mode compilation of the compiler itself
+27. [x] `f32` for `float` type — Use WASM `f32` instead of `f64` for `float` (more correct, smaller binaries)
+28. [x] Constant folding — Evaluate constant expressions at compile time (`2 + 3` → `i32.const 5`)
+29. [x] Dead code elimination — Strip unreachable functions from WASM output
+30. [x] Binary mode self-hosting fix — Validate binary-mode self-hosting and keep it covered by bootstrap checks
 
 ### Developer Experience
 

@@ -32,6 +32,7 @@ var files = [
   'parser.c',
   'codegen.h',
   'codegen_shared.c',
+  'dce.c',
   'bytevec.h',
   'bytevec.c',
   'output.h',

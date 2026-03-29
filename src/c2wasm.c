@@ -30,6 +30,7 @@ int debug_mode = 0;
 #include "parser.c"
 #include "codegen.h"
 #include "codegen_shared.c"
+#include "dce.c"
 #include "bytevec.h"
 #include "bytevec.c"
 #include "output.h"

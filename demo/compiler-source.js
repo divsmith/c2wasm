@@ -23,6 +23,7 @@ var COMPILER_SOURCE_ORDER = [
   "parser.c",
   "codegen.h",
   "codegen_shared.c",
+  "dce.c",
   "bytevec.h",
   "bytevec.c",
   "output.h",
@@ -68,6 +69,7 @@ COMPILER_SOURCE["c2wasm.c"] =
   "#include \"parser.c\"\n" +
   "#include \"codegen.h\"\n" +
   "#include \"codegen_shared.c\"\n" +
+  "#include \"dce.c\"\n" +
   "#include \"bytevec.h\"\n" +
   "#include \"bytevec.c\"\n" +
   "#include \"output.h\"\n" +
@@ -4223,6 +4225,9 @@ COMPILER_SOURCE["codegen.h"] =
   "int expr_elem_size(struct Node *n);\n" +
   "int expr_is_unsigned(struct Node *n);\n" +
   "int var_is_float(char *name);\n" +
+  "\n" +
+  "void dce_run(struct Node *prog);\n" +
+  "int dce_is_live(char *name);\n" +
   "";
 
 COMPILER_SOURCE["codegen_shared.c"] =
@@ -4455,6 +4460,130 @@ COMPILER_SOURCE["codegen_shared.c"] =
   "}\n" +
   "\n" +
   "int last_expr_is_float; /* 0=i32, 1=f32, 2=f64 — set by gen_expr */\n" +
+  "";
+
+COMPILER_SOURCE["dce.c"] =
+  "/* dce.c — Dead code elimination: BFS reachability from main */\n" +
+  "\n" +
+  "/* dce_live[i] = 1 if prog->list[i] is reachable */\n" +
+  "int *dce_live;\n" +
+  "int dce_nfuncs;\n" +
+  "struct Node **dce_funcs;\n" +
+  "\n" +
+  "int dce_find(char *name) {\n" +
+  "    int i;\n" +
+  "    int first;\n" +
+  "    if (name == (char *)0) return -1;\n" +
+  "    first = -1;\n" +
+  "    for (i = 0; i < dce_nfuncs; i++) {\n" +
+  "        if (strcmp(dce_funcs[i]->sval, name) == 0) {\n" +
+  "            if (first < 0) first = i;\n" +
+  "            if (dce_funcs[i]->c0 != (struct Node *)0) return i;\n" +
+  "        }\n" +
+  "    }\n" +
+  "    return first;\n" +
+  "}\n" +
+  "\n" +
+  "void dce_scan(struct Node *n);\n" +
+  "\n" +
+  "void dce_mark(char *name) {\n" +
+  "    int idx;\n" +
+  "    idx = dce_find(name);\n" +
+  "    if (idx < 0) return;\n" +
+  "    if (dce_live[idx]) return;\n" +
+  "    dce_live[idx] = 1;\n" +
+  "    dce_scan(dce_funcs[idx]->c0);\n" +
+  "}\n" +
+  "\n" +
+  "void dce_scan(struct Node *n) {\n" +
+  "    int i;\n" +
+  "    if (n == (struct Node *)0) return;\n" +
+  "    switch (n->kind) {\n" +
+  "    case ND_CALL:\n" +
+  "        dce_mark(n->sval);\n" +
+  "        for (i = 0; i < n->ival2; i++) dce_scan(n->list[i]);\n" +
+  "        return;\n" +
+  "    case ND_CALL_INDIRECT:\n" +
+  "        dce_scan(n->c0);\n" +
+  "        for (i = 0; i < n->ival2; i++) dce_scan(n->list[i]);\n" +
+  "        return;\n" +
+  "    case ND_BLOCK:\n" +
+  "        for (i = 0; i < n->ival2; i++) dce_scan(n->list[i]);\n" +
+  "        return;\n" +
+  "    case ND_SWITCH:\n" +
+  "        dce_scan(n->c0);\n" +
+  "        for (i = 0; i < n->ival2; i++) dce_scan(n->list[i]);\n" +
+  "        return;\n" +
+  "    case ND_IF:\n" +
+  "        dce_scan(n->c0); dce_scan(n->c1); dce_scan(n->c2);\n" +
+  "        return;\n" +
+  "    case ND_WHILE:\n" +
+  "        dce_scan(n->c0); dce_scan(n->c1);\n" +
+  "        return;\n" +
+  "    case ND_FOR:\n" +
+  "        dce_scan(n->c0); dce_scan(n->c1); dce_scan(n->c2); dce_scan(n->c3);\n" +
+  "        return;\n" +
+  "    case ND_DO_WHILE:\n" +
+  "        dce_scan(n->c0); dce_scan(n->c1);\n" +
+  "        return;\n" +
+  "    case ND_BINARY:\n" +
+  "    case ND_ASSIGN:\n" +
+  "        dce_scan(n->c0); dce_scan(n->c1);\n" +
+  "        return;\n" +
+  "    case ND_UNARY:\n" +
+  "    case ND_RETURN:\n" +
+  "    case ND_EXPR_STMT:\n" +
+  "    case ND_CAST:\n" +
+  "    case ND_SIZEOF:\n" +
+  "    case ND_VA_ARG:\n" +
+  "        dce_scan(n->c0);\n" +
+  "        return;\n" +
+  "    case ND_VAR_DECL:\n" +
+  "        dce_scan(n->c0); /* optional initializer */\n" +
+  "        return;\n" +
+  "    case ND_POST_INC:\n" +
+  "    case ND_POST_DEC:\n" +
+  "        dce_scan(n->c0);\n" +
+  "        return;\n" +
+  "    case ND_SUBSCRIPT:\n" +
+  "    case ND_MEMBER:\n" +
+  "        dce_scan(n->c0); dce_scan(n->c1);\n" +
+  "        return;\n" +
+  "    case ND_TERNARY:\n" +
+  "        dce_scan(n->c0); dce_scan(n->c1); dce_scan(n->c2);\n" +
+  "        return;\n" +
+  "    default:\n" +
+  "        /* leaf nodes: ND_IDENT, ND_INT_LIT, ND_FLOAT_LIT, ND_STR_LIT,\n" +
+  "           ND_BREAK, ND_CONTINUE, ND_GOTO, ND_LABEL, ND_CASE, ND_DEFAULT,\n" +
+  "           ND_CALL_INDIRECT (indirect calls — handled via fn_table) */\n" +
+  "        return;\n" +
+  "    }\n" +
+  "}\n" +
+  "\n" +
+  "void dce_run(struct Node *prog) {\n" +
+  "    int i;\n" +
+  "    dce_nfuncs = prog->ival2;\n" +
+  "    dce_funcs = prog->list;\n" +
+  "    dce_live = (int *)malloc(dce_nfuncs * sizeof(int));\n" +
+  "    for (i = 0; i < dce_nfuncs; i++) {\n" +
+  "        dce_live[i] = 0;\n" +
+  "    }\n" +
+  "    /* Always keep main */\n" +
+  "    dce_mark(\"main\");\n" +
+  "    /* Always keep __init if present */\n" +
+  "    dce_mark(\"__init\");\n" +
+  "    /* Keep any function whose address is taken (fn_table entries) */\n" +
+  "    for (i = 0; i < fn_table_count; i++) {\n" +
+  "        dce_mark(fn_table_names[i]);\n" +
+  "    }\n" +
+  "}\n" +
+  "\n" +
+  "int dce_is_live(char *name) {\n" +
+  "    int idx;\n" +
+  "    idx = dce_find(name);\n" +
+  "    if (idx < 0) return 1; /* unknown: keep it */\n" +
+  "    return dce_live[idx];\n" +
+  "}\n" +
   "";
 
 COMPILER_SOURCE["bytevec.h"] =
@@ -8445,9 +8574,12 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    emit_indent();\n" +
   "    out(\"\\n\");\n" +
   "\n" +
-  "    /* user functions */\n" +
+  "    /* user functions — emit only live functions */\n" +
+  "    dce_run(prog);\n" +
   "    for (i = 0; i < prog->ival2; i++) {\n" +
-  "        gen_func(prog->list[i]);\n" +
+  "        if (dce_is_live(prog->list[i]->sval)) {\n" +
+  "            gen_func(prog->list[i]);\n" +
+  "        }\n" +
   "    }\n" +
   "\n" +
   "    /* optional runtime: realloc (only emitted if used) */\n" +

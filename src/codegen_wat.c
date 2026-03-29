@@ -3780,9 +3780,12 @@ void gen_module(struct Node *prog) {
     emit_indent();
     out("\n");
 
-    /* user functions */
+    /* user functions — emit only live functions */
+    dce_run(prog);
     for (i = 0; i < prog->ival2; i++) {
-        gen_func(prog->list[i]);
+        if (dce_is_live(prog->list[i]->sval)) {
+            gen_func(prog->list[i]);
+        }
     }
 
     /* optional runtime: realloc (only emitted if used) */

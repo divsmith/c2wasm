@@ -146,7 +146,7 @@ diff s1.wat s2.wat  ← must be empty (fixed point)
 
 A clean diff proves that the compiler, when run inside WebAssembly, produces byte-for-byte identical output to the GCC-compiled version. The bootstrap also runs the full test suite as a final step.
 
-> **Note:** WAT-mode self-hosting works fully. Binary-mode (`-b`) self-hosting is not currently supported — the self-compiled binary will crash at runtime.
+> **Note:** WAT-mode self-hosting uses `make bootstrap` to check the WAT fixed point. Binary-mode self-hosting is validated separately via `make bootstrap-binary`, which builds a self-hosted compiler in `-b` mode and uses it to compile a smoke-test program to WASM binary.
 
 ---
 
@@ -209,10 +209,11 @@ make clean  # remove all build artifacts
 Requires `wat2wasm` and `wasmtime` on `PATH`:
 
 ```bash
-make test          # WAT path: all 62 tests + bootstrap self-hosting check
-make test-binary   # binary path: all 62 tests via -b flag (only needs wasmtime, not wat2wasm)
-make test-pipeline # pipeline path: c2wasm | c2wasm-asm (tests the toolchain pipeline)
-make bootstrap     # run the 2-stage bootstrap check alone
+make test            # WAT path: all 67 tests + bootstrap self-hosting check
+make test-binary     # binary path: all 67 tests + binary bootstrap check
+make test-pipeline   # pipeline path: c2wasm | c2wasm-asm (tests the toolchain pipeline)
+make bootstrap       # run the 2-stage WAT bootstrap check alone
+make bootstrap-binary # run the binary self-hosting bootstrap alone
 ```
 
 ### Rebuild the browser compiler

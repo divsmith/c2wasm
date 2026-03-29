@@ -22,10 +22,10 @@ endif
 
 BUNDLE_SOURCES = $(addprefix src/, c2wasm.c constants.h util.c source.c \
   lexer.h lexer.c types.h types.c ast.h ast.c parser.h parser.c \
-  codegen.h codegen_shared.c bytevec.h bytevec.c output.h output.c \
+  codegen.h codegen_shared.c dce.c bytevec.h bytevec.c output.h output.c \
   codegen_wat.c assembler.h assembler.c main.c)
 
-.PHONY: all clean test test-binary test-pipeline bootstrap bundle-source serve
+.PHONY: all clean test test-binary test-pipeline bootstrap bootstrap-binary bundle-source serve
 
 all: $(BIN) $(BIN)-asm $(WASM_TARGETS) $(DEMO)/compiler-source.js
 ifeq ($(WASI_SDK),)
@@ -71,12 +71,23 @@ test: $(BIN)
 
 test-binary: $(BIN)
 	bash tests/run_tests.sh --binary
+	@if command -v wat2wasm >/dev/null 2>&1 && command -v wasmtime >/dev/null 2>&1; then \
+		echo ""; \
+		echo "=== Running binary bootstrap validation ==="; \
+		bash tools/bootstrap_binary.sh; \
+	else \
+		echo ""; \
+		echo "Skipping binary bootstrap (wat2wasm/wasmtime not found)"; \
+	fi
 
 test-pipeline: $(BIN) $(BIN)-asm
 	bash tests/run_tests.sh --pipeline
 
 bootstrap: $(BIN)
 	bash tools/bootstrap.sh
+
+bootstrap-binary: $(BIN)
+	bash tools/bootstrap_binary.sh
 
 bundle-source: $(DEMO)/compiler-source.js
 

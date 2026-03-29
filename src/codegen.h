@@ -29,3 +29,6 @@ int var_arr_dim2(char *name);
 int expr_elem_size(struct Node *n);
 int expr_is_unsigned(struct Node *n);
 int var_is_float(char *name);
+
+void dce_run(struct Node *prog);
+int dce_is_live(char *name);
