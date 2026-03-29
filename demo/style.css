@@ -445,8 +445,9 @@ main {
   white-space: nowrap;
 }
 
-/* Step / Continue — secondary toolbar buttons */
-#debug-step-btn,
+/* Step Into / Step Over / Continue — secondary toolbar buttons */
+#debug-step-into-btn,
+#debug-step-over-btn,
 #debug-continue-btn {
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -460,7 +461,8 @@ main {
   white-space: nowrap;
 }
 
-#debug-step-btn:hover {
+#debug-step-into-btn:hover,
+#debug-step-over-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
 }

@@ -72,8 +72,8 @@
       </select>
       <button id="new-file-btn" title="New file">＋ New</button>
       <button id="delete-file-btn" title="Delete this file">✕ Delete</button>
-      <button id="run-btn" title="Ctrl+Enter">▶ Compile &amp; Run</button>
-      <button id="debug-btn" title="Run with step-through debugger">🐛 Debug</button>
+      <button id="run-btn" title="Ctrl+Enter">&#x25b6; Compile &amp; Run</button>
+      <button id="debug-btn" title="Run with step-through debugger">Debug</button>
     </div>
     <div id="compiler-controls" class="hidden">
       <label class="toolbar-label" for="compiler-file-select">Source:</label>
@@ -84,9 +84,10 @@
     <span id="save-indicator" class="save-indicator"></span>
     <div id="debug-controls" class="hidden">
       <span class="debug-label">Debug</span>
-      <button id="debug-step-btn" title="Advance to next statement">⏭ Step</button>
-      <button id="debug-continue-btn" title="Run to next breakpoint (or end if none)">▶ Continue</button>
-      <button id="debug-stop-btn" title="Stop debugging">⏹ Stop</button>
+      <button id="debug-step-into-btn" title="Step Into: advance to next statement, entering function calls">&#x2193; Step Into</button>
+      <button id="debug-step-over-btn" title="Step Over: advance to next statement, skipping over function calls">&#x2192; Step Over</button>
+      <button id="debug-continue-btn" title="Continue: run to next breakpoint (or end if none)">&#x25b6; Continue</button>
+      <button id="debug-stop-btn" title="Stop debugging">&#x25a0; Stop</button>
       <span id="debug-status" class="debug-status"></span>
     </div>
     <span id="compiler-mode-indicator" class="compiler-mode-indicator">Using: Reference</span>

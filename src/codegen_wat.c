@@ -1452,6 +1452,16 @@ void gen_stmt_return(struct Node *n) {
     if (n->c0 != (struct Node *)0) {
         gen_expr(n->c0);
     }
+    if (debug_mode) {
+        emit_indent();
+        out("global.get $__dbg_depth\n");
+        emit_indent();
+        out("i32.const 1\n");
+        emit_indent();
+        out("i32.sub\n");
+        emit_indent();
+        out("global.set $__dbg_depth\n");
+    }
     emit_indent();
     out("return\n");
 }
@@ -1697,6 +1707,8 @@ void gen_stmt_block(struct Node *n) {
     }
 }
 
+void gen_debug_trace(int line);
+
 void gen_stmt_switch(struct Node *n) {
     int case_vals[256];
     int case_start[256];
@@ -1786,6 +1798,9 @@ void gen_stmt_switch(struct Node *n) {
     for (k = 0; k < nc; k++) {
         indent_level--;
         emit_indent(); out(")\n");
+        if (debug_mode) {
+            gen_debug_trace(n->list[case_start[k]]->nline);
+        }
         if (k + 1 < nc) {
             next_start = case_start[k + 1];
         } else if (has_dflt) {
@@ -1806,6 +1821,9 @@ void gen_stmt_switch(struct Node *n) {
 
     /* emit default body */
     if (has_dflt) {
+        if (debug_mode) {
+            gen_debug_trace(n->list[dflt_pos]->nline);
+        }
         for (j = dflt_pos + 1; j < n->ival2; j++) {
             if (n->list[j]->kind == ND_CASE) continue;
             if (n->list[j]->kind == ND_DEFAULT) continue;
@@ -1823,6 +1841,8 @@ void gen_stmt_switch(struct Node *n) {
 void gen_debug_trace(int line) {
     emit_indent();
     out("i32.const "); out_d(line); out("\n");
+    emit_indent();
+    out("global.get $__dbg_depth\n");
     emit_indent();
     out("call $__c2dbg_trace\n");
 }
@@ -2136,6 +2156,16 @@ void gen_func(struct Node *n) {
     emit_indent();
     out("(local $__ftmp f64)\n");
     body = n->c0;
+    if (debug_mode) {
+        emit_indent();
+        out("global.get $__dbg_depth\n");
+        emit_indent();
+        out("i32.const 1\n");
+        emit_indent();
+        out("i32.add\n");
+        emit_indent();
+        out("global.set $__dbg_depth\n");
+    }
     /* Check if function uses goto/labels */
     if (ast_has_goto(body)) {
         goto_label_count = 0;
@@ -2147,6 +2177,16 @@ void gen_func(struct Node *n) {
         for (i = 0; i < body->ival2; i++) {
             gen_stmt(body->list[i]);
         }
+    }
+    if (debug_mode) {
+        emit_indent();
+        out("global.get $__dbg_depth\n");
+        emit_indent();
+        out("i32.const 1\n");
+        emit_indent();
+        out("i32.sub\n");
+        emit_indent();
+        out("global.set $__dbg_depth\n");
     }
     if (n->ival != 1) {
         if (ret_float) {
@@ -2222,7 +2262,7 @@ void gen_module(struct Node *prog) {
     out("(import \"wasi_snapshot_preview1\" \"random_get\" (func $__random_get (param i32 i32) (result i32)))\n");
     if (debug_mode) {
         emit_indent();
-        out("(import \"dbg\" \"trace\" (func $__c2dbg_trace (param i32)))\n");
+        out("(import \"dbg\" \"trace\" (func $__c2dbg_trace (param i32 i32)))\n");
     }
     emit_indent();
     out("\n");
@@ -2232,6 +2272,14 @@ void gen_module(struct Node *prog) {
     out("(memory (export \"memory\") 512)\n");
     emit_indent();
     out("\n");
+
+    /* debug call-depth global */
+    if (debug_mode) {
+        emit_indent();
+        out("(global $__dbg_depth (mut i32) (i32.const 0))\n");
+        emit_indent();
+        out("\n");
+    }
 
     /* type for qsort/bsearch comparator (always available) */
     emit_indent();

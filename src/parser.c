@@ -1018,7 +1018,11 @@ struct Node *parse_stmt(void) {
     if (at(TOK_CASE)) {
         int cv;
         int eci_case;
+        int case_line;
+        int case_col;
         struct Node *cn;
+        case_line = cur->line;
+        case_col = cur->col;
         advance_tok();
         eci_case = -1;
         if (at(TOK_IDENT)) {
@@ -1035,14 +1039,18 @@ struct Node *parse_stmt(void) {
             advance_tok();
         }
         expect(TOK_COLON, "expected ':' after case value");
-        cn = node_new(ND_CASE, cur->line, cur->col);
+        cn = node_new(ND_CASE, case_line, case_col);
         cn->ival = cv;
         return cn;
     }
     if (at(TOK_DEFAULT)) {
+        int dflt_line;
+        int dflt_col;
+        dflt_line = cur->line;
+        dflt_col = cur->col;
         advance_tok();
         expect(TOK_COLON, "expected ':' after default");
-        return node_new(ND_DEFAULT, cur->line, cur->col);
+        return node_new(ND_DEFAULT, dflt_line, dflt_col);
     }
     if (at(TOK_WHILE)) return parse_while();
     if (at(TOK_FOR)) return parse_for();

@@ -3184,7 +3184,11 @@ COMPILER_SOURCE["parser.c"] =
   "    if (at(TOK_CASE)) {\n" +
   "        int cv;\n" +
   "        int eci_case;\n" +
+  "        int case_line;\n" +
+  "        int case_col;\n" +
   "        struct Node *cn;\n" +
+  "        case_line = cur->line;\n" +
+  "        case_col = cur->col;\n" +
   "        advance_tok();\n" +
   "        eci_case = -1;\n" +
   "        if (at(TOK_IDENT)) {\n" +
@@ -3201,14 +3205,18 @@ COMPILER_SOURCE["parser.c"] =
   "            advance_tok();\n" +
   "        }\n" +
   "        expect(TOK_COLON, \"expected ':' after case value\");\n" +
-  "        cn = node_new(ND_CASE, cur->line, cur->col);\n" +
+  "        cn = node_new(ND_CASE, case_line, case_col);\n" +
   "        cn->ival = cv;\n" +
   "        return cn;\n" +
   "    }\n" +
   "    if (at(TOK_DEFAULT)) {\n" +
+  "        int dflt_line;\n" +
+  "        int dflt_col;\n" +
+  "        dflt_line = cur->line;\n" +
+  "        dflt_col = cur->col;\n" +
   "        advance_tok();\n" +
   "        expect(TOK_COLON, \"expected ':' after default\");\n" +
-  "        return node_new(ND_DEFAULT, cur->line, cur->col);\n" +
+  "        return node_new(ND_DEFAULT, dflt_line, dflt_col);\n" +
   "    }\n" +
   "    if (at(TOK_WHILE)) return parse_while();\n" +
   "    if (at(TOK_FOR)) return parse_for();\n" +
@@ -6015,6 +6023,16 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    if (n->c0 != (struct Node *)0) {\n" +
   "        gen_expr(n->c0);\n" +
   "    }\n" +
+  "    if (debug_mode) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.get $__dbg_depth\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 1\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.sub\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.set $__dbg_depth\\n\");\n" +
+  "    }\n" +
   "    emit_indent();\n" +
   "    out(\"return\\n\");\n" +
   "}\n" +
@@ -6260,6 +6278,8 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    }\n" +
   "}\n" +
   "\n" +
+  "void gen_debug_trace(int line);\n" +
+  "\n" +
   "void gen_stmt_switch(struct Node *n) {\n" +
   "    int case_vals[256];\n" +
   "    int case_start[256];\n" +
@@ -6349,6 +6369,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    for (k = 0; k < nc; k++) {\n" +
   "        indent_level--;\n" +
   "        emit_indent(); out(\")\\n\");\n" +
+  "        if (debug_mode) {\n" +
+  "            gen_debug_trace(n->list[case_start[k]]->nline);\n" +
+  "        }\n" +
   "        if (k + 1 < nc) {\n" +
   "            next_start = case_start[k + 1];\n" +
   "        } else if (has_dflt) {\n" +
@@ -6369,6 +6392,9 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "\n" +
   "    /* emit default body */\n" +
   "    if (has_dflt) {\n" +
+  "        if (debug_mode) {\n" +
+  "            gen_debug_trace(n->list[dflt_pos]->nline);\n" +
+  "        }\n" +
   "        for (j = dflt_pos + 1; j < n->ival2; j++) {\n" +
   "            if (n->list[j]->kind == ND_CASE) continue;\n" +
   "            if (n->list[j]->kind == ND_DEFAULT) continue;\n" +
@@ -6386,6 +6412,8 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "void gen_debug_trace(int line) {\n" +
   "    emit_indent();\n" +
   "    out(\"i32.const \"); out_d(line); out(\"\\n\");\n" +
+  "    emit_indent();\n" +
+  "    out(\"global.get $__dbg_depth\\n\");\n" +
   "    emit_indent();\n" +
   "    out(\"call $__c2dbg_trace\\n\");\n" +
   "}\n" +
@@ -6699,6 +6727,16 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    emit_indent();\n" +
   "    out(\"(local $__ftmp f64)\\n\");\n" +
   "    body = n->c0;\n" +
+  "    if (debug_mode) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.get $__dbg_depth\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 1\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.add\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.set $__dbg_depth\\n\");\n" +
+  "    }\n" +
   "    /* Check if function uses goto/labels */\n" +
   "    if (ast_has_goto(body)) {\n" +
   "        goto_label_count = 0;\n" +
@@ -6710,6 +6748,16 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "        for (i = 0; i < body->ival2; i++) {\n" +
   "            gen_stmt(body->list[i]);\n" +
   "        }\n" +
+  "    }\n" +
+  "    if (debug_mode) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.get $__dbg_depth\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.const 1\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"i32.sub\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"global.set $__dbg_depth\\n\");\n" +
   "    }\n" +
   "    if (n->ival != 1) {\n" +
   "        if (ret_float) {\n" +
@@ -6785,7 +6833,7 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    out(\"(import \\\"wasi_snapshot_preview1\\\" \\\"random_get\\\" (func $__random_get (param i32 i32) (result i32)))\\n\");\n" +
   "    if (debug_mode) {\n" +
   "        emit_indent();\n" +
-  "        out(\"(import \\\"dbg\\\" \\\"trace\\\" (func $__c2dbg_trace (param i32)))\\n\");\n" +
+  "        out(\"(import \\\"dbg\\\" \\\"trace\\\" (func $__c2dbg_trace (param i32 i32)))\\n\");\n" +
   "    }\n" +
   "    emit_indent();\n" +
   "    out(\"\\n\");\n" +
@@ -6795,6 +6843,14 @@ COMPILER_SOURCE["codegen_wat.c"] =
   "    out(\"(memory (export \\\"memory\\\") 512)\\n\");\n" +
   "    emit_indent();\n" +
   "    out(\"\\n\");\n" +
+  "\n" +
+  "    /* debug call-depth global */\n" +
+  "    if (debug_mode) {\n" +
+  "        emit_indent();\n" +
+  "        out(\"(global $__dbg_depth (mut i32) (i32.const 0))\\n\");\n" +
+  "        emit_indent();\n" +
+  "        out(\"\\n\");\n" +
+  "    }\n" +
   "\n" +
   "    /* type for qsort/bsearch comparator (always available) */\n" +
   "    emit_indent();\n" +

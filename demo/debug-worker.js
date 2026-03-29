@@ -5,20 +5,20 @@ importScripts('wasi-harness.js');
 // SharedArrayBuffer layout (Int32 view):
 //   [0]: stdin handshake — worker sets to 0 before sleeping, main sets to 1 when input is ready
 //   [1]: stdin byte count
-//   [2]: debug pause slot — worker sets to 0 when paused, main writes signal to wake:
+//   [2]: debug pause slot — worker sets to 0 BEFORE posting trace, main writes signal to wake:
 //          1 = proceed (step or continue; main thread decides pause logic)
 //          3 = stop (throw to terminate execution)
 // Byte view offset 8+: raw UTF-8 stdin bytes
 //
-// Run-mode fast-path is handled by the main thread: when in "continue" mode and the
-// current line has no breakpoint, the main thread immediately writes signal=1 and
-// notifies without waiting for user input. This keeps the worker protocol simple.
+// IMPORTANT: The worker must store 0 to DBG_PAUSE_SLOT *before* posting the trace message.
+// This prevents a race where the main thread writes 1 (release) before the worker stores 0,
+// which would cause the worker to overwrite the 1 and block forever.
 
 var SAB_INPUT_OFFSET = 8;
 var DBG_PAUSE_SLOT   = 2;
 
-var sab      = null;
-var sabInt32 = null;
+var sab        = null;
+var sabInt32   = null;
 var pendingOutput = '';
 
 self.onmessage = function (event) {
@@ -44,14 +44,13 @@ function flushOutput() {
 
 function runDebugWasm(wasmBytes) {
   var dbgImports = {
-    trace: function (line) {
+    trace: function (line, depth) {
       flushOutput();
-      self.postMessage({ type: 'trace', line: line });
-
-      // Park: signal paused, wait for main thread to release.
-      // Main thread decides whether to immediately release (run mode, no breakpoint)
-      // or wait for a user button click (step mode or breakpoint hit).
+      // Store 0 BEFORE posting the message to avoid a race: if the main thread
+      // receives the message and writes signal=1 before we store 0, we would
+      // overwrite the 1 and block forever in Atomics.wait.
       Atomics.store(sabInt32, DBG_PAUSE_SLOT, 0);
+      self.postMessage({ type: 'trace', line: line, depth: depth });
       Atomics.wait(sabInt32, DBG_PAUSE_SLOT, 0);
 
       var signal = Atomics.load(sabInt32, DBG_PAUSE_SLOT);

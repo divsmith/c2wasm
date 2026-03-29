@@ -156,7 +156,8 @@
   // Debug UI DOM
   var debugBtn = document.getElementById('debug-btn');
   var debugControls = document.getElementById('debug-controls');
-  var debugStepBtn = document.getElementById('debug-step-btn');
+  var debugStepIntoBtn = document.getElementById('debug-step-into-btn');
+  var debugStepOverBtn = document.getElementById('debug-step-over-btn');
   var debugContinueBtn = document.getElementById('debug-continue-btn');
   var debugStopBtn = document.getElementById('debug-stop-btn');
   var debugStatusEl = document.getElementById('debug-status');
@@ -176,9 +177,12 @@
   var debugCurrentDecorations = [];
   var breakpointDecorations  = [];
   var debugBreakpoints       = new Set(); // line numbers (1-based) with active breakpoints
-  // 'run' = execute normally, only pause on breakpoints
-  // 'step' = pause after the very next traced statement
-  var debugMode = 'run';
+  // 'run'       = execute normally, only pause on breakpoints
+  // 'step'      = pause after the very next traced statement (Step Into)
+  // 'step-over' = pause at the next statement at the same or shallower call depth
+  var debugMode      = 'run';
+  var currentDepth   = 0; // call depth from the most recent trace message
+  var stepOverDepth  = 0; // target depth for step-over
 
   // ── File selector helpers ──
 
@@ -807,27 +811,27 @@
     runBtn.className = '';
     switch (state) {
       case 'compiling':
-        runBtn.textContent = '⏳ Compiling…';
+        runBtn.textContent = 'Compiling\u2026';
         runBtn.disabled = true;
         break;
       case 'running':
-        runBtn.textContent = '⏳ Running…';
+        runBtn.textContent = 'Running\u2026';
         runBtn.disabled = true;
         break;
       case 'success':
-        runBtn.textContent = '✓ Done';
+        runBtn.textContent = '\u2713 Done';
         runBtn.disabled = false;
         runBtn.className = 'success';
         idleTimerId = setTimeout(function () { setButtonState('idle'); }, 2000);
         break;
       case 'error':
-        runBtn.textContent = '✗ Error';
+        runBtn.textContent = '\u2717 Error';
         runBtn.disabled = false;
         runBtn.className = 'error';
         idleTimerId = setTimeout(function () { setButtonState('idle'); }, 2000);
         break;
       default:
-        runBtn.textContent = '▶ Compile & Run';
+        runBtn.textContent = '\u25b6 Compile & Run';
         runBtn.disabled = false;
     }
   }
@@ -962,9 +966,16 @@
     Atomics.notify(debugSabInt32, DBG_PAUSE_SLOT, 1);
   }
 
-  function debugStep() {
+  function debugStepInto() {
     if (!debugSabInt32) return;
-    debugMode = 'step'; // pause after the next traced statement
+    debugMode = 'step'; // pause at the very next traced statement
+    releaseDebugWorker();
+  }
+
+  function debugStepOver() {
+    if (!debugSabInt32) return;
+    stepOverDepth = currentDepth; // only pause when depth returns to this level or shallower
+    debugMode = 'step-over';
     releaseDebugWorker();
   }
 
@@ -1029,7 +1040,9 @@
         setStatus('Debugging…');
         showDebugControls();
         setDebugStatus('running\u2026');
-        debugMode = 'run'; // always start in run mode — only stop at breakpoints
+        debugMode     = 'run'; // always start in run mode — only stop at breakpoints
+        currentDepth  = 0;
+        stepOverDepth = 0;
 
         // SAB: slots 0,1 for stdin; slot 2 for debug pause signal
         var sab = new SharedArrayBuffer(8 + 4096);
@@ -1045,14 +1058,31 @@
           var msg = event.data;
           if (msg.type === 'trace') {
             var line = msg.line;
+            var depth = msg.depth !== undefined ? msg.depth : 0;
+            currentDepth = depth;
             var hitBreakpoint = debugBreakpoints.has(line);
-            if (debugMode === 'step' || hitBreakpoint) {
-              // Pause: show current line, wait for user button
-              debugMode = 'run'; // reset so next release goes back to run mode by default
+            if (hitBreakpoint) {
+              // Always stop at breakpoints, regardless of mode or depth
+              debugMode = 'run';
               setDebugLine(line);
-              setDebugStatus(hitBreakpoint ? '\u25cf line ' + line : 'line ' + line);
+              setDebugStatus('\u25cf line ' + line);
+            } else if (debugMode === 'step') {
+              // Step Into: pause at the very next traced statement
+              debugMode = 'run';
+              setDebugLine(line);
+              setDebugStatus('line ' + line);
+            } else if (debugMode === 'step-over') {
+              if (depth <= stepOverDepth) {
+                // Returned to the same or an outer call level — stop here
+                debugMode = 'run';
+                setDebugLine(line);
+                setDebugStatus('line ' + line);
+              } else {
+                // Still inside a deeper function call — keep running
+                releaseDebugWorker();
+              }
             } else {
-              // Running and no breakpoint — release immediately
+              // 'run' mode and no breakpoint — release immediately
               releaseDebugWorker();
             }
           } else if (msg.type === 'output') {
@@ -1132,7 +1162,8 @@
 
   runBtn.addEventListener('click', compileAndRun);
   debugBtn.addEventListener('click', debugAndRun);
-  debugStepBtn.addEventListener('click', debugStep);
+  debugStepIntoBtn.addEventListener('click', debugStepInto);
+  debugStepOverBtn.addEventListener('click', debugStepOver);
   debugContinueBtn.addEventListener('click', debugContinue);
   debugStopBtn.addEventListener('click', stopDebugSession);
 
