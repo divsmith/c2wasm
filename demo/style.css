@@ -379,22 +379,79 @@ main {
 @media (max-width: 768px) {
   .tagline { display: none; }
 
+  /* Tighter header on mobile */
+  header {
+    padding: 8px 12px;
+  }
+
+  /* Toolbar: wrap to second line instead of overflowing off-screen */
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 12px;
+  }
+
+  /* Vertical separator doesn't make sense in a wrapping layout */
+  .toolbar-sep {
+    display: none;
+  }
+
+  /* Control groups: fill available line width, wrap buttons internally */
+  #program-controls,
+  #compiler-controls {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
   main {
     flex-direction: column;
   }
 
   .editor-panel {
-    flex: 0 0 50% !important;
+    /* No !important — JS inline style must be able to override for touch resize */
+    flex: 0 0 50%;
+    min-height: 150px;
+    min-width: unset;
     border-right: none;
   }
 
+  /* Taller resize handle: finger-sized touch target with pill affordance */
   .resize-handle {
-    flex: 0 0 4px;
+    flex: 0 0 10px;
     cursor: row-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .resize-handle::after {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--text-secondary);
+    opacity: 0.5;
+    pointer-events: none;
   }
 
   .output-panel {
     flex: 1;
+    min-height: 80px;
+    min-width: unset;
+  }
+}
+
+/* Extra-small phones */
+@media (max-width: 480px) {
+  .toolbar {
+    padding: 6px 10px;
+  }
+
+  /* Show GitHub icon only — free up ~60px on 320px screens */
+  .github-text {
+    display: none;
   }
 }
 

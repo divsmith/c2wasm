@@ -379,22 +379,33 @@
   (function () {
     var dragging = false;
     var editorPanel = document.querySelector('.editor-panel');
+    var mobileQuery = window.matchMedia('(max-width: 768px)');
 
+    function applyResize(clientX, clientY) {
+      var mainRect = editorPanel.parentElement.getBoundingClientRect();
+      var pct;
+      if (mobileQuery.matches) {
+        pct = ((clientY - mainRect.top) / mainRect.height) * 100;
+      } else {
+        pct = ((clientX - mainRect.left) / mainRect.width) * 100;
+      }
+      pct = Math.max(20, Math.min(80, pct));
+      editorPanel.style.flex = '0 0 ' + pct + '%';
+      if (editor) editor.layout();
+    }
+
+    // Mouse resize
     resizeHandle.addEventListener('mousedown', function (e) {
       e.preventDefault();
       dragging = true;
       resizeHandle.classList.add('active');
-      document.body.style.cursor = 'col-resize';
+      document.body.style.cursor = mobileQuery.matches ? 'row-resize' : 'col-resize';
       document.body.style.userSelect = 'none';
     });
 
     document.addEventListener('mousemove', function (e) {
       if (!dragging) return;
-      var mainRect = editorPanel.parentElement.getBoundingClientRect();
-      var pct = ((e.clientX - mainRect.left) / mainRect.width) * 100;
-      pct = Math.max(20, Math.min(80, pct));
-      editorPanel.style.flex = '0 0 ' + pct + '%';
-      if (editor) editor.layout();
+      applyResize(e.clientX, e.clientY);
     });
 
     document.addEventListener('mouseup', function () {
@@ -403,6 +414,35 @@
       resizeHandle.classList.remove('active');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+    });
+
+    // Touch resize
+    resizeHandle.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      dragging = true;
+      resizeHandle.classList.add('active');
+      document.body.style.userSelect = 'none';
+    }, { passive: false });
+
+    document.addEventListener('touchmove', function (e) {
+      if (!dragging) return;
+      e.preventDefault();
+      var touch = e.touches[0];
+      applyResize(touch.clientX, touch.clientY);
+    }, { passive: false });
+
+    document.addEventListener('touchend', function () {
+      if (!dragging) return;
+      dragging = false;
+      resizeHandle.classList.remove('active');
+      document.body.style.userSelect = '';
+    });
+
+    // On breakpoint crossing (e.g. device rotation), clear any inline resize
+    // so the CSS default kicks back in
+    mobileQuery.addEventListener('change', function () {
+      editorPanel.style.flex = '';
+      if (editor) editor.layout();
     });
   })();
 
